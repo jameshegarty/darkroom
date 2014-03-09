@@ -1,5 +1,48 @@
 package.path = package.path .. ";../src/?.lua;../src/?.t"
 
+local ffi = require("ffi")
+
+-- LINE COVERAGE INFORMATION                                                                                                                              
+if true then
+  local CV = "out/coverageinfo."..arg[0]..arg[1]..".lua"
+  print("CV",CV)
+  local converageloader = loadfile(CV)
+  local linetable = converageloader and converageloader() or {}
+  local function dumplineinfo()
+    local F = io.open(CV,"w")
+    F:write("return {\n")
+    for fk, fv in pairs(linetable) do
+      F:write("['"..fk.."']={")
+      for k,v in pairs(linetable[fk]) do
+        F:write("["..k.."] = "..v..";\n")
+      end
+      F:write("},\n")
+    end
+    F:write("}\n")
+    F:close()
+  end
+  local function debughook(event)
+    local info = debug.getinfo(2,"Sl")
+    if linetable[info.short_src]==nil then
+      linetable[info.short_src]={}
+    end
+
+--    print("DB",info.short_src)
+--        if info.short_src == "/Users/research/Documents/orion/orion.t" then
+    linetable[info.short_src][info.currentline] = linetable[info.short_src][info.currentline] or 0
+    linetable[info.short_src][info.currentline] = linetable[info.short_src][info.currentline] + 1
+--        end
+  end
+  debug.sethook(debughook,"l")
+    -- make a fake ffi object that causes dumplineinfo to be called when                                                                                  
+    -- the lua state is removed                                                                                                                           
+    ffi.cdef [[
+                typedef struct {} __linecoverage;
+              ]]
+    ffi.metatype("__linecoverage", { __gc = dumplineinfo } )
+    _G[{}] = ffi.new("__linecoverage")
+end
+
 import "orion"
 -- call this with testscript.lua [runtype] [runfile]
 -- runtype is int (interpreter), "allmat" (all materialized), "fast" (fast schedule)

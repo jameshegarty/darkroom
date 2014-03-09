@@ -144,7 +144,7 @@ end
           [node.index],
           [&node.outputImage.terraType](orion._boundImagesRuntime:get([node.special]).image.data),
           [node.outputImage:getPointer()])
-                       var len : double = (orion.currentTimeInSeconds()-start)
+      var len : double = ( (orion.currentTimeInSeconds())-start)
 
                      if orion.printruntime then
                        cstdio.printf("toSOA %s runtime:%f\n",[node:name()],len)

@@ -23,17 +23,6 @@ struct RuntimeImage { image : Image, width: int, height : int, channels : int, b
 -- what input formats we expect.
 orion._boundImagesRuntime = global(Vector(RuntimeImage))
 
-local C = terralib.includecstring [[
-#include <sys/time.h>
-
-  double CurrentTimeInSecondsTTTT() {
-  struct timeval tv;
-  gettimeofday(&tv, 0);
-  return tv.tv_sec + tv.tv_usec / 1000000.0;
-                                       }
-
-                                   ]]
-
 terra orion.init()
   if orion.verbose then cstdio.printf("orion.init\n") end
   orion._boundImagesRuntime:init()
@@ -417,174 +406,6 @@ function orion.frontEnd(ast, options)
   return scheduledIR, base1, base2
 end
 
-function orion.backEndSimulatedAnnealing(scheduledIR, base1, base2, options)
-  local bestTime = 100000000
-  local bestLoopIR
-
-  local nodeCount = scheduledIR:S("*"):count()
-
-  while 1 do
-    -- always make at least 2 rungroups...
-    local rungroupCount = math.random(2,nodeCount/4)
-    print("RG",rungroupCount)
-    local schedule = orion.schedule.initialSeedSchedule(scheduledIR, rungroupCount)
-
-    -- annealing or something
-    local bestTimeThisStep
-
-    for i=1,10 do
-
-      collectgarbage("collect")
-      collectgarbage("collect")
-      print("MEM",collectgarbage("count"))
-
-
-      local newSchedule = schedule
-      if i>1 then
-        newSchedule = orion.schedule.annealingStep(scheduledIR,schedule)
-        
-        -- we can't figure out a way to change this
-        if newSchedule==nil then
-break
-        end
-      end
-
-      local loopIR = orion.loopIR.convert(scheduledIR, newSchedule, options.region, base1, base2)
-
-      if loopIR==nil then
-        print("impossible schedule")
-        -- accept it anyway sometimes
-        if math.random()>0.5 then
-          schedule = newSchedule
-        end
-      else
-        local stripWidths = orion.schedule.stripWidthBrute( loopIR )
-        local stripWidthsBad = orion.schedule.stripWidthHeuristic( loopIR )
-
-        local time
-
-        local perfModel = orion.schedule.computePerfModel( loopIR, stripWidths )
-        local perfModelBad = orion.schedule.computePerfModel( loopIR, stripWidthsBad )
-
-        if false then
-          local tprog = orion.terracompiler.compile( loopIR, options.region, base1, base2, stripWidths )
-          tprog:compile()
-
-          local looptimes = 10
-          local terra doit()
-            var res = tprog()
-            res:free()
-            
-            var start = C.CurrentTimeInSecondsTTTT()
-            
-            for i=0,looptimes do
-              res = tprog()
-              if i<looptimes-1 then -- let the last one leak so we can save it
-                res:free()
-              end
-            end
-            var endt = C.CurrentTimeInSecondsTTTT()
-            return (endt-start)/looptimes
-          end
-
-          time = doit()
-        else
-          time = perfModel.total
-        end
-
-        if time < bestTime then
-          bestTime = time
-          bestLoopIR = loopIR
-        end
-
-        if bestTimeThisStep==nil or 
-          time<bestTimeThisStep or
-          math.random()>0.5 then
-          -- accept it
-          schedule = newSchedule
-        end
-
-        print("thisTime",time,"modelTime",perfModel.total,"badStripWTime",perfModelBad.total,"bestTime",bestTime)
-      end
-    end
-  end
-end
-
-function orion.backEndIter(scheduledIR, base1, base2, options)
-
-
-   print("Node Count",scheduledIR:S("*"):count())
-  print("runtime model fModel heap rungroups avgStripCount")
-
-  assert(options.looptimes==1 or options.looptimes==nil)
-
-  for i=1,100 do
-    options.schedule = orion.schedule.randomSchedule(scheduledIR, math.random())
-    local i=0
-    while orion.schedule.fix(scheduledIR, options.schedule) and i <10 do i = i+1 end
-    if i==10 then print("could not fix") end
-    options.stripwidth = orion.schedule.stripWidthUniform( options.schedule )
-
-    local function makeScheduleString()
-      local scheduleStr = "explicit:"
-      for k,v in pairs(options.schedule) do
-        scheduleStr = scheduleStr .. k:name() .. "-" .. v.rungroup ..";"
-      end
-      
-      scheduleStr = scheduleStr .. "&"
-      for k,v in pairs(options.stripwidth) do
-        scheduleStr = scheduleStr .. k .. "-" .. v ..";"
-      end
-    end
-
-    local rgs = {}
-    local avgStripWidth = 0
-    for k,v in pairs(options.schedule) do
-      if rgs[v.rungroup]==nil then
-        avgStripWidth = avgStripWidth + options.stripwidth[v.rungroup]
-      end
-
-      rgs[v.rungroup] = 1
-    end
-    local rgCount = keycount(rgs)
-    avgStripWidth = avgStripWidth / rgCount
-
-    local res, perfModel = orion.backEndSimple(scheduledIR, base1, base2, options)
-
-    if res~=nil then
-
-      local outCount = 1
-      if scheduledIR.kind=="multiout" then
-        outCount = scheduledIR:arraySize("child")
-      end
-      
-      local outVars = {}
-      local freeit = {}
-      for i=1,outCount do 
-        table.insert(outVars,symbol(Image))
-        table.insert(freeit,quote [outVars[i]]:free() end)
-      end
-
-      local N = 3
-      local terra timeit()
-        var start = C.CurrentTimeInSecondsTTTT()
-        for i=0,N do
-          var [outVars] = res()
-          freeit
-        end
-        var endt = C.CurrentTimeInSecondsTTTT()
-
-        return (endt-start)/double(N)
-      end
-
-      print(timeit().." "..perfModel.total.." "..perfModel.fast.total.." "..collectgarbage("count").." "..rgCount.." "..avgStripWidth)
-    else
-      print("invalid")
-    end
-  end
-
-end
-
 function orion.getScheduleTable(scheduledIR, schedule)
   local tab = {}
   scheduledIR:visitEach(
@@ -813,7 +634,7 @@ return nil
             local fschedule, fstripcounts = orion.fperf.luaToFastSchedule(fperfLuaState,scheduledIR, schedule, stripWidthFastTable)
             local fValid, fTotalTime, fComputeTime, fMainMemoryTime, fMainMemoryTraffic, fLbTime, fBoundaryPixels, fWorkingSet, fLbReadGB, fLbWriteGB, fTotalArea
             
-            local st = terralib.currenttimeinseconds()
+            local st = orion.currentTimeInSeconds()
             local N = 2 -- by default, make this 2, so that we make sure we can run this multiple iter and still get correct results
             for i=1,N do
               fValid, fTotalTime, fComputeTime, fMainMemoryTime, fMainMemoryTraffic, fLbTime, fBoundaryPixels, fWorkingSet, fLbReadGB, fLbWriteGB, fTotalArea = unpackstruct(fperfS:eval(fschedule, stripWidth, fstripcounts))
@@ -838,7 +659,7 @@ return nil
               checkit("lbTime",perfModel.fast.lbTime,perfModel.lbTime) 
               checkit("totalArea", perfModel.fast.totalArea, perfModel.totalArea) 
             end
-            local et = terralib.currenttimeinseconds()
+            local et = orion.currentTimeInSeconds()
             
             -- if we got this far it should be valid
             assert(fValid)
@@ -868,9 +689,9 @@ return nil
           print("mem",collectgarbage("count"))
         end
 
-        local start = C.CurrentTimeInSecondsTTTT()
+        local start = orion.currentTimeInSeconds()
         res:compile() -- we may want to do this later (out of this scope), so that more stuff can be GCed?
-        local endt = C.CurrentTimeInSecondsTTTT()
+        local endt = orion.currentTimeInSeconds()
 
         if orion.printstage or orion.verbose then
           print("compile time",(endt-start))

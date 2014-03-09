@@ -36,8 +36,8 @@ else
   
   doit()
   
-  print("model total",model.total)
-  for k,v in pairs(model.nodes) do
-    print(k,v)
-  end
+--  print("model total",model.total)
+--  for k,v in pairs(model.nodes) do
+--    print(k,v)
+--  end
 end

@@ -11,17 +11,6 @@ flatIRMT={__index=flatIRFunctions,
                   end
 }
 
-local C = terralib.includecstring [[
-#include <sys/time.h>
-
-  double CurrentTimeInSecondsTT() {
-  struct timeval tv;
-  gettimeofday(&tv, 0);
-  return tv.tv_sec + tv.tv_usec / 1000000.0;
-                                       }
-
-                                   ]]
-
 orion.flatIR = {}
 
 function flatIRFunctions:init()
@@ -123,7 +112,7 @@ function flatIRFunctions:time(outputImage)
     var [x]
     var [y]
 
-    var start = C.CurrentTimeInSecondsTT()
+    var start = orion.currentTimeInSeconds()
     
     var area : double = 0
     while true do
@@ -132,12 +121,12 @@ function flatIRFunctions:time(outputImage)
         [output:set(0,expr,orion.tune.V)]
       end
       area = area+1024*128
-      var endt = C.CurrentTimeInSecondsTT()
+      var endt = orion.currentTimeInSeconds()
 
       if (endt-start)>0.02 then break end
     end
 
-    var endt = C.CurrentTimeInSecondsTT()
+    var endt = orion.currentTimeInSeconds()
     orionAssert(endt>start,"lolwtf")
     [output:close()]
 

@@ -1,16 +1,4 @@
-local C = terralib.includecstring [[
-#include <sys/time.h>
-
-  double CurrentTimeInSecondsTTT() {
-  struct timeval tv;
-  gettimeofday(&tv, 0);
-  return tv.tv_sec + tv.tv_usec / 1000000.0;
-                                       }
-
-                                   ]]
-
 -- this is the source for the terra compiler for orion
-
 
 -- if pointer is true, generate a pointer instead of a value
 function orion.terracompiler.symbol(_type,pointer,vectorN)
@@ -622,11 +610,11 @@ function orion.terracompiler.toTerraKernel(
     var bottom = [L.outputNeededRegionUnion:getBottom()]
     var top = [L.outputNeededRegionUnion:getTop()]
     
-    var start = C.CurrentTimeInSecondsTTT()
+    var start = orion.currentTimeInSeconds()
     for [y] = bottom, top do
       thisLoopCode
     end
-    var endt = C.CurrentTimeInSecondsTTT()
+    var endt = orion.currentTimeInSeconds()
 
 --    cstdio.printf("core time %f strip:%d core:%d\n",endt-start,strip,core)
   end
@@ -648,9 +636,9 @@ function orion.terracompiler.toTerraKernel(
     var [core] = @([&int](input))
     if orion.verbose then cstdio.printf("Run Loop %s\n", [L:name()]) end
 
-    var start = C.CurrentTimeInSecondsTTT()
+    var start = orion.currentTimeInSeconds()
     loopCode
-    var endt = C.CurrentTimeInSecondsTTT()
+    var endt = orion.currentTimeInSeconds()
 
 --    cstdio.printf("core %d time %f\n",core,endt-start)
   end
