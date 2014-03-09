@@ -229,6 +229,11 @@ terra run()
     cstdio.snprintf(tmpStr,99,"out/lk_level_%d.bmp",l)
     newVectorFieldHuman:save(tmpStr)
 
+    if l==pyramidLevels-1 then
+      cstdio.snprintf(tmpStr,99,"out/lk.bmp",l)
+      newVectorFieldHuman:save(tmpStr)
+    end
+
     if l<pyramidLevels-1 then
       newVectorField:upsample()
       cstdio.snprintf( tmpStr, 99, "out/v_input_level_%d.flo", l+1 )

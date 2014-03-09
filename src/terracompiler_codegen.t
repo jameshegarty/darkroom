@@ -631,7 +631,7 @@ function orion.terracompiler.toTerraKernel(
 --    cstdio.printf("core time %f strip:%d core:%d\n",endt-start,strip,core)
   end
 
-  inner:printpretty(false)
+--  inner:printpretty(false)
 
 --  local start = C.CurrentTimeInSecondsTTT()
 --  inner:compile()

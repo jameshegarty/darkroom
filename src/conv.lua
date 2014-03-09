@@ -757,9 +757,7 @@ function orion.convolution.synth(scheduledIR, base1, base2, options)
       end
     end)
 
-  if options.straighten then
-    scheduledIR = orion.convolution.straighten(scheduledIR)
-  end
+  scheduledIR = orion.convolution.straighten(scheduledIR)
 
   local config = {}
   config.top = {}
@@ -786,6 +784,7 @@ function orion.convolution.synth(scheduledIR, base1, base2, options)
         orion.convolution.synthSingle(node, config, isRoot, base1, base2)
 
         assert(node:childrenCount()<=1)  -- currently we only support straight pipes
+
         local outputBytes = 0
         for k,v in node:children() do
           v:map("conv",function(convIR)

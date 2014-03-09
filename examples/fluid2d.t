@@ -16,9 +16,9 @@ terralib.require "common"
 
 ffi = require "ffi"
 
-N = 4096
+N = 256
 iter = 3
-timestep = 0.01
+timestep = 0.1
 maxv = 3
 
 local C = terralib.includecstring [[
@@ -300,6 +300,11 @@ terra runIters()
     C.snprintf(doutStr,100,"out/d%d.bmp",i)
     dout:save(doutStr)
 
+    -- make a copy of the final image
+    if i==iterations-1 then
+      C.snprintf(doutStr,100,"out/fluid2d.bmp",i)
+      dout:save(doutStr)
+    end
 
     orion.bindImage( [u_orig:id()], &uout )
     orion.bindImage( [v_orig:id()], &vout )

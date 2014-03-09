@@ -943,7 +943,6 @@ function orion.compile(imageFunctions, options)
   assert(type(options.stripwidth)=="number" or options.stripwidth=="default")
   if options.calcPerfModel == nil then options.calcPerfModel=false end
   if options.fastPerfModel == nil then options.fastPerfModel=options.calcPerfModel end
-  if options.straighten == nil then options.straighten=false end
   if options.fastmath ~= nil then assert(type(options.fastmath)=="boolean"); orion.fastmath = options.fastmath; end
   if options.ilp ~= nil then assert(type(options.ilp)=="boolean"); orion.ilp = options.ilp; end
 

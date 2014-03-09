@@ -1,50 +1,15 @@
-all: out/fixedcampipe.bmp out/blurx.bmp  out/noy.bmp out/noy.yml out/fixedcampipe.yml out/lk_level_2.bmp  out/d4.bmp out/deconvlucy.bmp  out/bruteof.bmp out/fcam4.bmp out/fcam4.yml
+ISRCS = $(wildcard *.t)
+SRCS := $(filter-out common.t, $(ISRCS))
+# some tests can't compile with the conv engine
+YML_SRCS := $(filter-out bruteof.t deconvlucy.t fluid2d.t lk.t, $(SRCS))
 
-clean:
-	rm out/*
+RES = $(patsubst %.t,out/%.bmp,$(SRCS))
+RES += $(patsubst %.t,out/%.yml,$(YML_SRCS))
 
-out/fixedcampipe.bmp: fixedcampipe.lua
-	terra fixedcampipe.lua
+all: $(RES)
 
-out/fixedcampipe.yml: fixedcampipe.lua
-	terra fixedcampipe.lua conv
+out/%.bmp : %.t
+	terra $<
 
-out/blurx.bmp: blurx.lua
-	terra blurx.lua
-
-out/d4.bmp: fluid2d.t
-	terra fluid2d.t
-
-out/noy.bmp: noy.t
-	terra noy.t
-
-out/fcam4.bmp: fcam4.t
-	terra fcam4.t
-
-out/fcam4.yml: fcam4.t
-	terra fcam4.t conv
-
-out/noy.yml: noy.t
-	terra noy.t conv
-
-out/lk_level_2.bmp: lk.t
-	terra lk.t
-
-out/lk.yml: lk.t
-	terra lk.t conv
-
-out/deconvlucy.yml: deconvlucy.t
-	terra deconvlucy.t conv
-
-out/deconvlucy.bmp: deconvlucy.t
-	terra deconvlucy.t
-
-out/bruteof.yml: bruteof.t
-	terra bruteof.t conv
-
-out/bruteof.bmp: bruteof.t
-	terra bruteof.t
-
-#out/lk_level_2.flo: lk.lua
-#	terra lk.lua
-
+out/%.yml : %.t
+	terra $< conv

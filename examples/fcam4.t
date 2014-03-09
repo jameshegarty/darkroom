@@ -82,12 +82,12 @@ end
 --convertRaw()
 
 --sensor = orion.loadRaw("img3.raw", W, H, 10)
---sensor = orion.loadRaw("n900.pgm", W, H, 10, 17, true)
+sensor = orion.loadRaw("n900.pgm", W, H, 10, 17, true)
 --sensor = orion.load("n900.jjm")
 --sensor = orion.load("../siggraph14/fcam_raw/dog_raw.pgm")
 --sensor = orion.loadRaw("../siggraph14/fcam_raw/dog_raw.pgm", W, H, 10, 17, true)
 --sensor = orion.loadRaw("../siggraph14/fcam_raw/n900dngs/photo2011.11.10_15.23.26.42.pgm", W, H, 10, 17, true)
-sensor = orion.loadRaw("../siggraph14/fcam_raw/n900dngs/photo2012.05.29_19.03.14.22.pgm", W, H, 10, 17, true)
+--sensor = orion.loadRaw("../siggraph14/fcam_raw/n900dngs/photo2012.05.29_19.03.14.22.pgm", W, H, 10, 17, true)
 
 campipe = makeCampipe(sensor, settings)
 
