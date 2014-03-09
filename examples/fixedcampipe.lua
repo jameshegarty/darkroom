@@ -1,3 +1,4 @@
+cstdio = terralib.includec("stdio.h")
 
 import "orion"
 
@@ -6,27 +7,6 @@ makeConv = false
 if arg[1]=="conv" then
   makeConv = true
 end
-
-local C = terralib.includecstring [[
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/time.h>
-#include <assert.h>
-#include <pthread.h>
-#include <stdint.h>
-#include <inttypes.h>
-
-double CurrentTimeInSecondsT() {
-  struct timeval tv;
-  gettimeofday(&tv, NULL);
-  return tv.tv_sec + tv.tv_usec / 1000000.0;
-}
-
-]]
-
---
-
---package.path = package.path..";../src/?.lua;../src/?.t"
 
 -- totally fixed function camera pipeline
 -- I have no idea why you'd ever actually build something like this,
@@ -42,7 +22,7 @@ function bilinearDemosaic(in1)
   local xoff = 1
   local yoff = 1
 
-  return im(x,y)
+  return im dem(x,y)
     let
     out : rgb8 = 0
     
@@ -159,27 +139,19 @@ else
 
   local sched = arg[1]
 
-  local debug = false
-  local verbose = false
-
-  if sched==nil then
-    debug = true
-    verbose = true
-  end
-
-  local r, model = orion.compile({campipeline},{verbose=verbose,debug=debug,schedule=arg[1],calcPerfModel=false})
+  local r, model = orion.compile({campipeline},{verbose=false,debug=false,schedule=arg[1],calcPerfModel=false})
 
   local terra runit()
-    var start = C.CurrentTimeInSecondsT()
+    var start = orion.currentTimeInSeconds()
     var res = r()
     for i=0,19 do
       res = r()
     end
-    var endt = C.CurrentTimeInSecondsT()
+    var endt = orion.currentTimeInSeconds()
 
     res:save("out/fixedcampipe.bmp")
 --    C.printf("runtime %f model %f fmodel %f\n",(endt-start)/double(20),model.total,model.fast.total)
-    C.printf("runtime %f\n",(endt-start)/double(20))
+    cstdio.printf("runtime %f\n",(endt-start)/double(20))
   end
 
   runit()

@@ -601,8 +601,8 @@ function orion.terracompiler.toTerraKernel(
   end
 
   local loopCode = {}
-  local stripsPerCore = math.floor(stripCount/orion.tune.cores)+2
-  if stripsPerCore>stripCount then stripsPerCore = stripCount end
+  assert(stripCount % orion.tune.cores == 0)
+  local stripsPerCore = math.floor(stripCount/orion.tune.cores)
 
   ------
   local strip = symbol(int)

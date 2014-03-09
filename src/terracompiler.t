@@ -6,18 +6,6 @@ cpthread = terralib.includec("pthread.h")
 
 orion.terracompiler = {}
 
-          
-local C = terralib.includecstring [[
-#include <sys/time.h>
-
-  double CurrentTimeInSeconds() {
-  struct timeval tv;
-  gettimeofday(&tv, 0);
-  return tv.tv_sec + tv.tv_usec / 1000000.0;
-                                       }
-
-                                   ]]
-
 terralib.require("terracompiler_codegen")
 
 -- convert a separate R,G,B image into a single RGB image
@@ -149,14 +137,14 @@ end
       table.insert(runKernels, quote 
 
 
-                     var start = C.CurrentTimeInSeconds()
+                     var start = orion.currentTimeInSeconds()
       [node.outputImage:alloc()];
       soa([node.outputImage:width()],
           [node.outputImage:height()],
           [node.index],
           [&node.outputImage.terraType](orion._boundImagesRuntime:get([node.special]).image.data),
           [node.outputImage:getPointer()])
-                       var len : double = (C.CurrentTimeInSeconds()-start)
+                       var len : double = (orion.currentTimeInSeconds()-start)
 
                      if orion.printruntime then
                        cstdio.printf("toSOA %s runtime:%f\n",[node:name()],len)
@@ -178,7 +166,7 @@ end
   table.insert(runKernels, 
                  quote 
                      
-                     var start = C.CurrentTimeInSeconds()
+                     var start = orion.currentTimeInSeconds()
 
                      node.preRun()
 
@@ -208,7 +196,7 @@ end
                      node.postRun()
 
                      if orion.printruntime then
-                       var len : double = (C.CurrentTimeInSeconds()-start)/orion.looptimes
+                       var len : double = (orion.currentTimeInSeconds()-start)/orion.looptimes
                        var bytes :double= [node.loop:bytes()]
                        var gbps :double= (bytes/len)/(1024*1024*1024)
                        var gb :double= bytes / (1024*1024*1024)
@@ -270,7 +258,7 @@ end
 
     local outputSymb = symbol(Image)
     return outputSymb, quote
-                     var start = C.CurrentTimeInSeconds()
+                     var start = orion.currentTimeInSeconds()
       var width = [outputImage:width()];
       var height = [outputImage:height()];
       var stride = [outputImage:widthStored()];
@@ -279,7 +267,7 @@ end
       var data : &opaque = aosfn(stride,height,merged);
       outputSymb:init( width, height, stride, channels, bits, isFloat, isSigned, data, data);
       releaseList
-                       var len : double = (C.CurrentTimeInSeconds()-start)
+                       var len : double = (orion.currentTimeInSeconds()-start)
       if orion.printruntime then
         cstdio.printf("toAOS channels:%d runtime:%f\n",channels,len)
       end

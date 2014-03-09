@@ -60,22 +60,6 @@ terra Crop:print()
   end
 end
 
-
-
-terra orion.cropIR.stripsPerCoreTerra(stripCount:int)
-  var stripsPerCore : int = cmath.floor(stripCount/orion.tune.cores)+2
-  if stripsPerCore>stripCount then stripsPerCore = stripCount end
-  
-  return stripsPerCore
-end
-
-function orion.cropIR.stripsPerCoreLua(stripCount)
-  assert(type(stripCount)=="number")
-  local stripsPerCore = math.floor(stripCount/orion.tune.cores)+2
-  if stripsPerCore>stripCount then stripsPerCore = stripCount end
-  return stripsPerCore
-end
-
 terra orion.cropIR.upToNearest(roundto : int,x: int)
   --if orion.debug and x < 0 then
   --  cstdio.printf("x < 0\n")
@@ -260,6 +244,10 @@ terra Crop:strip(stripId:int, stripCount:int)
   orionAssert(stripCount>0, "stripCount <=0")
   orionAssert(stripId>=0, "stripId <0")
 
+  -- more fancy partitioning schemes that allowed for a non-even number of strips
+  -- per core yielded suboptimal performancs
+  orionAssert( stripCount % orion.tune.cores == 0, "There must be an even number of strips per core!")
+
   if self.inf then
     assert(false)
   elseif self.width==0 or self.height==0 then
@@ -273,71 +261,19 @@ terra Crop:strip(stripId:int, stripCount:int)
                  inf=self.inf
                 }
   else
+    orionAssert(stripId < stripCount, "stripId >= stripCount")
+
     var stripWidth : int = cmath.ceil(float(self.width)/float(stripCount))
-    -- the height of one strip if our image was layed out in 1 vertical strip
-    var stripHeight : int = cmath.ceil(float(self.height*stripCount)/float(orion.tune.cores))
     
-    -- first figure out what core we're on, and where we should start
-    var stripsPerCore : int = orion.cropIR.stripsPerCoreTerra(stripCount)
-
-    orionAssert(stripId<stripsPerCore*orion.tune.cores, "stripId out of bounds")
-
-    var core = stripId / stripsPerCore
-    var columnWithinCore = stripId % stripsPerCore
-
-    var column = (stripHeight*core) / self.height
-    var startY = (stripHeight*core) % self.height
-    var endY = orion.cropIR.min( self.height, startY+stripHeight)
-    var amountRemaining = stripHeight - (endY-startY)
-
-    for i=0,columnWithinCore do
-      column = column+1
-      startY = 0
-      endY = orion.cropIR.min( self.height, amountRemaining)
-      amountRemaining = amountRemaining - (endY-startY)
-    end
-
-    orionAssert(endY>=startY, "endY not >= startY")
-    var l = self.left+column*stripWidth
-    var r = orion.cropIR.min(self.left+(column+1)*stripWidth, self.right)
-
-    if startY==endY then l=r end
-
-    var b = self.bottom+startY
-    var t = self.bottom+endY
-
-    -- we may have some redicual left over b/c we oversize the stripWidth/stripHeight
-    -- this keeps it from leaking out
-    if l>=r then b=t;l=r end
-
---[=[
-    cstdio.printf("-------------------\n")
-    cstdio.printf("STRIP id:%d stripCount:%d\n",stripId, stripCount)
-    cstdio.printf("START l:%d r:%d t:%d b:%d\n",self.left,self.right,self.top,self.bottom)
-    cstdio.printf("RES l:%d r:%d t:%d b:%d\n",l,r,t,b)
-    cstdio.printf("stripWidth:%d stripHeight:%d\n",stripWidth, stripHeight)
-    cstdio.printf("stripsPerCore:%d core:%d columnWithinCore:%d\n",stripsPerCore,core,columnWithinCore)
-    cstdio.printf("column:%d startY:%d endY:%d\n",column,startY,endY)
-    ]=]
-
-    if l~=r or t~=b then
-      orionAssert(l>=self.left,"l<self.left")
-      orionAssert(l<self.right,"l<self.right")
-      orionAssert(r>self.left,"r>self.left")
-      orionAssert(r<=self.right,"r<=self.right")
-      
-      orionAssert(t>self.bottom,"t>=self.bottom")
-      orionAssert(t<=self.top,"t<=self.top")
-      orionAssert(b>=self.bottom,"b>=self.bottom")
-      orionAssert(b<self.top,"b<self.top")
-    end
+    var l = self.left+stripId*stripWidth
+    var r = orion.cropIR.min(self.left+(stripId+1)*stripWidth, self.right)
 
     return Crop {left = l,
                  right = r,
-                 bottom = b,
-                 top = t,
+                 bottom = self.bottom,
+                 top = self.top,
                  width = r-l,
-                 height = t-b,
+                 height = self.height,
                  inf = false
                 }
   end
@@ -466,21 +402,8 @@ end
 function cropIRFunctions:getMaxWidth(stripCount)
   assert(type(stripCount)=="number")
 
-  local maxWidth = 0
-
-  local stripsPerCore = orion.cropIR.stripsPerCoreLua(stripCount)
-
-  for i=0,stripsPerCore*orion.tune.cores-1 do
-    local w = self:getWidth(i,stripCount)
-    if w>maxWidth then maxWidth = w end
-  end
-
---  if maxWidth > self:getWidth() then
---    print(maxWidth, self:getWidth())
---    assert(false)
---  end
-
-  return maxWidth
+  -- the way we do strips, the 0th strip will always be the max size
+  return self:getWidth(0, stripCount)
 end
 
 function cropIRFunctions:getWidth(stripId, stripCount)
@@ -516,9 +439,8 @@ return self:getArea()
   end
 
   local totalArea = 0
-  local stripsPerCore = orion.cropIR.stripsPerCoreLua(stripCount)
 
-  for i=0,stripsPerCore*orion.tune.cores-1 do
+  for i=0, stripCount-1 do
     totalArea = totalArea + self:getArea(i,stripCount)
   end
 
@@ -543,6 +465,7 @@ end
 function cropIRFunctions:calculate(stripId, stripCount)
   assert(type(stripId)=="number")
   assert(type(stripCount)=="number")
+  assert(stripId < stripCount or stripCount==0)
 
   if orion.cropIR._cache[stripCount]==nil or 
     orion.cropIR._cache[stripCount][stripId]==nil or 
@@ -904,7 +827,7 @@ function cropIRFunctions:stripRuntime(stripId, stripCount, stripList, stripSymbo
   if stripSymbolCache[stripCount][stripId][self]==nil then
 
     assert(type(stripCount)=="number")
-    
+
     local tmp = {}
     local sCache = symbol(Crop[stripCount])
     table.insert(tmp, quote var [sCache] end)

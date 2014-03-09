@@ -85,6 +85,25 @@ orion.fastmath = false -- extra math optimizations that I'm not sure preserve va
 orion.ilp = false
 orion.unroll = false
 
+local Ctmp = terralib.includecstring [[
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/time.h>
+#include <assert.h>
+#include <pthread.h>
+#include <stdint.h>
+#include <inttypes.h>
+
+  double CurrentTimeInSeconds() {
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  return tv.tv_sec + tv.tv_usec / 1000000.0;
+                                 }
+
+                                   ]]
+
+orion.currentTimeInSeconds = Ctmp.CurrentTimeInSeconds
+
 terra orionAssert(cond : bool, str : &int8)
   if cond==false then
     cstdio.printf("ASSERTT fail %s\n", str)
@@ -122,7 +141,6 @@ terralib.require("convir")
 require "internalir"
 require "scheduledir"
 terralib.require("image")
-require "oo"
 require "schedule"
 terralib.require("flatir")
 terralib.require("fastPerfModel")
