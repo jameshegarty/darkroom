@@ -60,6 +60,7 @@ terra Crop:print()
   end
 end
 
+
 terra orion.cropIR.upToNearest(roundto : int,x: int)
   --if orion.debug and x < 0 then
   --  cstdio.printf("x < 0\n")
@@ -267,7 +268,7 @@ terra Crop:strip(stripId:int, stripCount:int)
     
     var l = self.left+stripId*stripWidth
     var r = orion.cropIR.min(self.left+(stripId+1)*stripWidth, self.right)
-
+ 
     return Crop {left = l,
                  right = r,
                  bottom = self.bottom,
@@ -375,6 +376,31 @@ terra orion.cropIR.getBoundImageRuntime(id:int)
 
   return c
 
+end
+
+function cropIRFunctions:extraDebug()
+  local all = self:calculate(0,0)
+  local res = {}
+
+  for k,v in pairs(all) do
+    res["debug_"..k] = v
+  end
+
+  for c=0,orion.tune.cores-1 do
+    local cc = self:calculate(c,orion.tune.cores)
+
+    for k,v in pairs(cc) do
+      res["debug_"..c.."_"..k] = v
+    end
+
+  end
+
+
+  return res
+end
+
+function cropIRFunctions:irType()
+  return "cropIR"
 end
 
 function cropIRFunctions:getLeft()
@@ -606,6 +632,7 @@ function cropIRFunctions:calculate(stripId, stripCount)
 
     if result.width>0 and (result.right<=result.left or result.top<=result.bottom) then
       print(self.kind)
+      print(result.width,result.left,result.right)
       assert(false)
     end
 
@@ -672,7 +699,8 @@ function cropIRFunctions:printprettys()
       return str
     end)
 
-  return assignments..res.."\n["..self:getWidth().."x"..self:getHeight().."]"..self:getWidth(0,orion.tune.cores).." "..self:getMaxWidth(orion.tune.cores).." area:"..self:getArea().." rcarea(stripcount "..orion.tune.cores.."):"..self:getRecomputeArea(orion.tune.cores)
+--  return assignments..res.."\n["..self:getWidth().."x"..self:getHeight().."]"..self:getWidth(0,orion.tune.cores).." "..self:getMaxWidth(orion.tune.cores).." area:"..self:getArea().." rcarea(stripcount "..orion.tune.cores.."):"..self:getRecomputeArea(orion.tune.cores)
+  return assignments..res
 end
 
 function cropIRFunctions:expectedKeycount()

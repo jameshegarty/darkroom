@@ -10,6 +10,10 @@ loopIRMT={__index=loopIRFunctions,
 
 orion.loopIR = {}
 
+function loopIRFunctions:irType()
+  return "loopIR"
+end
+
 function loopIRFunctions:boundary(kernelID)
   assert(type(kernelID)=="number")
   assert(orion.type.isType(self["outputType"..kernelID]))
@@ -677,6 +681,7 @@ return nil
 
   if orion.verbose or orion.printloopir then
     scheduledLoopIR:printpretty()
+    scheduledLoopIR:printprettyJSON("debug/loopir.json")
   end
 
   return scheduledLoopIR

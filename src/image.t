@@ -213,7 +213,7 @@ terra Image:downsample()
 
   var chan = self.channels
 
-  orionAssert(chan==1,"lolol")
+--  orionAssert(chan==1,"lolol")
 
   for y= 0, heightd2 do
     for x= 0, widthd2 do
@@ -227,10 +227,11 @@ terra Image:downsample()
           
           var comb = float(aa)+float(bb)+float(cc)+float(dd)
           comb = comb/4
-          [&uint8](self.data)[y*self.stride*chan+x*chan+c] = comb
+          [&uint8](self.data)[y*widthd2*chan+x*chan+c] = comb
         end
         
       else
+        cstdio.printf("%d %d %d\n",self.bits,self.floating,self.isSigned)
         orionAssert(false,"unsupported Downsample")
       end
 
@@ -239,6 +240,7 @@ terra Image:downsample()
 
   self.width = widthd2
   self.height = heightd2
+  self.stride = widthd2
 end
 
 -- can't do this in place for obvious reasons

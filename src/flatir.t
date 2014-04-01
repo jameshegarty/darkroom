@@ -13,6 +13,10 @@ flatIRMT={__index=flatIRFunctions,
 
 orion.flatIR = {}
 
+function flatIRFunctions:irType()
+  return "flatIR"
+end
+
 function flatIRFunctions:init()
   setmetatable(self,nil)
   orion.flatIR.new(self)

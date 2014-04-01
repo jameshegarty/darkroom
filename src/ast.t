@@ -21,6 +21,10 @@ orion.ast.kinds={["func"] = 1, ["binop"]=1, ["unary"]=1, ["value"]=1, ["block"]=
          ["loop"]=1,["specialConv"]=1,["loadConv"]=1,["grow"]=1,["gather"]=1,["switch"]=1,["equals"]=1,["intersection"]=1,["union"]=1,["terra"]=1,["toSOAConcrete"]=1, ["toSOA"]=1,["toAOS"]=1}
 
 
+function astFunctions:irType()
+  return "ast"
+end
+
 function astFunctions:expectedKeycount()
   local baseSize = 1 -- kind
 

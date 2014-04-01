@@ -15,6 +15,10 @@ internalIRMT={__index=internalIRFunctions,
 
 orion.internalIR = {}
 
+function internalIRFunctions:irType()
+  return "internalIR"
+end
+
 function internalIRFunctions:expectedKeycount(flatir)
 
 

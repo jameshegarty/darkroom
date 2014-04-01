@@ -912,3 +912,108 @@ function IRFunctions:check()
 
 
 end
+
+function IRFunctions:printprettyJSON(filename)
+  local function printTableJSON(tab)
+    local isArray = true
+    for k,v in pairs(tab) do if type(k)~="number" then isArray=false end end
+
+    io.write(isArray and "[\n" or "{\n")
+
+    for k,v in pairs(tab) do
+      if isArray==false then
+        io.write("\"")
+        io.write(tostring(k))
+        io.write("\":")
+      end
+
+      if type(v)=="number" or type(v)=="boolean" then
+        io.write(tostring(v))
+      elseif  type(v)=="string" then
+        io.write("\"")
+        io.write(v)
+        io.write("\"")
+      elseif type(v)=="table" then
+        printTableJSON(v)
+      else
+        io.write("\"")
+        io.write(type(v))
+        io.write("\"")
+      end
+
+      if next(tab,k)~=nil then io.write(",") end
+    end
+
+    io.write(isArray and "]\n" or "}\n")
+  end
+
+  -------------------------
+  -- this just collects what info we're interested in
+  local dataTable = {}
+  local irTable = {}
+  local function collectTables(tab,depth)
+    if dataTable[tab]~=nil or depth<=0 then
+      do return end
+    end
+
+    for _,v in pairs(irTable) do
+      if v[tab]~=nil then return end
+    end
+
+    if orion.IR.isIR(tab) then
+--      for k,v in pairs(tab) do print(k) end
+      if irTable[tab:irType()] == nil then irTable[tab:irType()]={} end
+      irTable[tab:irType()][tab] = 1
+    end
+
+    dataTable[tab] = {}
+    for k,v in pairs(tab) do
+      if type(v)=="table" then v = "$"..tostring(v) end
+      dataTable[tab][k] = v
+    end
+
+    if orion.IR.isIR(tab) and tab.extraDebug~=nil then
+      for k,v in pairs(tab:extraDebug()) do
+        dataTable[tab][k] = v
+      end
+    end
+
+    for k,v in pairs(tab) do
+      if type(v)=="table" then
+        collectTables(v,depth-1)
+      end
+    end
+  end
+
+  self:visitEach(
+    function(ast)
+      collectTables(ast,6)
+    end)
+  -------------------------
+
+  local function tod3(tab)
+    local nodeToIndex = {}
+    local res = {nodes={}, links={}}
+    for ast,_ in pairs(tab) do 
+      table.insert(res.nodes, {name=ast:name(),group=0,kind=ast.kind,dataTable="$"..tostring(ast)})
+      nodeToIndex[ast] = #res.nodes-1
+    end
+
+    for ast,_ in pairs(tab) do 
+      for _,child in ast:children() do
+        table.insert(res.links,{source=nodeToIndex[child],target=nodeToIndex[ast],value=1})
+      end
+    end
+
+    return res
+  end
+
+  for k,v in pairs(irTable) do irTable[k] = tod3(v) end
+
+  local res = {dataTable=dataTable, irTable = irTable}
+
+  io.output(filename)
+  printTableJSON(res)
+
+  io.close()
+end

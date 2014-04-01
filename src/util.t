@@ -755,7 +755,7 @@ terra orion.util.loadBMP_UC(filename : &int8, width : &int, height : &int, chann
   currentCurPos = currentCurPos+sizeof(uint32);
 
   totalsize=orion.util.endian(totalsize);
-	
+
   -- seek through the bmp header, up to the width/height:
   cstdio.fseek(file, 4, chack.seek_cur());
   currentCurPos = currentCurPos+4;

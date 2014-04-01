@@ -7,6 +7,8 @@ typedASTMT={__index=typedASTFunctions,
 
 orion.typedAST = {}
 
+
+
 function orion.typedAST.checkOffsetExpr(expr, coord)
   assert(type(coord)=="string")
 
@@ -97,6 +99,10 @@ function orion.typedAST.synthOffset(ast,coord)
 
   -- now try to match this to a standard form
   return orion.typedAST.convertOffset(ast,coord)
+end
+
+function typedASTFunctions:irType()
+  return "typedAST"
 end
 
 -- get this node's value at compile time.

@@ -17,6 +17,10 @@ function scheduledIRFunctions:init()
   orion.scheduledIR.new(self)
 end
 
+function scheduledIRFunctions:irType()
+  return "scheduledIR"
+end
+
 function scheduledIRFunctions:makeNewName()
   return "scheduledIRNode"
 end
@@ -343,6 +347,7 @@ function orion.scheduledIR.internalIRToScheduledIR(internalIR, scheduleNodes, cr
 
   if orion.verbose then
     scheduledIR:printpretty()
+    scheduledIR:printprettyJSON("debug/scheduledir.json")
   end
 
   return scheduledIR
