@@ -22,21 +22,6 @@ function flatIRFunctions:init()
   orion.flatIR.new(self)
 end
 
-function flatIRFunctions:printprettys(root,parent,key,assignments)
-  return orion.internalIR.printprettys(self,root,parent,key,assignments)
-end
-
-function flatIRFunctions:printpretty()
-  orion.internalIR.printpretty(self)
-end
-
-function flatIRFunctions:expectedKeycount()
-  internalIRFunctions.expectedKeycount(self,true)
-end
-
-function flatIRFunctions:check()
-  internalIRFunctions.checkfn(self,true)
-end
 
 -- we take in the real outputImage so that we can produce
 -- and store valid results (some programs may check

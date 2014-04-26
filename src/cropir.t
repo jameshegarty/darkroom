@@ -1,4 +1,5 @@
 cstdlib = terralib.includec("stdlib.h")
+cstdio = terralib.includec("stdio.h")
 cmath = terralib.includec("math.h")
 
 

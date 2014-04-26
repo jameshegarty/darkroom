@@ -10,6 +10,7 @@ struct Image {
   bits : int, 
   floating : bool, -- is this floating point?
   isSigned : bool, -- is this signed?
+  SOA : bool, -- is this stored as SOA?
   data : &opaque,
   -- it's possible that data doesn't point to the start of the array (strided images)
   -- dataPtr points to the start of the array
@@ -24,6 +25,7 @@ terra Image:init(
   bits : int, 
   floating : bool,
   isSigned : bool,
+  SOA : bool,
   data : &opaque,
   dataPtr : &opaque)
 
@@ -37,6 +39,7 @@ terra Image:init(
   self.bits = bits
   self.floating = floating
   self.isSigned = isSigned
+  self.SOA = SOA
   self.data = data
   self.dataPtr = dataPtr
 end
@@ -48,9 +51,10 @@ terra Image:initSimple(
   bits : int, 
   floating : bool,
   isSigned : bool,
+  SOA : bool,
   data : &opaque)
 
-  self:init(width, height, width, channels, bits, floating, isSigned, data, data)
+  self:init(width, height, width, channels, bits, floating, isSigned, SOA, data, data)
 end
 
 terra Image:initWithFile(filename : &int8)
@@ -62,7 +66,7 @@ terra Image:initWithFile(filename : &int8)
 
   var data : &opaque = orion.util.loadImageUC(filename,&width,&height,&channels,&bits)
 
-  self:init(width,height,width,channels,bits,false,false,data,data)
+  self:init(width,height,width,channels,bits,false,false,false,data,data)
 end
 
 terra Image:initWithRaw(filename : &int8, w:int, h:int, bits:int)
@@ -70,7 +74,7 @@ terra Image:initWithRaw(filename : &int8, w:int, h:int, bits:int)
   var outBytes : int
   var data : &opaque = orion.util.loadRaw(filename,w,h,bits,0,false,&outBytes)
 
-  self:init(w,h,w,1,outBytes*8,false,false,data,data)
+  self:init(w,h,w,1,outBytes*8,false,false,false,data,data)
 end
 
 -- header: number of header bits to ignore
@@ -80,7 +84,7 @@ terra Image:initWithRaw(filename : &int8, w:int, h:int, bits:int, header : int, 
   var bytesOut : int
   var data : &opaque = orion.util.loadRaw(filename,w,h,bits, header, flipEndian,&bytesOut)
 
-  self:init(w,h,w,1,bytesOut*8,false,false,data,data)
+  self:init(w,h,w,1,bytesOut*8,false,false,false,data,data)
 end
 
 terra Image:free()
@@ -377,4 +381,86 @@ terra Image:toUint8()
     cstdio.printf("bits %d\n",self.bits)
     orionAssert(false, "unsupported toUint8 conversion")
   end
+end
+
+-- convert a separate R,G,B image into a single RGB image
+function makeToAOS(channels, ty)
+  assert(type(channels)=="number")
+  assert(terralib.types.istype(ty))
+
+  local symbs = {}
+--  local strideSymbs = {}
+  -- first C symbols are the pointers to the inputs,
+  -- second C symbols are the strides of the inputs
+  -- C is the number of channels
+  for i=1,channels do table.insert(symbs,symbol(&ty)) end
+  for i=1,channels do table.insert(symbs,symbol(int)) end
+
+  local res = symbol(&ty)
+  local c = symbol(int)
+  local strideSymb = symbol(int)
+
+  local kernel = {}
+  local nextLine = {}
+  
+  for i=1,channels do
+    table.insert(kernel, quote if c==(i-1) then @[res] = @[symbs[i]]; [symbs[i]] = [symbs[i]]+1; end end)
+    table.insert(nextLine, quote [symbs[i]] = [symbs[i]] - strideSymb + [symbs[channels+i]]; end)
+  end
+
+  return 
+    terra([strideSymb], height:int, [symbs])
+    if orion.verbose then cstdio.printf("TO AOS\n") end
+    var [res] = [&ty](cstdlib.malloc(channels*strideSymb*height*sizeof(ty)))
+    var ores = res
+
+    for y=0,height do
+      for x=0,strideSymb do
+        for [c]=0,channels do
+          kernel
+          res = res + 1
+        end
+      end
+      nextLine
+    end
+
+
+    return ores
+    end
+end
+
+terra Image:toAOS()
+
+end
+
+-- convert from AoS to SoA
+function makeToSOA(channels, ty)
+  assert(type(channels)=="number")
+  assert(channels>0)
+  assert(terralib.types.istype(ty))
+
+  local ptr = &ty
+  return 
+    terra(width:int,
+          height:int,
+          index:int,
+      from : ptr,
+      to : ptr)
+
+      if orion.verbose then cstdio.printf("TO SOA\n") end
+      orionAssert(index < channels, "index must be < channels")
+
+      for y=0,height do
+        for x=0,width do
+          for c=0,channels do
+            if c==index then @to=@from; to=to+1; end
+            from = from + 1
+          end
+        end
+      end
+    end
+end
+
+terra Image:toSOA()
+
 end

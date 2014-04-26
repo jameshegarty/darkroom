@@ -2,7 +2,9 @@
 --im a(x,y) : float32 a(x,y) end
 import "orion"
 
-a = orion.load("color.bmp")
+orionSimple = terralib.require("orionSimple")
+
+a = orionSimple.load("color.bmp")
 im a(x,y) : float32[3] a(x,y) end
 
 --im blurx(x,y) (a(x-1,y)+a(x,y)+a(x+1,y))/3 end
@@ -22,13 +24,13 @@ if arg[1]=="conv" then
   rfile:write(yrfile)
   rfile:close()
 else
-  tprog,model = orion.compile({blurx},
+  tprog = orionSimple.compile({blurx},
                               {
                                 debug=false, 
                                 verbose=false,
                                 printruntime=true,
                                 looptimes=50})
-  
+
   terra doit()
     var res = tprog()
     res:save("out/blurx.bmp")

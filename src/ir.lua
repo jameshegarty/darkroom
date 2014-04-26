@@ -354,9 +354,6 @@ function IRFunctions:matches(query)
 
     elseif #exploded==2 then
       if self[exploded[1]]~=exploded[2] then return false end      
-    elseif orion.ast.kinds[v]==nil then
-      orion.error("Bad query string '"..v.."'")
-      assert(false)
     else
       return false      
     end

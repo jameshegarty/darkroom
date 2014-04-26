@@ -122,112 +122,13 @@ function typedASTFunctions:eval()
   return nil
 end
 
-function typedASTFunctions:expectedKeycount()
-  local baseSize = 2
 
-  if self.kind=="mapreduce" or 
-    self.kind=="mapreducevar" or 
-    self.kind=="transform" or
-    self.kind=="crop" then
-    assert(false) -- should have been eliminated
-  elseif self.kind=="transformBaked" then
-    return baseSize+1+self:arraySize("translate")*2
-  elseif self.kind=="cropBaked" then
-    return baseSize+2
-  elseif self.kind=="cast" then
-    return baseSize+1
-  elseif self.kind=="toAOS" then
-    local cnt = self:arraySize("expr")
-    return baseSize+cnt
-  elseif self.kind=="multibinop" then
-    local lhscnt = self:arraySize("lhs")
-    local rhscnt = self:arraySize("rhs")
-    return baseSize+1+lhscnt+rhscnt
-  elseif self.kind=="multiunary" then
-    local exprcnt = self:arraySize("expr")
-    return baseSize+1+exprcnt
-  elseif self.kind=="toSOA" then
-    return 4 -- kind, special, index, type
-  elseif self.kind=="tap" then
-    return 4
-  elseif self.kind=="tapLUTLookup" then
-    return 6 -- kind, type, index, count, id, tapname
-  end
-
-  return astFunctions.expectedKeycount(self)+1 -- type
-end
-
-function typedASTFunctions:checkfn()
-
-  assert(orion.type.isType(self.type))
-
-  if self.kind=="mapreduce" or 
-    self.kind=="mapreducevar" or 
-    self.kind=="transform" or
-    self.kind=="crop" then
-    assert(false) -- should have been eliminated
-  elseif self.kind=="transformBaked" then
-    
-    local i=1
-    while self["translate"..i] or i<3 do -- we at least need coords for x,y
-      assert(type(self["translate"..i])=="number")
-      assert(type(self["scale"..i])=="number")
-      i=i+1
-    end
-
-    assert(getmetatable(self.expr)==getmetatable(self))
-  elseif self.kind=="toSOA" then
-    assert(type(self.special)=="number")
-    assert(type(self.index)=="number")
-  elseif self.kind=="cropBaked" then
-    assert(getmetatable(self.expr)==getmetatable(self))
-    assert(orion.cropIR.isCropIR(self.crop))
-    self.crop:check()
-  elseif self.kind=="cast" then
-    assert(orion.type.isType(self.type))
-    assert(getmetatable(self.expr)==getmetatable(self))
-    assert(self:childrenCount()==1)
-  elseif self.kind=="index" then
-    assert(getmetatable(self.expr)==getmetatable(self))
-    assert(type(self.index)=="number")
-  elseif self.kind=="toAOS" then
-    -- converts N inputs to array of structs form
-    local cnt = self:arraySize("expr")
-    self:map("expr",function(n) assert(getmetatable(n)==getmetatable(self)) end)
-  elseif self.kind=="multibinop" then
-    -- a binop that takes multiple inputs for the lhs, rhs
-    -- ex: dot product. These are vector operations that mix channels
-    -- that have been devectorized
-
-    local lhscnt = self:arraySize("lhs")
-    local rhscnt = self:arraySize("rhs")
-    self:map("lhs",function(n) assert(getmetatable(n)==getmetatable(self)) end)
-    self:map("rhs",function(n) assert(getmetatable(n)==getmetatable(self)) end)
-    assert(type(self.op)=="string")
-  elseif self.kind=="multiunary" then
-    -- a unary that takes multiple inputs for the expr
-    -- ex: arrayAnd. These are vector operations that mix channels
-    -- that have been devectorized
-
-    local exprcnt = self:arraySize("expr")
-    self:map("expr",function(n) assert(getmetatable(n)==getmetatable(self)) end)
-    assert(type(self.op)=="string")
-  else
-    astFunctions.checkfn(self)
-  end
-
-end
-
-function orion.typedAST.check(node,options)
-  return typedASTFunctions.check(node,options)
-end
-
-function orion.typedAST._toTypedAST(inast,cpuMode)
-
+function orion.typedAST._toTypedAST(inast, inputWidth, inputHeight)
+  assert(type(inputWidth)=="number")
+  assert(type(inputHeight)=="number")
 
   local res = inast:visitEach(
     function(origast,inputs)
-      assert(type(cpuMode)=="boolean")
       assert(orion.ast.isAST(origast))
       local ast = origast:shallowcopy()
 
@@ -240,7 +141,7 @@ function orion.typedAST._toTypedAST(inast,cpuMode)
       local cropsTranslated = {} -- crops affected by translation
 
       if ast.kind=="value" then
-        if ast.type==nil then ast.type=orion.type.valueToType(ast.value,cpuMode) end
+        if ast.type==nil then ast.type=orion.type.valueToType(ast.value) end
         assert(ast.type~=nil)
         crops[orion.cropIR.infinite():copyMetadataFrom(origast)] = 1
         cropsTranslated[orion.cropIR.infinite():copyMetadataFrom(origast)] = 1
@@ -305,7 +206,7 @@ function orion.typedAST._toTypedAST(inast,cpuMode)
         assert(lhs.type~=nil)
         assert(rhs.type~=nil)
         
-        local thistype, lhscast, rhscast = orion.type.meet( lhs.type, rhs.type, ast.op, cpuMode, origast )
+        local thistype, lhscast, rhscast = orion.type.meet( lhs.type, rhs.type, ast.op, origast )
         
         if thistype==nil then
           orion.error("Type error, inputs to "..ast.op,origast:linenumber(), origast:offset(), origast:filename())
@@ -323,10 +224,10 @@ function orion.typedAST._toTypedAST(inast,cpuMode)
         appendSet( cropsTranslated, lhscropsTranslated )
         appendSet( cropsTranslated, rhscropsTranslated )
 
-      elseif ast.kind=="special" then
-        ast.type = orion._boundImages[ast.id+1].type
-        crops[orion.cropIR.special(ast.id):copyMetadataFrom(origast)] = 1
-        cropsTranslated[orion.cropIR.special(ast.id):copyMetadataFrom(origast)] = 1
+      elseif ast.kind=="input" then
+        local crp = orion.cropIR.explicit(0,0,inputWidth,inputHeight)
+        crops[crp:copyMetadataFrom(origast)] = 1
+        cropsTranslated[crp:copyMetadataFrom(origast)] = 1
       elseif ast.kind=="position" then
         -- if position is still in the tree at this point, it means it's being used in an expression somewhere
         -- choose a reasonable type...
@@ -376,7 +277,7 @@ function orion.typedAST._toTypedAST(inast,cpuMode)
           end
         end
 
-        local thistype, lhscast, rhscast =  orion.type.meet(a.type,b.type, ast.kind, cpuMode, origast)
+        local thistype, lhscast, rhscast =  orion.type.meet(a.type,b.type, ast.kind, origast)
 
         if a.type~=lhscast then a = orion.typedAST.new({kind="cast",expr=a,type=lhscast}):copyMetadataFrom(origast) end
         if b.type~=rhscast then b = orion.typedAST.new({kind="cast",expr=b,type=rhscast}):copyMetadataFrom(origast) end
@@ -428,7 +329,7 @@ function orion.typedAST._toTypedAST(inast,cpuMode)
         
         local i=1
         while ast["arg"..i] do
-          ast["arg"..i] = inputs["arg"..i][1] --orion.typedAST._toTypedAST(ast["arg"..i],cpuMode)
+          ast["arg"..i] = inputs["arg"..i][1] 
           
           for c,_ in pairs(inputs["arg"..i][2]) do
             assert(orion.cropIR.isCropIR(c))
@@ -494,7 +395,7 @@ function orion.typedAST._toTypedAST(inast,cpuMode)
             orion.error("You can't have nested arrays (index "..(i-1).." of vector)")
           end
           
-          mtype, atype, btype = orion.type.meet( mtype, ast["expr"..cnt].type, "array", cpuMode, origast)
+          mtype, atype, btype = orion.type.meet( mtype, ast["expr"..cnt].type, "array", origast)
           
           if mtype==nil then
             orion.error("meet error")      
@@ -595,7 +496,7 @@ function orion.typedAST._toTypedAST(inast,cpuMode)
         ast.low=nil
         ast.high=nil
         
-        ast.type = orion.type.meet(low.type,high.type,"mapreducevar",cpuMode, origast)
+        ast.type = orion.type.meet(low.type,high.type,"mapreducevar", origast)
       elseif ast.kind=="tap" then
         -- taps should be tagged with type already
         crops[orion.cropIR.infinite():copyMetadataFrom(origast)]=1
@@ -684,8 +585,8 @@ function orion.typedAST._toTypedAST(inast,cpuMode)
           i=i+1
         end
 
-        ast.type = orion.type.reduce( ast.op, typeSet, cpuMode)
-      elseif ast.kind=="multiout" then
+        ast.type = orion.type.reduce( ast.op, typeSet)
+      elseif ast.kind=="outputs" then
         -- doesn't matter, this is always the root and we never need to get its type
         ast.type = inputs.expr1[1].type
         crops = inputs.expr1[2]
@@ -726,7 +627,6 @@ function orion.typedAST._toTypedAST(inast,cpuMode)
         appendSet(cropsTranslated, inputs.x[3])
         appendSet(cropsTranslated, inputs.y[3])
       else
-        origast:printpretty()
         orion.error("Internal error, typechecking for "..ast.kind.." isn't implemented!",ast.line,ast.char)
         return nil
       end
@@ -751,9 +651,10 @@ function orion.typedAST._toTypedAST(inast,cpuMode)
   return res[1], res[2]
 end
 
-function orion.typedAST.astToTypedAST(ast,cpuMode)
-  assert(type(cpuMode)=="boolean")
+function orion.typedAST.astToTypedAST(ast, inputWidth, inputHeight)
   assert(orion.ast.isAST(ast))
+  assert(type(inputWidth)=="number")
+  assert(type(inputHeight)=="number")
 
   -- first we run CSE to clean up the users code
   -- this will save us a lot of time/memory later on
@@ -788,10 +689,10 @@ function orion.typedAST.astToTypedAST(ast,cpuMode)
         -- this must happen at compile time
         local i=1
         while tmpAST["varname"..i] do
-          local lowAST, lowCrop = orion.typedAST._toTypedAST(node["varlow"..i],cpuMode)
+          local lowAST, lowCrop = orion.typedAST._toTypedAST(node["varlow"..i], inputWidth, inputHeight)
           local low = lowAST:eval()
           
-          local highAST, highCrop = orion.typedAST._toTypedAST(node["varhigh"..i],cpuMode)
+          local highAST, highCrop = orion.typedAST._toTypedAST(node["varhigh"..i], inputWidth, inputHeight)
           local high = highAST:eval()
           
           if type(low)~="number" then
@@ -892,7 +793,7 @@ function orion.typedAST.astToTypedAST(ast,cpuMode)
     print("_toTypedAST",collectgarbage("count"))
   end
 
-  local typedAST = orion.typedAST._toTypedAST(ast,cpuMode)
+  local typedAST = orion.typedAST._toTypedAST(ast, inputWidth, inputHeight)
   typedAST:check()
 
   if orion.verbose or orion.printstage then

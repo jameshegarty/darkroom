@@ -1,14 +1,3 @@
---require("Strict")
-package.path = package.path .. ";../src/?.lua;../src/?.t;./src/?.t;./src/?.lua"
-
-
-local _ORION_PATH = os.getenv("ORION_PATH")
-if _ORION_PATH  then
-   package.path = package.path .. ";" .. _ORION_PATH .. "/src/?.lua;"
-                                      .. _ORION_PATH .. "/src/?.t;" 
-end
-
-
 local cstdio = terralib.includec("stdio.h")
 local cstdlib = terralib.includec("stdlib.h")
 
@@ -75,7 +64,6 @@ orion.defaultCrop = orion.cropSame
 -- for debugging. Set these using compile options, not here!
 orion.verbose = false -- write out a ton of crap
 orion.printasm = false -- print out the asm of compiled kernels
-orion.printloopir = false -- print out loopIR (final ir before compile)
 orion.printstage = false -- print the stage of compile we're in (debug slow compiles)
 orion.debug = false -- enable asserts & checks in generated code & writing of intermediates
 orion.debugimages = false -- enables debug images
@@ -135,19 +123,17 @@ require "conv"
 require "optimizations"
 require "ir"
 terralib.require("ast")
+terralib.require("imageWrapper")
 require "typedAST"
-terralib.require("loopir")
 terralib.require("convir")
 require "internalir"
-require "scheduledir"
+require "kernelgraph"
 terralib.require("image")
 require "schedule"
 terralib.require("flatir")
-terralib.require("fastPerfModel")
 terralib.require("api")
 terralib.require("cropir")
 terralib.require("terracompiler")
-terralib.require("runtime")
 -- terra compiler gets loaded at the end of the file after everything else
 
 

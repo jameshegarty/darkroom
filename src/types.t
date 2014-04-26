@@ -39,39 +39,30 @@ end
 
 -- given a lua variable, figure out the correct type and
 -- least precision that can represent it
-function orion.type.valueToType(v, cpuMode)
-  assert(type(cpuMode)=="boolean")
+function orion.type.valueToType(v)
 
-  if cpuMode then
-
-    if v==nil then return nil end
-
-    if type(v)=="boolean" then
-      return orion.type.bool()
-    elseif type(v)=="number" then
-      local vi, vf = math.modf(v) -- returns the integral bit, then the fractional bit
-      
-      -- you might be tempted to take things from 0...255 to a uint8 etc, but this is bad!
-      -- then if the user write -(5+4) they get a positive number b/c it's a uint8!
-      -- similarly, if you take -128...127 to a int8, you also get problems. Then, you
-      -- try to meet this int8 with a uint8, and get a int16! (bc this is the only sensible thing)
-      -- when really what you wanted is a uint8.
-      -- much better to just make the default int32 and have users cast it to what they want
-
-      if vf~=0 then
-        return orion.type.float(32)
-      else
-        return orion.type.int(32)
-      end
+  if v==nil then return nil end
+  
+  if type(v)=="boolean" then
+    return orion.type.bool()
+  elseif type(v)=="number" then
+    local vi, vf = math.modf(v) -- returns the integral bit, then the fractional bit
+    
+    -- you might be tempted to take things from 0...255 to a uint8 etc, but this is bad!
+    -- then if the user write -(5+4) they get a positive number b/c it's a uint8!
+    -- similarly, if you take -128...127 to a int8, you also get problems. Then, you
+    -- try to meet this int8 with a uint8, and get a int16! (bc this is the only sensible thing)
+    -- when really what you wanted is a uint8.
+    -- much better to just make the default int32 and have users cast it to what they want
+    
+    if vf~=0 then
+      return orion.type.float(32)
+    else
+      return orion.type.int(32)
     end
-
-    orion.error("Couldn't convert "..v.." to orion type")
-  else
-    assert(false)
   end
-
-  return nil
-
+  
+  orion.error("Couldn't convert "..v.." to orion type")
 end
 
 function orion.type.cropMeet(a,b)
@@ -91,11 +82,10 @@ end
 
 -- returns resultType, lhsType, rhsType
 -- ast is used for error reporting
-function orion.type.meet( a, b, op, cpuMode, ast)
+function orion.type.meet( a, b, op, ast)
   assert(orion.type.isType(a))
   assert(orion.type.isType(b))
   assert(type(op)=="string")
-  assert(type(cpuMode)=="boolean")
   assert(orion.IR.isIR(ast))
   
   assert(getmetatable(a)==TypeMT)
@@ -103,7 +93,6 @@ function orion.type.meet( a, b, op, cpuMode, ast)
 
   local treatedAsBinops = {["select"]=1, ["vectorSelect"]=1,["array"]=1, ["mapreducevar"]=1, ["dot"]=1, ["min"]=1, ["max"]=1}
 
-  if cpuMode then
     if orion.type.isArray(a) and orion.type.isArray(b) then
       if orion.type.arrayLength(a)~=orion.type.arrayLength(b) then
         print("Type error, array length mismatch")
@@ -111,13 +100,13 @@ function orion.type.meet( a, b, op, cpuMode, ast)
       end
       
       if op=="dot" then
-        local rettype,at,bt = orion.type.meet(a.over,b.over,op,cpuMode,ast)
+        local rettype,at,bt = orion.type.meet(a.over,b.over,op,ast)
         local convtypea = orion.type.array(at,orion.type.arrayLength(a))
         local convtypeb = orion.type.array(bt,orion.type.arrayLength(a))
         return rettype, convtypea, convtypeb
       elseif orion.cmpops[op] then
         -- cmp ops are elementwise
-        local rettype,at,bt = orion.type.meet(a.over,b.over,op,cpuMode,ast)
+        local rettype,at,bt = orion.type.meet(a.over,b.over,op,ast)
         local convtypea = orion.type.array(at,orion.type.arrayLength(a))
         local convtypeb = orion.type.array(bt,orion.type.arrayLength(a))
 
@@ -125,7 +114,7 @@ function orion.type.meet( a, b, op, cpuMode, ast)
         return thistype, convtypea, convtypeb
       elseif orion.binops[op] or treatedAsBinops[op] then
         -- do it pointwise
-        local thistype = orion.type.array(orion.type.meet(a.over,b.over,op,cpuMode,ast),orion.type.arrayLength(a))
+        local thistype = orion.type.array(orion.type.meet(a.over,b.over,op,ast),orion.type.arrayLength(a))
         return thistype, thistype, thistype
       elseif op=="pow" then
         local thistype = orion.type.array(orion.type.float(32),orion.type.arrayLength(a))
@@ -253,10 +242,10 @@ function orion.type.meet( a, b, op, cpuMode, ast)
       return thistype, thistype, thistype
     elseif orion.type.isArray(a) and orion.type.isArray(b)==false then
       -- we take scalar constants and duplicate them out to meet the other arguments array length
-      local thistype, lhstype, rhstype = orion.type.meet(a,orion.type.array(b,orion.type.arrayLength(a)),op,cpuMode,ast)
+      local thistype, lhstype, rhstype = orion.type.meet(a,orion.type.array(b,orion.type.arrayLength(a)),op,ast)
       return thistype, lhstype, rhstype
     elseif orion.type.isArray(a)==false and orion.type.isArray(b) then
-      local thistype, lhstype, rhstype = orion.type.meet(orion.type.array(a,orion.type.arrayLength(b)),b,op,cpuMode,ast)
+      local thistype, lhstype, rhstype = orion.type.meet(orion.type.array(a,orion.type.arrayLength(b)),b,op,ast)
       return thistype, lhstype, rhstype
     else
       print("Type error, meet not implemented for "..orion.type.typeToString(a).." and "..orion.type.typeToString(b),"line",ast:linenumber(),ast:filename())
@@ -265,10 +254,7 @@ function orion.type.meet( a, b, op, cpuMode, ast)
       --os.exit()
     end
     
-  else
     assert(false)
-  end
-
   return nil
 end
 
@@ -620,7 +606,7 @@ end
 -- this calculates the precision of the result of a reduction tree.
 -- op is the reduction op
 -- typeTable is a list of the types we're reducing over
-function orion.type.reduce(op,typeTable,cpuMode)
+function orion.type.reduce(op,typeTable)
   assert(type(typeTable)=="table")
   assert(#typeTable>=1)
   for k,v in pairs(typeTable) do assert(orion.type.isType(v)) end

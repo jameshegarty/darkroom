@@ -6,374 +6,795 @@ cpthread = terralib.includec("pthread.h")
 
 orion.terracompiler = {}
 
-terralib.require("terracompiler_codegen")
+-- this is the source for the terra compiler for orion
 
--- convert a separate R,G,B image into a single RGB image
-function orion.terracompiler.toAOS(channels, ty)
-  assert(type(channels)=="number")
-  assert(terralib.types.istype(ty))
-
-  local symbs = {}
---  local strideSymbs = {}
-  -- first C symbols are the pointers to the inputs,
-  -- second C symbols are the strides of the inputs
-  -- C is the number of channels
-  for i=1,channels do table.insert(symbs,symbol(&ty)) end
-  for i=1,channels do table.insert(symbs,symbol(int)) end
-
-  local res = symbol(&ty)
-  local c = symbol(int)
-  local strideSymb = symbol(int)
-
-  local kernel = {}
-  local nextLine = {}
+-- if pointer is true, generate a pointer instead of a value
+function orion.terracompiler.symbol(_type,pointer,vectorN)
+  assert(orion.type.isType(_type))
+  assert(vectorN==nil or type(vectorN)=="number")
   
-  for i=1,channels do
-    table.insert(kernel, quote if c==(i-1) then @[res] = @[symbs[i]]; [symbs[i]] = [symbs[i]]+1; end end)
-    table.insert(nextLine, quote [symbs[i]] = [symbs[i]] - strideSymb + [symbs[channels+i]]; end)
-  end
-
-  return 
-    terra([strideSymb], height:int, [symbs])
-    if orion.verbose then cstdio.printf("TO AOS\n") end
-    var [res] = [&ty](cstdlib.malloc(channels*strideSymb*height*sizeof(ty)))
-    var ores = res
-
-    for y=0,height do
-      for x=0,strideSymb do
-        for [c]=0,channels do
-          kernel
-          res = res + 1
-        end
-      end
-      nextLine
-    end
-
-
-    return ores
-    end
+  return symbol(orion.type.toTerraType(_type,pointer,vectorN))
 end
 
--- convert from AoS to SoA
-function orion.terracompiler.toSOA(channels, ty)
-  assert(type(channels)=="number")
-  assert(channels>0)
-  assert(terralib.types.istype(ty))
+function orion.terracompiler.vectorizeBinaryPointwise(func,lhs,rhs,V)
+  assert(terralib.isfunction(func))
+  assert(terralib.isquote(lhs))
+  assert(terralib.isquote(rhs))
+  assert(type(V)=="number")
 
-  local ptr = &ty
-  return 
-    terra(width:int,
-          height:int,
-          index:int,
-      from : ptr,
-      to : ptr)
+  -- if we didn't store these in a variable, they may not be a vector type
+  lhs = `[vector(float,V)](lhs)
+  rhs = `[vector(float,V)](rhs)
 
-      if orion.verbose then cstdio.printf("TO SOA\n") end
-      orionAssert(index < channels, "index must be < channels")
+  local q = {}
+  for i=1,V do
+    table.insert(q,`func(lhs[i-1],rhs[i-1]) )
+  end
+  assert(#q==V)
+  
+  return `vector(q)
+end
 
-      for y=0,height do
-        for x=0,width do
-          for c=0,channels do
-            if c==index then @to=@from; to=to+1; end
-            from = from + 1
+orion.terracompiler.numberBinops={
+  ["+"]=function(lhs,rhs) return `lhs+rhs end,
+  ["-"]=function(lhs,rhs) return `lhs-rhs end,
+  ["/"]=function(lhs,rhs) return `lhs/rhs end,
+  ["*"]=function(lhs,rhs) return `lhs*rhs end,
+  ["<"]=function(lhs,rhs) return `lhs<rhs end,
+  ["<="]=function(lhs,rhs) return `lhs<=rhs end,
+  [">"]=function(lhs,rhs) return `lhs>rhs end,
+  [">="]=function(lhs,rhs) return `lhs>=rhs end,
+  ["=="]=function(lhs,rhs) return `lhs==rhs end,
+  ["~="]=function(lhs,rhs) return `lhs~=rhs end,
+  ["%"]=function(lhs,rhs) return `lhs%rhs end,
+  ["&"]=function(lhs,rhs) return `lhs and rhs end,
+  ["<<"]=function(lhs,rhs) return `lhs<<rhs end,
+  [">>"]=function(lhs,rhs) return `lhs>>rhs end,
+  ["min"]=function(lhs,rhs) return `terralib.select(lhs<rhs,lhs,rhs) end,
+  ["max"]=function(lhs,rhs) return `terralib.select(lhs>rhs,lhs,rhs) end,
+  ["pow"]=function(lhs,rhs,V)
+    return orion.terracompiler.vectorizeBinaryPointwise(cmath.pow,lhs,rhs,V)
+  end
+}
+
+
+-- func should take a single scalar value, and return a single scalar value
+function orion.terracompiler.vectorizeUnaryPointwise(func,expr,V)
+  assert(terralib.isfunction(func))
+  assert(terralib.isquote(expr))
+  assert(type(V)=="number")
+
+  local q = {}
+  for i=1,V do
+    table.insert(q,`func(expr[i-1]))
+  end
+  assert(#q==V)
+
+  return `vector(q)
+end
+
+orion.terracompiler.numberUnary={
+  ["floor"] = function(expr,ast,V)
+    return orion.terracompiler.vectorizeUnaryPointwise(cmath.floor,expr,V)
+  end,
+  ["-"] = function(expr,ast,V) return `-expr end,
+  ["not"] = function(expr,ast,V) return `not expr end,
+  ["abs"] = function(expr,ast,V)
+    if ast.type==orion.type.float(32) then
+      return orion.terracompiler.vectorizeUnaryPointwise(cmath.fabs,expr,V)
+    elseif orion.type.isUint(ast.type) then
+      -- a uint is always positive
+      return expr
+    elseif ast.type==orion.type.int(32) or 
+      ast.type==orion.type.int(64) or 
+      ast.type==orion.type.int(16) then
+      return orion.terracompiler.vectorizeUnaryPointwise(cstdlib.abs,expr,V)
+    else
+      ast.type:print()
+      assert(false)
+    end
+  end,
+  ["sin"] = function(expr,ast,V)
+    if ast.type==orion.type.float(32) then
+      return orion.terracompiler.vectorizeUnaryPointwise(cmath.sin,expr,V)
+    else
+      assert(false)
+    end
+  end,
+  ["cos"] = function(expr,ast,V)
+    if ast.type==orion.type.float(32) then
+      return orion.terracompiler.vectorizeUnaryPointwise(  cmath.cos, expr, V )
+    else
+      assert(false)
+    end
+  end,
+  ["exp"] = function(expr,ast,V)
+    if ast.type==orion.type.float(32) then
+      return orion.terracompiler.vectorizeUnaryPointwise(  cmath.exp, expr, V )
+    else
+      assert(false)
+    end
+  end,
+  ["print"]= function(expr,ast,V)
+    if V>1 then
+      assert(false)
+    else
+      if node.expr.type==orion.type.float(32) then
+        table.insert(stat,quote cstdio.printf("orion.printf:%f\n",expr) end)
+      elseif node.expr.type==orion.type.uint(8) then
+        table.insert(stat,quote cstdio.printf("orion.printd:%d\n",expr) end)
+      else
+        print(orion.type.typeToString(node.expr.type))
+        assert(false)
+      end
+   end
+  end
+}
+
+orion.terracompiler.boolBinops={
+  ["and"]=function(lhs,rhs) return `lhs and rhs end,
+  ["or"]=function(lhs,rhs) return `lhs or rhs end
+}
+
+function orion.terracompiler.codegen(
+  inkernel, V, xsymb, ysymb, loopid, stripCount, retime)
+
+  assert(type(loopid)=="number")
+  assert(type(stripCount)=="number")
+  assert(orion.flatIR.isFlatIR(inkernel))
+  assert(type(retime)=="number")
+
+  local stat = {}
+
+  inkernel = orion.optimize.CSE(inkernel,{})
+
+  local expr =inkernel:visitEach(
+    function(node,inputs)
+
+
+      local out
+      local resultSymbol = orion.terracompiler.symbol(node.type, false, V)
+
+      for k,v in node:children() do
+        assert(terralib.isquote(inputs[k]))
+      end
+      
+      if node.kind=="loadConcrete" then
+        out = node.from:get(loopid, node.x,node.y,V,retime);
+      elseif node.kind=="binop" then
+        local lhs = inputs["lhs"]
+        local rhs = inputs["rhs"]
+        
+        if orion.type.astIsNumber(node.lhs) and orion.type.astIsNumber(node.rhs) then
+          
+          if orion.terracompiler.numberBinops[node.op]==nil then
+            orion.error("Unknown scalar op "..node.op)
           end
+          
+          out = orion.terracompiler.numberBinops[node.op](lhs,rhs,V)
+        elseif orion.type.astIsBool(node.lhs) and orion.type.astIsBool(node.rhs) then
+          
+          if orion.terracompiler.boolBinops[node.op]==nil then
+            orion.error("Unknown scalar bool op "..node.op)
+          end
+          
+          out = orion.terracompiler.boolBinops[node.op](lhs,rhs)
+        else
+          print("Unknown/bad type to binop")
+          print(orion.type.typeToString(orion.getType(node.lhs)))
+          print(orion.type.typeToString(orion.getType(node.rhs)))
+          os.exit()
         end
-      end
-    end
-end
+      elseif node.kind=="multibinop" then
 
--- result is a scheduledIR graph of terra nodes.
--- terra nodes contain the terra functions for the left, right, middle, and all 
--- strips. Calculate how many strips we need based on the size, and
--- launche the kernels in an order that satisfies dependencies.
-function orion.terracompiler.generateExecutable(
-  result,
-  regionMode,
-  outputTypes,
-  base1,
-  base2,
-  stripWidths,
-  model)
+        if node.op=="dot" then
+          local dotresult
 
-  assert(orion.scheduledIR.isScheduledIR(result))
-  assert(type(regionMode)=="string")
-  assert(type(outputTypes)=="table")
-  assert(type(base1)=="number")
-  assert(type(base2)=="number")
-  assert(type(stripWidths)=="table")
-  --assert(type(model)=="table") -- model can be nil
-
-  if orion.verbose then print("generateExecutable") end
-
-  -- calculate the largest type we used
-  local largestTypeQuote = `0
-
-  assert(keycount(outputTypes)>0)
-  for t,_ in pairs(outputTypes) do
-    assert(orion.type.isType(t))
-    largestTypeQuote = `orion.cropIR.max(sizeof([orion.type.toTerraType(t,false)]),largestTypeQuote)
-  end
-
-  -----
-  local runKernels = {}
-  local setRegisterSize = {}
-
-
-  result:S("toSOAConcrete"):traverse(
-    function(node)
-      local boundImage = orion._boundImages[node.special+1]
-      local soa = orion.terracompiler.toSOA(orion.type.arrayLength(boundImage.type),node.outputImage.terraType)
-
-      if orion.debug then
-        table.insert(runKernels, quote 
-                     if orion._boundImagesRuntime:get(node.special).active==false then
-                       cstdio.printf("Nothing bound to image id %d\n",node.special)
-                       orionAssert(false, "Unbound image")
-                     end
-      end)
-  
-end
-
-      table.insert(runKernels, quote 
-
-
-                     var start = orion.currentTimeInSeconds()
-      [node.outputImage:alloc()];
-      soa([node.outputImage:width()],
-          [node.outputImage:height()],
-          [node.index],
-          [&node.outputImage.terraType](orion._boundImagesRuntime:get([node.special]).image.data),
-          [node.outputImage:getPointer()])
-      var len : double = ( (orion.currentTimeInSeconds())-start)
-
-                     if orion.printruntime then
-                       cstdio.printf("toSOA %s runtime:%f\n",[node:name()],len)
-                     end
-    end)
-    end)
-
-  result:S("terra"):traverse(
-    function(node)
-      table.insert(setRegisterSize, quote orion.runtime.setRegisterSize([node.loop.outputNeededRegionUnion:growToNearestX(orion.tune.V):getArea()]*sizeof(double)) end)
-
-  local modelTime = 0
-  if model then
-    assert(type(model.nodes)=="table")
-    assert(model.nodes[node.loop:name()]~=nil)
-    modelTime = model.nodes[node.loop:name()].time
-  end
-
-  table.insert(runKernels, 
-                 quote 
-                     
-                     var start = orion.currentTimeInSeconds()
-
-                     node.preRun()
-
-                     var threads : cpthread.pthread_t[orion.tune.cores]
-                     var stripStore : int[orion.tune.cores]
-
-                     for i=0, orion.looptimes do
-                       -- launch the kernel for each strip
-                       
-                       if orion.tune.cores==1 then
-                         -- don't launch a thread to save thread launch overhead
-                         stripStore[0]=0
-                         node.all(&stripStore[0])
-                       else
-                         for i=0,orion.tune.cores do
---                           cstdio.printf("Launch %d\n",i)
-                           stripStore[i] = i
-                           cpthread.pthread_create(&threads[i],nil,node.all,&stripStore[i]);
-                         end
-                         for i=0,orion.tune.cores do
-                             cpthread.pthread_join(threads[i],nil)
---                             cstdio.printf("join %d\n",i)
-                         end
-                       end
-                     end
-
-                     node.postRun()
-
-                     if orion.printruntime then
-                       var len : double = (orion.currentTimeInSeconds()-start)/orion.looptimes
-                       var bytes :double= [node.loop:bytes()]
-                       var gbps :double= (bytes/len)/(1024*1024*1024)
-                       var gb :double= bytes / (1024*1024*1024)
-                       var lt : int = orion.looptimes
-                       var mod : float = modelTime
-                       var modAccur : float = mod/len
-                       cstdio.printf("%s loopTimes:%d avgRuntime:%f GB/s:%f GB:%f model:%f modelFit:%f\n",[node.loop:name()],lt,len,gbps,gb,mod,modAccur)
+          node:map("lhs",
+                   function(n,i)
+                     if dotresult==nil then
+                       dotresult = `([inputs["lhs"..i]]*[inputs["rhs"..i]])
+                     else
+                       dotresult = `dotresult + ([inputs["lhs"..i]]*[inputs["rhs"..i]])
                      end
                    end)
-  end)
 
-  result:S("terra"):traverse(
-    function(node)
-      if orion.printasm then 
-        print("Kernel",node.loop:name())
-        node.all:printpretty() 
-        node.all:disas()
+          out = dotresult
+       else
+          assert(false)
+       end
+      elseif node.kind=="multiunary" then
+ 
+        if node.op=="arrayAnd" then
+
+          local cmpresult
+
+          node:map("expr",
+                   function(n,i)
+                     if cmpresult==nil then
+                       cmpresult = inputs["expr"..i]
+                     else
+                       cmpresult = `cmpresult and [inputs["expr"..i]]
+                     end
+                   end)
+
+          out = cmpresult
+        else
+          assert(false)
+        end
+      elseif node.kind=="unary" then
+        local expr = inputs["expr"]
+        
+        if orion.terracompiler.numberUnary[node.op]==nil then
+          orion.error("Unknown unary op "..node.op)
+        end
+
+        out = orion.terracompiler.numberUnary[node.op](expr,node.expr,V)
+      elseif node.kind=="value" then
+        out = `[orion.type.toTerraType(node.type,false,V)](node.value)
+      elseif node.kind=="tap" then
+        out = `@[&orion.type.toTerraType(node.type)](orion.runtime.getTap(node.id))
+      elseif node.kind=="tapLUTLookup" then
+        local index = inputs["index"]
+
+        local q = {}
+        for i=1,V do
+          local debugQ = quote end
+
+          if orion.debug then
+            debugQ = quote orionAssert(index[i-1]>=0,"LUT index <0");
+              if index[i-1]>=[node.count] then
+                cstdio.printf("i %d, c %d\n",index[i-1],[node.count]);
+                orionAssert(false,"LUT index >= count");
+                end end
+          end
+
+          table.insert(q,quote debugQ in [&orion.type.toTerraType(node.type)](orion.runtime.getTapLUT(node.id))[index[i-1]] end)
+        end
+        out = `vector(q)
+      elseif node.kind=="cast" then
+
+        local input = inputs["expr"]
+
+        if node.type==orion.type.float(32) then
+        elseif node.type==orion.type.float(64) then
+        elseif node.type==orion.type.uint(8) then
+        elseif node.type==orion.type.int(8) then
+        elseif node.type==orion.type.int(32) then
+        elseif node.type==orion.type.int(64) then
+        elseif node.type==orion.type.uint(32) then
+        elseif node.type==orion.type.int(16) then
+        elseif node.type==orion.type.uint(16) then
+        elseif node.type==orion.type.bool() then
+        else
+          orion.error("Cast to "..orion.type.typeToString(node.type).." not implemented!")
+          assert(false)
+        end
+
+        local ttype = orion.type.toTerraType(node.type,false, V)
+
+        local expr = inputs["expr"]
+        out = `ttype(expr)
+
+      elseif node.kind=="select" or node.kind=="vectorSelect" then
+        local cond = inputs["cond"]
+        local a = inputs["a"]
+        local b = inputs["b"]
+
+        out = `terralib.select(cond,a,b)
+      elseif node.kind=="position" then
+
+        if node.coord=="x" then
+          -- xsymb is a scalar, we need to convert it to a vector
+          --out = `xsymb
+          local tmp = {}
+          for i=0,V-1 do table.insert(tmp,`xsymb+i) end
+          out = `vector(tmp)
+        elseif node.coord=="y" then
+          out = `ysymb
+        elseif node.coord=="z" then
+          assert(false)
+        else
+          assert(false)
+        end
+
+      elseif node.kind=="assert" then
+        local expr = inputs["expr"]
+
+        if orion.debug then
+          local cond = inputs["cond"]
+          local printval = inputs["printval"]
+      
+          if node.printval.type==orion.type.float(32) then
+            for i = 1,V do
+              table.insert(stat,quote if cond[i-1]==false then 
+                               cstdio.printf("ASSERT FAILED, value %f line %d x:%d y:%d\n",printval[i-1],[node:linenumber()],xsymb,ysymb);
+                             cstdlib.exit(1); 
+                                      end end)
+            end
+          elseif node.printval.type==orion.type.int(32) then
+            for i = 1,V do
+              table.insert(stat,quote if cond[i-1]==false then 
+                               cstdio.printf("ASSERT FAILED, value %d file %s line %d x:%d y:%d\n",printval[i-1],[node:filename()],[node:linenumber()],xsymb,ysymb);
+                             cstdlib.exit(1); 
+                                      end end)
+            end
+          else
+            assert(false)
+          end
+        end
+
+        out = expr
+      elseif node.kind=="reduce" then
+    
+        local list = node:map("expr",function(v,i) return inputs["expr"..i] end)
+        assert(#list == node:arraySize("expr"))
+
+        -- theoretically, a tree reduction is faster than a linear reduction
+        -- starti and endi are both inclusive
+        local function foldt(list,starti,endi)
+          assert(type(list)=="table")
+          assert(type(starti)=="number")
+          assert(type(endi)=="number")
+          assert(starti<=endi)
+          if starti==endi then
+            return list[starti]
+          else
+            local half = math.floor((endi-starti)/2)
+            local lhs = foldt(list,starti,starti+half)
+            local rhs = foldt(list,starti+half+1,endi)
+
+            if node.op=="sum" then
+              return `(lhs+rhs)
+            elseif node.op=="min" then
+              return `terralib.select(lhs<rhs,lhs,rhs)
+            elseif node.op=="max" then
+              return `terralib.select(lhs>rhs,lhs,rhs)
+            else
+              assert(false)
+            end
+          end
+        end
+
+        out = foldt(list,1,#list)
+      elseif node.kind=="gatherConcrete" then
+        local inpX = inputs["x"]
+        local inpY = inputs["y"]
+
+        -- remember: the CSE algorithm transforms everything to be from hackBL to hackTR
+        local blX = node.translate1_hackBL
+        local blY = node.translate2_hackBL
+        local trX = node.translate1_hackTR
+        local trY = node.translate2_hackTR
+
+        out = node.from:gather( 
+          loopid,  node.clamp, 
+          inpX, inpY, 
+          blX, blY, trX, trY,
+          V,
+          stripCount,
+          retime);
+
+      else
+--        node:printpretty()
+        orion.error("Internal error, unknown ast kind "..node.kind)
+      end
+
+      --print(node.kind)
+      assert(terralib.isquote(out))
+
+      -- make absolutely sure that we end up with the type we expect
+      out = `[orion.type.toTerraType(node.type,false,V)](out)
+
+      -- only make a statement if necessary
+      if node:parentCount(inkernel)==1 then
+        return out
+      else
+        table.insert(stat,quote var [resultSymbol] = out end)
+        return `[resultSymbol]
       end
     end)
 
+  assert(terralib.isquote(expr))
+  
+  if orion.printstage then
+    print("terracompiler.codegen astNodes:",inkernel:S("*"):count()," statements:",#stat,inkernel:name())
+  end
 
-  local function returnToAOS(result)
-    assert(orion.scheduledIR.isScheduledIR(result.child1))
-    assert(result.child1.kind=="index")
-    assert(result.child1.child1.kind=="terra")
-    local outputImage = result.child1.child1.loop["outputImage"..result.child1.index]
-    assert(orion.imageWrapper.isImageWrapper(outputImage))
+  return expr,stat
+end
 
-    local channels = result:arraySize("child")
-    local aosfn = orion.terracompiler.toAOS(channels, outputImage.terraType)
-    
-    local inpList = {}
-    local strideList = {}
-    
-    local ty = outputImage.terraType
-    local orionType = outputImage.orionType
-    local isFloat = orion.type.isFloat(orionType)
-    local isSigned = orion.type.isInt(orionType)
+-- codegen all the stuff in the inner loop
+function orion.terracompiler.codegenInnerLoop(core, strip, kernelGraph, stripCount,y,stripList, stripSymbolCache, inputImageTable)
+  assert(type(stripList)=="table")
+  assert(type(stripSymbolCache)=="table")
+  assert(type(inputImageTable)=="table")
 
-    local releaseList = {}
+  local x = symbol(int)
 
-    result:map("child",
-               function(n)
-                 assert(n.kind=="index")
-                 assert(n.child1.kind=="terra")
-                 table.insert(inpList,`[&ty]([n.child1.loop["outputImage"..n.index]:getPointer()]))
-                 table.insert(strideList, n.child1.loop["outputImage"..n.index]:widthStored())
-                  -- we don't need to call releaseAndKeep here b/c we're making a deep copy ourselves
-                 table.insert( releaseList, n.child1.loop["outputImage"..n.index]:release() )
-               end)
-    
-    assert(#inpList == #strideList)
-    assert(#inpList == channels)
+  local loopStartCode = {}
+  local loopCode = {}
+  local loopid = 0
 
-    -- work around a terra bug?
-    local merged={}
-    for k,v in pairs(inpList) do table.insert(merged,v) end
-    for k,v in pairs(strideList) do table.insert(merged,v) end
+  kernelGraph:S("single"):traverse(
+    function(n)
 
-    local outputSymb = symbol(Image)
-    return outputSymb, quote
-                     var start = orion.currentTimeInSeconds()
-      var width = [outputImage:width()];
-      var height = [outputImage:height()];
-      var stride = [outputImage:widthStored()];
-      var channels : int = channels
-      var bits : int = sizeof(ty)*8
-      var data : &opaque = aosfn(stride,height,merged);
-      outputSymb:init( width, height, stride, channels, bits, isFloat, isSigned, data, data);
-      releaseList
-                       var len : double = (orion.currentTimeInSeconds()-start)
-      if orion.printruntime then
-        cstdio.printf("toAOS channels:%d runtime:%f\n",channels,len)
+      loopid = loopid + 1
+
+      local needed = symbol(Crop)
+      local valid = symbol(Crop)
+      local validSS = symbol(Crop)
+
+      n:initInputImages(loopid);
+      n.outputImage:init(loopid);
+
+      local rtY = symbol()
+      
+      -- we need to call these upfront so that the LBs can remember which IVs were actually used. But after init.
+      local expr1,statements1=orion.terracompiler.codegen( n.kernel,  1, x, rtY, loopid, stripCount, n.retime )
+      local exprV,statementsV=orion.terracompiler.codegen( n.kernel,  orion.tune.V, x, rtY, loopid, stripCount, n.retime )
+
+      table.insert(loopStartCode,
+                   quote
+                     if orion.verbose then cstdio.printf("Run Kernel %d retime %d\n", i, [n.retime]) end
+                     
+                     var [needed] = [n.neededRegion:stripRuntime(strip, stripCount, stripList, stripSymbolCache)];
+                     
+                     -- these intersections need to happen at runtime b/c we don't know the width that 
+                     -- will be passed in
+        var [valid] = [n.validRegion:intersectRuntime(needed)];
+        var [validSS] = valid:shrinkToNearestX(orion.tune.V); -- the vectorized sweet spot
+        [validSS]:assertXMod(orion.tune.V)
+
+        [n:declareInputImages(i,inputImageTable)];
+        [n.outputImage:declare(i)];
+
+        [n.outputImage:setPosition( i, `needed.left,`needed.bottom, core, strip, stripCount, stripList, stripSymbolCache,L["retime"..i])];
+        [n:setInputImagePositions( i, `needed.left,`needed.bottom, core, strip, stripCount, stripList, stripSymbolCache,L["retime"..i])];
+
+        if orion.verbose then
+          cstdio.printf("valid:\n")
+          valid:print()
+          cstdio.printf("validSS:\n")
+          validSS:print()
+          cstdio.printf("needed:\n")
+          needed:print()
+        end
+      end)
+
+
+      table.insert(loopCode,
+      quote
+        var [rtY] = y - [L["retime"..i]]
+        var bottom = [n.neededRegionUnion:getBottom()]
+        var top = [n.neededRegionUnion:getTop()]
+
+        if valid.width>0 then orionAssert(bottom<=valid.bottom, "VB") end
+        if needed.width>0 then orionAssert(bottom<=needed.bottom, "NB") end
+        if valid.width>0 then orionAssert(top>=valid.top, "VT") end
+        if needed.width>0 then orionAssert(top>=needed.top, "NT") end
+
+
+        if needed.width==0 then
+          -- nothing to do!
+        elseif valid.width==0 then
+          -- we requested a region totally in the boundary
+
+          if rtY >= needed.bottom and rtY < needed.top then
+            for [x] = needed.left, needed.right do
+              [n.outputImage:set( i, L:boundary(i), 1 )];
+              [n.outputImage:next( i, 1 )];
+              [n:inputImagesNext( i, 1 )];
+            end
+            [n.outputImage:nextLine( i, `needed.right-needed.left, stripCount, rtY,L["retime"..i])];
+            [n:nextInputImagesLine( i, `needed.right-needed.left, stripCount, rtY,L["retime"..i])];
+          end
+
+        else
+          
+          -- top row(s) (all boundary)
+          -- theoretically we could do some of this vectorized, but it shouldn't really matter
+          if rtY >= needed.bottom and rtY < valid.bottom then
+            for [x] = needed.left, needed.right do
+              [n.outputImage:set( i, L:boundary(i), 1 )];
+              [n.outputImage:next( i, 1 )];
+              [n:inputImagesNext( i, 1 )];
+            end
+            [n.outputImage:nextLine( i, `needed.right-needed.left, stripCount, rtY,L["retime"..i])];
+            [n:nextInputImagesLine( i, `needed.right-needed.left, stripCount, rtY,L["retime"..i])];
+          end
+        
+          -- interior row(s), mixed boundary and calculated region
+          if rtY >= valid.bottom and rtY <valid.top then
+            for [x] = needed.left, valid.left do
+              [n.outputImage:set(i,L:boundary(i),1)];
+              [n.outputImage:next(i,1)];
+              [n:inputImagesNext(i,1)];
+            end
+            
+
+            if validSS.width<=0 or validSS.height<=0 then
+
+              -- sweet spot is empty
+              for [x] = valid.left, valid.right do
+                statements1;
+                [n.outputImage:set(i,expr1,1)];
+                [n.outputImage:next(i,1)];
+                [n:inputImagesNext(i,1)];
+              end
+
+            else
+              
+              for [x] = valid.left, validSS.left do
+                statements1;
+                [n.outputImage:set(i,expr1,1)];
+                [n.outputImage:next(i,1)];
+                [n:inputImagesNext(i,1)];
+              end
+
+              for [x] = validSS.left, validSS.right, orion.tune.V do
+                statementsV;
+                [n.outputImage:set(i,exprV,orion.tune.V)];
+                [n.outputImage:next( i, orion.tune.V )];
+                [n:inputImagesNext( i, orion.tune.V )];
+              end
+
+              for [x] = validSS.right, valid.right do
+                statements1;
+                [n.outputImage:set(i,expr1,1)];
+                [n.outputImage:next( i, 1 )];
+                [n:inputImagesNext( i, 1 )];
+              end
+            end
+
+            for [x] = valid.right, needed.right do
+              [n.outputImage:set( i, L:boundary(i), 1 )];
+              [n.outputImage:next( i, 1 )];
+              [n:inputImagesNext( i, 1 )];
+            end
+          
+            [n.outputImage:nextLine( i, `needed.right-needed.left, stripCount, rtY,L["retime"..i])];
+            [n:nextInputImagesLine( i, `needed.right-needed.left, stripCount, rtY,L["retime"..i])];
+          end
+        
+          -- last row(s), all boundary
+          -- theoretically we could do some of this vectorized, but it shouldn't really matter
+          if rtY >= valid.top and rtY < needed.top then
+            for [x] = needed.left, needed.right do
+              [n.outputImage:set( i, L:boundary(i), 1 )];
+              [n.outputImage:next( i, 1 )];
+              [n:inputImagesNext( i, 1 )];
+            end
+            [n.outputImage:nextLine( i,  `needed.right-needed.left, stripCount, rtY,L["retime"..i])];
+            [n:nextInputImagesLine( i, `needed.right-needed.left, stripCount, rtY,L["retime"..i])];
+          end
+        end   
+        --end
+
+      end)
+  end)
+
+ return loopStartCode, loopCode
+end
+
+-- codegen all the code that runs per thread (and preamble)
+function orion.terracompiler.codegenThread(
+  kernelGraph, stripCount, inputImageMap, inputImageTable, imageWidth, imageHeight)
+
+  assert(orion.kernelGraph.isKernelGraph(kernelGraph))
+  assert(type(stripCount)=="number")
+  assert(type(inputImageMap) == "table")
+  assert(type(inputImageTable) == "table")
+  assert(type(imageWidth)=="number")
+  assert(type(imageHeight)=="number")
+
+  local core = symbol(int)
+  local y = symbol(int)
+
+
+  local loopCode = {}
+  assert(stripCount % orion.tune.cores == 0)
+  local stripsPerCore = math.floor(stripCount/orion.tune.cores)
+
+  ------
+  local strip = symbol(int)
+  local stripList = {} -- cropIR nodes we need for this image
+  local stripSymbolCache = {[stripCount]={[strip]={}}}
+  local thisLoopStartCode, thisLoopCode = orion.terracompiler.codegenInnerLoop(
+    core,
+    strip,
+    kernelGraph,
+    stripCount, 
+    y, 
+    stripList, 
+    stripSymbolCache, 
+    inputImageMap)
+
+  if orion.printstage then
+    print("strip list count",#stripList)
+  end
+
+  local input = symbol(&opaque)
+  local inputDecl = {}
+  for k,v in ipairs(inputImageTable) do
+    table.insert(inputDecl, quote var [v] = ([&&Image](input))[k] end) -- note the indexing shenanigans
+  end
+
+  return terra( [input] ) : &opaque
+    var [core] = @([&int](input))
+    [inputDecl]
+    if orion.verbose then cstdio.printf("Run Loop %d",core) end
+
+    [orion.kernelGraph.outputImageMap(function(n) return n:alloc(stripCount) end)]
+
+    var start = orion.currentTimeInSeconds()
+    for i=0,stripsPerCore do
+
+      var [strip] = core*stripsPerCore+i
+      stripList
+
+      thisLoopStartCode
+
+      for [y] = 0, imageHeight do
+        thisLoopCode
       end
+
     end
+    var endt = orion.currentTimeInSeconds()
   end
 
-  local function returnIndex(result)
-    assert(orion.scheduledIR.isScheduledIR(result.child1))
-    assert(result.child1.kind=="terra")
-    assert(orion.imageWrapper.isImageWrapper(result.child1.loop["outputImage"..result.index]))
-    local outputSymb = symbol(Image)
+end
 
-    return outputSymb, quote 
-      [result.child1.loop["outputImage"..result.index]:toImage( outputSymb )];
-      [result.child1.loop["outputImage"..result.index]:releaseAndKeep()] 
-  end
-  end
 
-  local outputQuote
-  local outputSymb
+function orion.terracompiler.allocateImageWrappers(kernelGraph, inputImageSymbolMap)
+  assert(orion.IR.isIR(kernelGraph))
 
-  if result.kind=="toAOS" then
-    outputSymb, outputQuote = returnToAOS(result)
-  elseif result.kind=="multiout" then
-    outputQuote = {}
-    outputSymb = {}
-
-    result:map("child",
-               function(n,i)
-
-                 local os, oq
-                 if n.kind=="toAOS" then
-                   os, oq = returnToAOS(n)
-                 elseif n.kind=="index" then
-                   os, oq = returnIndex(n)
-                 else
-                   assert(false)
-                 end
-
-                 table.insert(outputSymb,os)
-                 table.insert(outputQuote,oq)
-               end)
-
-    assert(#outputQuote>1)
-  elseif result.kind=="index" then
-    outputSymb, outputQuote = returnIndex(result)
-  else
-    assert(false)
+  local inputWrappers = {}
+  local function getInputWrapper(inputNode)
+    if inputWrappers[inputNode.id]==nil then
+      inputWrappers[inputNode.id] = orion.imageWrapper.new({
+                                                   kind="inout",
+                                                   imageSymbol = inputImageSymbolMap[inputNode]
+                                                 })
+    end
+    return inputWrappers[inputNode.id]
   end
 
-
-  local terra fin()
-    setRegisterSize;
-    runKernels;
-
-    -- now wrap the result register in an Image object
-    var [outputSymb]
-    outputQuote
-
-    orionAssert(orion.runtime.activeRegisters()==0, "didn't free all registers!")
-    return outputSymb
+  local function parentIsOutput(node)
+    for v,k in node:parents(kernelGraph) do if v.kind=="outputs" then return true end end
+    return false
   end
 
-  return fin
+  return kernelGraph:S("*"):process(
+    function(n, origNode)
+      local newnode = n:shallowcopy()
+      local inputCount = 0
+      
+      -- collect the inputs
+      n:map("child", 
+            function(child,i) 
+              newnode["inputImages"..i] = child.outputImage
+              inputCount = inputCount + 1
+            end)
+
+      -- if this uses any input files, we need to add those too
+      n.kernel:S("input"):traverse(
+        function(node)
+          inputCount = inputCount+1
+          newnode["inputImages"..inputCount] = getInputWrapper(node)
+        end)
+
+      -- make the output
+      if parentIsOutput(origNode) then
+        newnode.outputImage = orion.imageWrapper.new({
+                                                kind="inout",
+                                                orionType = n.kernel.type,
+                                                imageSymbol = symbol(&Image),
+                                              })
+
+      else
+        newnode.outputImage = orion.imageWrapper.new({
+                                                kind="linebuffer",
+                                                retime = 0,
+                                                lines = 3,
+                                                orionType = n.kernel.type,
+                                                region = n.neededRegion
+                                              })
+      end
+
+      newnode.kernel = orion.flatIR.toFlatIR(n.kernel)
+
+      return orion.kernelGraph.new(newnode)
+    end)
+
 end
 
 -- this should return a terra function that when called executes the pipeline
-function orion.terracompiler.compile(rootLoopIR, regionMode, base1, base2, stripWidths, model)
+function orion.terracompiler.compile(
+    kernelGraph, 
+    regionMode, 
+    base1, 
+    base2, 
+    stripCount, 
+    inputImages,
+    imageWidth,
+    imageHeight)
+
   if orion.verbose then print("compile") end
-  assert(orion.scheduledIR.isScheduledIR(rootLoopIR))
+  assert(orion.kernelGraph.isKernelGraph(kernelGraph))
   assert(type(regionMode)=="string")
   assert(type(base1)=="number")
   assert(type(base2)=="number")
-  assert(type(stripWidths)=="table")
-  --assert(type(model)=="table") -- model can be nil
+  assert(type(stripCount)=="number")
+  assert(type(inputImages)=="table")
+  assert(type(imageWidth)=="number")
+  assert(type(imageHeight)=="number")
 
-  -- we need to know the largest type we use to size the runtime registers
-  local outputTypes = {}
+  -- make symbols for the input images
+  local inputImageSymbolMap = {}   -- maps from bound image id to &Image symbol
+  local inputImageSymbolTable = {} -- symbols in order
+  for _,v in ipairs(inputImages) do
+    assert(v.kind=="crop")
+    assert(v.expr.kind=="input")
+    assert(type(v.expr.id)=="number")
+    inputImageSymbolMap[v.expr.id] = symbol(&Image)
+    table.insert(inputImageSymbolTable, inputImageSymbolMap[v.expr.id])
+  end
 
-  local result = rootLoopIR:S("loop"):process(
-    function(node)
-      assert(node.kind=="loop")
+  -- add the input lists and output to the kernelGraph
+  kernelGraph = orion.terracompiler.allocateImageWrappers(kernelGraph, inputImageSymbolMap)
 
-      node.loop:map("outputType", 
-               function(t)
-                 outputTypes[t] = 1
-               end)
 
-      -- shallowcopy will grab loop, children
-      -- we'll need some settings out of loop to call the kernel (strip width for ex)
-      local newNode = node:shallowcopy()
-      newNode.kind = "terra"
-      newNode.all, newNode.preRun, newNode.postRun = orion.terracompiler.toTerraKernel( node.loop, stripWidths[node.loop] )
+  assert(kernelGraph.kind=="outputs")
+  local outputImageSymbolTable = kernelGraph:map("inputImages",function(n) 
+                                                   for k,v in pairs(n) do print(k,v) end
+                                                   return n.data end)
+  for k,v in pairs(outputImageSymbolTable) do print(k,v,terralib.issymbol(v)) end
 
-      return orion.scheduledIR.new(newNode):copyMetadataFrom(node)
-    end)
+  local threadCode = orion.terracompiler.codegenThread( 
+    kernelGraph, 
+    stripCount, 
+    inputImageSymbolMap, 
+    inputImageSymbolTable, 
+    imageWidth, 
+    imageHeight )
 
-  result:check()
+  threadCode:printpretty()
 
-  return orion.terracompiler.generateExecutable(
-    result, 
-    regionMode,
-    outputTypes,
-    base1,
-    base2,
-    stripWidths,
-    model)
-
+  return terra([inputImageSymbolTable], [outputImageSymbolTable])
+    var start = orion.currentTimeInSeconds()
+    
+    var threads : cpthread.pthread_t[orion.tune.cores]
+    var stripStore : int[orion.tune.cores]
+    
+    for i=0, orion.looptimes do
+      -- launch the kernel for each strip
+      
+      if orion.tune.cores==1 then
+        -- don't launch a thread to save thread launch overhead
+        stripStore[0]=0
+        threadCode(&stripStore[0])
+      else
+        for i=0,orion.tune.cores do
+          --                           cstdio.printf("Launch %d\n",i)
+          stripStore[i] = i
+          cpthread.pthread_create(&threads[i],nil,threadCode, &stripStore[i]);
+        end
+        for i=0,orion.tune.cores do
+          cpthread.pthread_join(threads[i],nil)
+          --                             cstdio.printf("join %d\n",i)
+        end
+      end
+    end
+    
+    if orion.printruntime then
+      var len : double = (orion.currentTimeInSeconds()-start)/orion.looptimes
+      var bytes :double= 0
+      var gbps :double= (bytes/len)/(1024*1024*1024)
+      var gb :double= bytes / (1024*1024*1024)
+      var lt : int = orion.looptimes
+      cstdio.printf("loopTimes:%d avgRuntime:%f GB/s:%f GB:%f\n",lt,len,gbps,gb)
+    end
+    
+  end
 end

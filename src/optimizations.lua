@@ -419,8 +419,6 @@ function orion.optimize.cleanupVectors(ast)
   assert(orion.typedAST.isTypedAST(ast))
   ast:check()
 
-  collectgarbage("collect")
-  collectgarbage("collect")
 
   ast = ast:S("index"):process(
     function(n)
@@ -447,8 +445,8 @@ return  n["expr"..(index+1)]
             n.kind=="cropBaked" then
             -- these guys just happen to share the same format
             out.type = orion.type.arrayOver(out.type)
-          elseif n.kind=="special" then
-            out = {kind="toSOA", special=n.id, index=index}
+          elseif n.kind=="input" then
+            out.channel = index -- indicates to only read one channel
             out.type = orion.type.arrayOver(n.type)
           else
             print(n.kind)
@@ -464,9 +462,6 @@ return  n["expr"..(index+1)]
           return res
         end)
     end)
-
-  collectgarbage("collect")
-  collectgarbage("collect")
 
   return ast
 end
@@ -487,21 +482,21 @@ function orion.optimize.toSOA(ast)
 
   local function proc(ast)
     if orion.type.isArray(ast.type) then
-      local newnode = {kind="toAOS", type=ast.type}
       local len = orion.type.arrayLength(ast.type)
-      
+
+      local restable = {}
       for i=1,len do
         local expr = {kind="index", index=i-1, expr = ast, type = orion.type.arrayOver(ast.type)}
-        newnode["expr"..i] = orion.typedAST.new(expr):copyMetadataFrom(ast)
+        table.insert(restable, orion.typedAST.new(expr):copyMetadataFrom(ast))
       end
       
-      ast = orion.typedAST.new(newnode):copyMetadataFrom(ast)
+      return restable
     end
 
     return ast
   end
 
-  if ast.kind=="multiout" then
+  if ast.kind=="outputs" then
     -- need to special case this
     local newMultiout = ast:shallowcopy()
 
@@ -558,7 +553,7 @@ function orion.optimize.toSOA(ast)
 
   -- check that it worked
   ast:S("*"):process(function(n)
-                       if n.kind~="toAOS" and n.kind~="multiout" then
+                       if n.kind~="toAOS" and n.kind~="outputs" then
                          if orion.type.isArray(n.type) then
                            n:printpretty()
                            assert(false)
