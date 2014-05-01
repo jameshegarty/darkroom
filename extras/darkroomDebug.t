@@ -48,6 +48,8 @@ function astFunctions:expectedKeycount()
     return baseSize+1+self:arraySize("expr")
   elseif self.kind=="crop" then
     assert(orion.type.isCropMode(self.mode))
+    -- shiftY means that instead of cropping outside of y=[0,height) we crop outside y=[shiftY, height+shiftY)
+    assert(type(self.shiftY)=="number")
 
     if self.mode==orion.cropExplicit then
       return baseSize+2+4
@@ -278,7 +280,7 @@ function orion.ast.check(node,options)
   return astFunctions.check(node,options)
 end
 
-function astFunctions:printprettys()
+function astPrintPrettys(self)
 
   local out
 
@@ -295,7 +297,7 @@ function astFunctions:printprettys()
       out = out.."("
       local i=1
       while self["arg"..i] do
-        out = out..self["arg"..i]:printprettys()
+        out = out..astPrintPrettys(self["arg"..i])
         if self["arg"..(i+1)] then out=out.."," end
         i=i+1
       end
@@ -303,22 +305,22 @@ function astFunctions:printprettys()
     end
 
   elseif self.kind=="binop" then
-    out="("..self.lhs:printprettys()..")"..self.op.."("..self.rhs:printprettys()..")"
+    out="("..astPrintPrettys(self.lhs)..")"..self.op.."("..astPrintPrettys(self.rhs)..")"
   elseif self.kind=="unary" then
-    out=self.op.."("..self.expr:printprettys()..")"
+    out=self.op.."("..astPrintPrettys(self.expr)..")"
   elseif self.kind=="value" then
     out=tostring(self.value)
-  elseif self.kind=="special" then
-    out="_special_"..self.id
+  elseif self.kind=="input" then
+    out="_input_"..self.id
   elseif self.kind=="mapreduce" then
     local vars,i = "",1
     while self["varname"..i] do
-      vars = vars.."_mr_"..self["varname"..i].."="..self["varlow"..i]:printprettys()..","..self["varhigh"..i]:printprettys().." "
+      vars = vars.."_mr_"..self["varname"..i].."="..astPrintPrettys(self["varlow"..i])..","..astPrintPrettys(self["varhigh"..i]).." "
       i=i+1
     end
-    out="map "..vars.." reduce("..self.reduceop..") "..self.expr:printprettys().." end"
+    out="map "..vars.." reduce("..self.reduceop..") "..astPrintPrettys(self.expr).." end"
   elseif self.kind=="mapreducevar" then
-    out="_mr_"..self.variable.."["..self.low:printprettys().." to "..self.high:printprettys().."]"
+    out="_mr_"..self.variable.."["..astPrintPrettys(self.low).." to "..astPrintPrettys(self.high).."]"
   elseif self.kind=="letvar" then
     out="_letvar_"..self.variable
   elseif self.kind=="reduce" then
@@ -330,25 +332,25 @@ function astFunctions:printprettys()
   elseif self.kind=="tapLUT" then
     out="_tapLUT_"..self.tapname
   elseif self.kind=="tapLUTLookup" then
-    out="_tapLUT_"..self.tapname.."["..self.index:printprettys().."]"
+    out="_tapLUT_"..self.tapname.."["..astPrintPrettys(self.index).."]"
   elseif self.kind=="transform" then
-    out= self.expr:printprettys()
+    out= astPrintPrettys(self.expr)
     if self.arg1~=nil then
       out = out.."("
       local i=1
       while self["arg"..i] do
-        out = out..self["arg"..i]:printprettys()..","
+        out = out..astPrintPrettys(self["arg"..i])..","
         i=i+1
       end
       out = out..")"
     end
 
   elseif self.kind=="select" or self.kind=="vectorSelect" then
-    out="if "..self.cond:printprettys().." then "..self.a:printprettys().." else "..self.b:printprettys().." end"
+    out="if "..astPrintPrettys(self.cond).." then "..astPrintPrettys(self.a).." else "..astPrintPrettys(self.b).." end"
   elseif self.kind=="lua" then
     out = "luaexpr"
   elseif self.kind=="crop" then
-    out = "crop("..self.expr:printprettys()..","..self.mode.name
+    out = "crop("..astPrintPrettys(self.expr)..","..self.mode.name
 
     if self.mode==orion.cropExplicit then
       out = out.."("..self.x..","..self.y..","..self.w..","..self.h..")"
@@ -356,7 +358,7 @@ function astFunctions:printprettys()
 
     out = out..")"
   elseif self.kind=="cast" then
-    out = "cast("..self.expr:printprettys()..","..self.type:printprettys()..")"
+    out = "cast("..astPrintPrettys(self.expr)..","..astPrintPrettys(self.type)..")"
   elseif self.kind=="type" then
     out = self.type:str()
   elseif self.kind=="let" then
@@ -378,13 +380,13 @@ function astFunctions:printprettys()
     end
     out = out .. "}"
   elseif self.kind=="assert" then
-    out = "assert("..self.expr:printprettys()..","..self.printval:printprettys()..","..self.cond:printprettys()..")"
-  elseif self.kind=="multiout" then
-    out = "multiout("
+    out = "assert("..astPrintPrettys(self.expr)..","..self.printval:printprettys()..","..self.cond:printprettys()..")"
+  elseif self.kind=="outputs" then
+    out = "outputs("
 
     local cnt = 1
     while self["expr"..cnt] do
-      out = out .. self["expr"..cnt]:printprettys() .. ","
+      out = out .. astPrintPrettys(self["expr"..cnt]) .. ","
       cnt = cnt + 1
     end
 
@@ -409,150 +411,6 @@ function astFunctions:printprettys()
   end
 
   return out
-end
-
-function astFunctions:printpretty()
-  print(self:printprettys())
-end
-
-
-
-function internalIRFunctions:irType()
-  return "internalIR"
-end
-
-function internalIRFunctions:expectedKeycount(flatir)
-
-
-  if self.kind=="load" then
-    return 3 -- kind, type, from
-  elseif self.kind=="loadConv" then
-    return 6 -- kind, type, from, x,y, index
-  elseif self.kind=="specialConv" then
-    return 4 -- kind, id, x,y
-  elseif self.kind=="loadConcrete" then
-    return 5 -- kind,type, x,y, from
-  elseif self.kind=="gatherConcrete" then
-    return 10+self:childrenCount()*4 -- kind, type, x,y, maxX, maxY, clamp, from, hackBL, hackTR
-  end
-
-  local transCnt = self:childrenCount()*4
-  if flatir~=nil then transCnt=0 end
-
-  return typedASTFunctions.expectedKeycount(self)+transCnt
-end
-
-function internalIRFunctions:checkfn(flatir)
-  
-  if self.kind=="transform" or self.kind=="transformBaked" then
-    assert(false)
-  elseif self.kind=="load" then
-    -- load from another scheduled IR node
-    assert( orion.scheduledIR.isScheduledIR(self.from) )
-  elseif self.kind=="loadConv" then
-    -- load from another scheduled IR node
-    assert( orion.scheduledIR.isScheduledIR(self.from) )
-    assert(type(self.x)=="number")
-    assert(type(self.y)=="number")
-    assert(type(self.index)=="number")
-    assert(orion.type.isType(self.type))
-  elseif self.kind=="loadConcrete" then
-    -- load from an image wrapper
-    assert(orion.imageWrapper.isImageWrapper(self.from))
-    self.from:check()
-    assert(type(self.x)=="number")
-    assert(type(self.y)=="number")
-  elseif self.kind=="specialConv" then
-    assert(type(self.id)=="number")
-    assert(type(self.x)=="number")
-    assert(type(self.y)=="number")
-  elseif self.kind=="gatherConcrete" then
-    assert(orion.imageWrapper.isImageWrapper(self.from))
-    self.from:check()
-    assert(getmetatable(self.x)==getmetatable(self))
-    assert(getmetatable(self.y)==getmetatable(self))
-    assert(getmetatable(self.hackBL)==getmetatable(self))
-    assert(getmetatable(self.hackTR)==getmetatable(self))
-    assert(type(self.maxX)=="number")
-    assert(type(self.maxY)=="number")
-    assert(type(self.clamp)=="boolean")
-  else
-    typedASTFunctions.checkfn(self)
-  end
-
-  if flatir==nil then
-    local highestTranslate1 = -10000000
-    local highestTranslate2 = -10000000
-    
-    for k,v in self:children() do
-      assert(type(self["translate1_"..k])=="number")
-      assert(type(self["translate2_"..k])=="number")
-      assert(type(self["scale1_"..k])=="number")
-      assert(type(self["scale2_"..k])=="number")
-      if self["translate1_"..k]>highestTranslate1 then highestTranslate1 = self["translate1_"..k] end
-      if self["translate2_"..k]>highestTranslate2 then highestTranslate2 = self["translate2_"..k] end
-    end
-    
-    if self:childrenCount() > 0 then
-      assert(highestTranslate1==0)
-      assert(highestTranslate2==0)
-    end
-  end
-
-end
-
-
-function internalIRFunctions:printprettys(root,parent,key,assignments)
-  return orion.internalIR.printprettys(self,root,parent,key,assignments)
-end
-
-
-function orion.internalIR.printprettys(self,root,parent,key,assignments)
-  assert(orion.IR.isIR(root))
-  assert(orion.IR.isIR(parent) or parent==nil)
-  assert(type(key)=="string")
-  assert(type(assignments)=="table")
-
-  local out
-  if self.kind=="load" then
-    out = "load_"..self.from:name()
-  elseif self.kind=="loadConv" then
-    out = "loadConv_"..self.x.."_"..self.y.."_"..self.from:name().."["..self.index.."]"
-  elseif self.kind=="loadConcrete" then
-    out = "loadConcrete_"..self.x.."_"..self.y.."_"..self.from:name()
-  elseif self.kind=="specialConv" then
-    out = "specialConv_"..self.id.."_"..self.x.."_"..self.y
-  elseif self.kind=="gatherConcrete" then
-    out = "gatherConcrete(\n"..self.from:name()..",\n"
-    out = out..self.x:printprettys(root,self,"x",assignments)..",\n"
-    out = out..self.y:printprettys(root,self,"y",assignments)..",\n"
-    out = out..tostring(self.maxX)..", "..tostring(self.maxY)..", "..tostring(self.clamp)..")"
-  else
-    out = orion.typedAST.printprettys(self,root,parent,key,assignments)
-  end
-
-  if parent~=nil and orion.flatIR.isFlatIR(parent)==false then
-    out = out.."{"..parent["translate1_"..key]..","..parent["translate2_"..key]..","
-    out = out..parent["scale1_"..key]..","..parent["scale2_"..key].."}" 
-  end
-
---  if self:parentCount(root)>1 then
---    assignments[self:name()] = out
---    return self:name()
---  end
-
-  return out
-end
-
-function internalIRFunctions:printpretty()
-  orion.internalIR.printpretty(self)
-end
-
-function orion.internalIR.printpretty(self)
-  local assignments = {}
-  local out = self:printprettys(self,nil,"",assignments)
-  for k,v in pairs(assignments) do print(k,"=",v) end
-  print(out)
 end
 
 function typedASTFunctions:expectedKeycount()
@@ -655,252 +513,190 @@ function orion.typedAST.check(node,options)
   return typedASTFunctions.check(node,options)
 end
 
-function flatIRFunctions:printprettys(root,parent,key,assignments)
-  return orion.internalIR.printprettys(self,root,parent,key,assignments)
-end
+-- assignments is used to store variables we've assigned to
+-- assignments: varname -> string
+function typedASTPrintPrettys(self,root,assignments)
+  assert(orion.typedAST.isTypedAST(self))
+  assert(orion.typedAST.isTypedAST(root))
+  assert(type(assignments)=="table")
 
-function flatIRFunctions:printpretty()
-  orion.internalIR.printpretty(self)
-end
+  local out = "["..orion.type.typeToString(self.type).."]"
 
-function flatIRFunctions:expectedKeycount()
-  internalIRFunctions.expectedKeycount(self,true)
-end
+  if self.kind=="func" then
+    local i=1
+    while self["identifier"..i] do
+      out = out..self["identifier"..i]
+      if self["identifier"..(i+1)] then out=out.."." end
+      i=i+1
+    end
 
-function flatIRFunctions:check()
-  internalIRFunctions.checkfn(self,true)
-end
+  elseif self.kind=="binop" then
+    out = out.."("..typedASTPrintPrettys(self.lhs,root,assignments)..")"
+    out = out..self.op.."("..typedASTPrintPrettys(self.rhs,root,assignments)..")"
+  elseif self.kind=="multibinop" then
+    out = out.."("
+    self:map("lhs",
+             function(n,i) 
+               out = out..n:printprettys(root,self,"lhs"..i,assignments)..","
+             end)
+    out = out..")"
 
-function scheduledIRFunctions:expectedKeycount()
-  local childCount = 0
-  while self["child"..(childCount+1)] do 
-    childCount = childCount+1 
-  end
+    out = out..self.op.."("
+    self:map("rhs",
+             function(n,i) 
+               out = out..n:printprettys(root,self,"rhs"..i,assignments)..","
+             end)
+    out = out..")"
+  elseif self.kind=="multiunary" then
+    out = out..self.op.."("
+    self:map("expr",
+             function(n,i) 
+               out = out..n:printprettys(root,self,"expr"..i,assignments)..","
+             end)
+    out = out..")"
 
-  if self.kind=="single" then
-    return 5+childCount -- kind, neededRegion, reason, kernel, irNode
-  elseif self.kind=="multiple" then
-    local kernelCount = self:arraySize("kernel")
-    -- kind, rungroup
-    -- each kernel has: neededRegion, reason, kernel, retime, lbSize, 
-    -- consumedInternally, consumedExternally, irNode
-    return 2+kernelCount*8+childCount 
-  elseif self.kind=="index" then
-    assert(childCount==1)
-    return 3 -- kind, child, index
-  elseif self.kind=="loop" then
-    return 2+childCount -- kind, loop
-  elseif self.kind=="conv" then
-    return 1+childCount+self:arraySize("conv") -- kind, conv
-  elseif self.kind=="terra" then
-    return 5+childCount -- kind, loop, all, preRun, postRun
-  elseif self.kind=="toAOS" then
-    return 1+childCount 
-  elseif self.kind=="multiout" then
-    return 1+childCount
-  elseif self.kind=="toSOA" then
-    return 4 -- kind, type, index, special
-  elseif self.kind=="toSOAConcrete" then
-    return 4 -- kind, outputImage, index, special
-  else
-    print(self.kind)
-    assert(false)
-  end
+  elseif self.kind=="unary" then
+    out=out..self.op.."("..self.expr:printprettys(root,self,"expr",assignments)..")"
+  elseif self.kind=="value" then
+    out=out..tostring(self.value)
+  elseif self.kind=="input" then
+    out=out.."_input_"..self.id
+  elseif self.kind=="position" then
+    out=out..self.coord
+  elseif self.kind=="cast" then
+    out = out..typedASTPrintPrettys(self.expr,root,assignments)
+  elseif self.kind=="tap" then
+    out=out.."_tap_"..self.tapname
+  elseif self.kind=="tapLUTLookup" then
+    out=out.."_tapLUT_"..self.tapname.."["..self.index:printprettys(root,self,"index",assignments).."]"
+  elseif self.kind=="transformBaked" then
+    out = out..typedASTPrintPrettys(self.expr,root,assignments).."("
 
+    local i=1
+    while self["translate"..i] do
+      out = out..orion.dimToCoord[i].."*"..self["scale"..i].."+"..self["translate"..i]
+      if self["translate"..(i+1)] then out = out.."," end
+      i=i+1
+    end
+    out = out..")"
 
-end
+  elseif self.kind=="reduce" then
+    out = out .. self.op .. "("
 
-function scheduledIRFunctions:checkfn()
-
-  local childCount = 0
-  while self["child"..(childCount+1)] do 
-    if self.kind=="loop" then
-      local child = self["child"..(childCount+1)]
-      assert(orion.scheduledIR.isScheduledIR(child))
-      assert(child.kind=="loop" or child.kind=="toSOAConcrete")
+    local i=1
+    while self["expr"..i] do
+      out = out..self["expr"..i]:printprettys(root,self,"expr"..i,assignments)
+      if self["expr"..(i+1)] then out = out..",\n" end
+      i=i+1
     end
     
-    childCount = childCount+1 
-  end
+    out = out  .. ")"
+  elseif self.kind=="select" then
+    out=out.."if "..self.cond:printprettys(root,self,"cond",assignments).." then "..self.a:printprettys(root,self,"a",assignments).." else "..self.b:printprettys(root,self,"b",assignments).." end"
+  elseif self.kind=="vectorSelect" then
+    out=out.."vectorSelect("..self.cond:printprettys(root,self,"cond",assignments)..","..self.a:printprettys(root,self,"a",assignments)..","..self.b:printprettys(root,self,"b",assignments)..")"
+  elseif self.kind=="crop" then
+    out = out.."crop("..typedASTPrintPrettys(self.expr,root,assignments)..")"
+  elseif self.kind=="array" or
+    self.kind=="toAOS" then
 
-  if self.kind=="single" then
-    assert(orion.internalIR.isInternalIR(self.kernel))
-    self.kernel:check()
-    assert(orion.cropIR.isCropIR(self.neededRegion))
-    self.neededRegion:check()
-    assert(type(self.reason)=="string")
-  elseif self.kind=="multiple" then
-    assert(type(self.rungroup)=="number")
-    local kernelCount = self:arraySize("kernel")
-    assert(kernelCount == self:arraySize("retime"))
-    assert(kernelCount == self:arraySize("lbSize"))
-    assert(kernelCount == self:arraySize("reason"))
-    assert(kernelCount == self:arraySize("neededRegion"))
+    out = out..self.kind.."("
 
-    assert(kernelCount>0)
+    self:map("expr", 
+             function(n,index)
+               
+               out = out..n:printprettys(root,self,"expr"..index,assignments)..", "
+             end)
 
-    self:map("kernel",function(n)
-               assert(orion.internalIR.isInternalIR(n))
-               n:check()
-                      end)
+    out = out..")"
+  elseif self.kind=="assert" then
+    out = out.."assert("..self.expr:printprettys(root,self,"expr",assignments)..","..self.printval:printprettys(root,self,"printval",assignments)
+    out = out..","..self.cond:printprettys(root,self,"cond",assignments)..")"
+  elseif self.kind=="outputs" then
+    out = out.."outputs("
 
-    self:map("neededRegion",function(n)
-               assert(orion.cropIR.isCropIR(n))
-               n:check()
-                      end)
+    self:map("expr", 
+             function(n,index)
+               out = out..typedASTPrintPrettys(n,root,assignments)..", "
+             end)
 
-    self:map("reason",function(n)
-               assert(type(n)=="string")
-                            end)
-
-    self:map("retime",function(n)
-               assert(type(n)=="number")
-                            end)
-
-    self:map("lbSize",function(n)
-               assert(type(n)=="number")
-                            end)
-
+    out = out..")"
   elseif self.kind=="index" then
-    assert(type(self.index)=="number")
-  elseif self.kind=="loop" then
-    assert(orion.loopIR.isLoopIR(self.loop))
-    self.loop:check()
-  elseif self.kind=="conv" then
-    self:map("conv",
-      function(c) 
-        assert(orion.convIR.isConvIR(c)) 
-        c:check()
-      end)
-
-  elseif self.kind=="terra" then
-    assert(terra.isfunction(self.all))
-    assert(terra.isfunction(self.preRun))
-    assert(terra.isfunction(self.postRun))
-    assert(orion.loopIR.isLoopIR(self.loop))
-    self.loop:check()
-  elseif self.kind=="multiout" then
-  elseif self.kind=="toAOS" then
-  elseif self.kind=="toSOA" then
-    assert(type(self.index)=="number")
-    assert(type(self.special)=="number")
-    assert(orion.type.isType(self.type))
-  elseif self.kind=="toSOAConcrete" then
-    assert(orion.imageWrapper.isImageWrapper(self.outputImage))
-    assert(type(self.index)=="number")
-    assert(type(self.special)=="number")
+    out = out.."("..self.expr:printprettys(root,self,"expr",assignments)..")["..self.index.."]"
+  elseif self.kind=="gather" then
+    out = "gather(\n"..self.input:printprettys(root,self,"input",assignments)..",\n"
+    out = out..self.x:printprettys(root,self,"x",assignments)..",\n"
+    out = out..self.y:printprettys(root,self,"y",assignments)..",\n"
+    out = out..tostring(self.maxX)..", "..tostring(self.maxY)..", "..tostring(self.clamp)..")"
+  elseif self.kind=="load" then
+    out = "load_from_"..self.from:name()
   else
-    print(self.kind)
+    print(self.kind)  
     assert(false)
   end
 
+  -- decide if we should display this stored in a variable
+  local displayInVar = false
+  if true then
+    -- CSE mode, only store stuff that has multiple parents
+    displayInVar = (self:parentCount(root)>1)
+  else
+
+  end
+
+  if displayInVar then
+    assignments[self:name()] = out
+    return self:name()
+  end
+
+  return out
 end
 
-function scheduledIRFunctions:printpretty(stripWidths)
+function typedASTPrintPretty(root)
+  local assignments = {}
+  local out = typedASTPrintPrettys(root,root,assignments)
+  for k,v in pairs(assignments) do print(k,"=",v) end
+  print(out)
+end
 
-  self:S("*"):traverse(function(node)
-    print("----------------")
-    print("name:",node:name())
-    print("kind:",node.kind)
-    print("table",node)
-    print("Input ScheduledIR Nodes:")
-    local i=1
-    while node["child"..i] do print(node["child"..i]:name()); i=i+1 end
 
-    if node.kind=="multiout" then
-      print("multiout")
-    elseif node.kind=="toAOS" then
-      print("to AOS node")
-    elseif node.kind=="toSOA" or node.kind=="toSOAConcrete" then
-      print("to SOA node, special"..node.special.." index "..node.index)
-    elseif node.kind=="conv" then
-      print("conv kernels",node:arraySize("conv"))
-      node:map("conv",
-        function(n)
-          n.kernel:printpretty()
-        end)
-    else
-      print("kernel:")
-      if node.kind=="loop" then
-        print("name:",node.loop:name())
-        if stripWidths~=nil then
-          node.loop:printpretty(stripWidths[node.loop])
-        else
-          node.loop:printpretty()
-        end
-      elseif node.kind=="single" then
-        print("reason:",node.reason) -- why did we decide to materialize this?
-        print(node.kernel)
-        node.kernel:printpretty()
-      elseif node.kind=="multiple" then
-        local idx = node:arraySize("kernel")
-        print("kernelCount",idx)
-        for i=1,idx do
-          print("kernel "..i..":")
-          print(node["reason"..i])
-          print(node["kernel"..i])
-          node["kernel"..i]:printpretty()
-        end
-      elseif node.kind=="index" then
-        print("index "..node.index.." "..node.child1:name())
-      else
-        print(node.kind)
+function IRFunctions:check()
+  if orion.debug==false then return end
+--  return
+  --print(debug.traceback())
+
+  --local q = self:S("*")
+  --print("check",q:count())
+
+  self:visitEach(
+    function(node)
+      orion.IR.check(node)
+
+      if node:keyCount()~=node:expectedKeycount() then
+        print("keycount mismatch","kind:",node.kind,"has:",node:keyCount(),"expected:",node:expectedKeycount())
+        for k,v in pairs(node) do print(k) end
+        
         assert(false)
       end
-    end
-  end)
+
+      node:checkfn()
+    end)
+
+
 end
 
-function ImageWrapperFunctions:printpretty(stripCount)
-
-
-  print("\tregion:",self.region:printprettys())
-  print("\tkind:", self.kind)
-
-  if self.kind=="special" then
-    print("\tspecial",self.id)
-  elseif self.kind=="linebuffer" then
-    print("\tid:",self.id)
-    print("\tlines:",self.lines)
-    print("\tretime:",self.retime)
-
-    if stripCount~=nil then
-      assert(type(stripCount)=="number")
-      print("\tallocatedStripWidth:", self:lineWidth(stripCount))
-      print("\tsize:",self:lbBytes(stripCount))
-    end
-  elseif self.kind=="buffer" then
-    print("\tbuffer register:",self.register,"refCount:",self.refCount)
-  else
-    assert(false)
-  end
-
-  --print("\tdata:",self.data)
-  print("\tterra type:",self.terraType)
-  print("\torion type:",self.orionType:str())
+function kernelGraphPrintPretty(root)
+  root:visitEach(function(node)
+                   print(node:name().." -------------")
+                   typedASTPrintPretty(node.kernel)
+                 end)
 end
 
-function ImageWrapperFunctions:check()
-
-  assert(terralib.types.istype(self.terraType))
-  assert(orion.type.isType(self.orionType))
-
-  if self.kind~="cached" then
-    assert(type(self.data)=="table") -- the symbol
-    assert(orion.cropIR.isCropIR(self.region))
-  end
-
-  if self.kind=="special" then
-    assert(type(self.id)=="number")
-  elseif self.kind=="buffer" then
-    assert(type(self.register)=="number")
-    assert(type(self.refCount)=="number")
-  elseif self.kind=="linebuffer" then
-    assert(type(self.rungroup)=="string")
-    assert(type(self.id)=="number")
-  elseif self.kind=="cached" then
-  else
-    assert(false)
-  end
-
+-- install debug hooks
+local origCompile = orion.compile
+function orion.compile(inputImageFunctions, outputImageFunctions, tapInputs, inputWidth, inputHeight, options)
+  options.callbackAST = function(node) print(astPrintPrettys(node)) end
+  options.callbackTypedAST = function(node) typedASTPrintPretty(node) end
+  options.callbackKernelGraph = function(node) kernelGraphPrintPretty(node) end
+  origCompile(inputImageFunctions, outputImageFunctions, tapInputs, inputWidth, inputHeight, options)
 end

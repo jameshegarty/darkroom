@@ -1,14 +1,22 @@
-local cstdio = terralib.includec("stdio.h")
-local cstdlib = terralib.includec("stdlib.h")
+orion.boolops = {["or"]=1,["and"]=1} -- bool -> bool -> bool
+orion.cmpops = {["=="]=1,["~="]=1,["<"]=1,[">"]=1,["<="]=1,[">="]=1} -- number -> number -> bool
+orion.binops = {["|"]=1,["^"]=1,["&"]=1,["<<"]=1,[">>"]=1,["+"]=1,["-"]=1,["%"]=1,["*"]=1,["/"]=1}
+-- these binops only work on ints
+orion.intbinops = {["<<"]=1,[">>"]=1,["&"]=1,["|"]=1,["^"]=1}
+-- ! does a logical not in C, use 'not' instead
+-- ~ does a bitwise not in C
+orion.unops = {["not"]=1,["-"]=1}
+appendSet(orion.binops,orion.boolops)
+appendSet(orion.binops,orion.cmpops)
+orion.keyremap = {r=0,g=1,b=2, x=0, y=1, z=2}
+orion.dimToCoord={[1]="x",[2]="y",[3]="z"}
 
--- a hack to have assert print a traceback
-local oldassert = assert
-function assert(x)
-  if x==false then print(debug.traceback()) end
-  oldassert(x)
-end
-
-orion={}
+orion.cropSame = {name="same"}
+orion.cropGrow = {name="grow"}
+orion.cropShrink = {name="shrink"}
+orion.cropExplicit = {name="explicit"}
+orion.cropNone = {name="none"}
+orion.defaultCrop = orion.cropSame
 
 setmetatable(orion,{
   __index = function(tab,key)
@@ -39,102 +47,6 @@ setmetatable(orion,{
 
   end})
 
-terralib.require("util")
-
-orion.boolops = {["or"]=1,["and"]=1} -- bool -> bool -> bool
-orion.cmpops = {["=="]=1,["~="]=1,["<"]=1,[">"]=1,["<="]=1,[">="]=1} -- number -> number -> bool
-orion.binops = {["|"]=1,["^"]=1,["&"]=1,["<<"]=1,[">>"]=1,["+"]=1,["-"]=1,["%"]=1,["*"]=1,["/"]=1}
--- these binops only work on ints
-orion.intbinops = {["<<"]=1,[">>"]=1,["&"]=1,["|"]=1,["^"]=1}
--- ! does a logical not in C, use 'not' instead
--- ~ does a bitwise not in C
-orion.unops = {["not"]=1,["-"]=1}
-appendSet(orion.binops,orion.boolops)
-appendSet(orion.binops,orion.cmpops)
-orion.keyremap = {r=0,g=1,b=2, x=0, y=1, z=2}
-orion.dimToCoord={[1]="x",[2]="y",[3]="z"}
-
-orion.cropSame = {name="same"}
-orion.cropGrow = {name="grow"}
-orion.cropShrink = {name="shrink"}
-orion.cropExplicit = {name="explicit"}
-orion.cropNone = {name="none"}
-orion.defaultCrop = orion.cropSame
-
--- for debugging. Set these using compile options, not here!
-orion.verbose = false -- write out a ton of crap
-orion.printasm = false -- print out the asm of compiled kernels
-orion.printstage = false -- print the stage of compile we're in (debug slow compiles)
-orion.debug = false -- enable asserts & checks in generated code & writing of intermediates
-orion.debugimages = false -- enables debug images
-orion.printruntime = false
-orion.looptimes = 1 -- number of times to run each kernel in terra. Used to get timing data. Usually should be 1!
-orion.fastmath = false -- extra math optimizations that I'm not sure preserve values. Most important for conv engine
-orion.ilp = false
-orion.unroll = false
-
-local Ctmp = terralib.includecstring [[
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/time.h>
-#include <assert.h>
-#include <pthread.h>
-#include <stdint.h>
-#include <inttypes.h>
-
-  double CurrentTimeInSeconds() {
-  struct timeval tv;
-  gettimeofday(&tv, NULL);
-  return tv.tv_sec + tv.tv_usec / 1000000.0;
-                                 }
-
-                                   ]]
-
-orion.currentTimeInSeconds = Ctmp.CurrentTimeInSeconds
-
-terra orionAssert(cond : bool, str : &int8)
-  if cond==false then
-    cstdio.printf("ASSERTT fail %s\n", str)
-    cstdlib.exit(1)
-  end
-end
-
-
-function isModuleAvailable(name)
-  if package.loaded[name] then
-    return true
-  else
-    for _, searcher in ipairs(package.searchers or package.loaders) do
-      local loader = searcher(name)
-      if type(loader) == 'function' then
-        package.preload[name] = loader
-        return true
-      end
-    end
-    return false
-  end
-end
-
-terralib.require("types")
-terralib.require("tune")
-if isModuleAvailable("tuneThisMachine") then terralib.require("tuneThisMachine") end
-require "stencil"
-require "conv"
-require "optimizations"
-require "ir"
-terralib.require("ast")
-terralib.require("imageWrapper")
-require "typedAST"
-terralib.require("convir")
-require "internalir"
-require "kernelgraph"
-terralib.require("image")
-require "schedule"
-terralib.require("flatir")
-terralib.require("api")
-terralib.require("cropir")
-terralib.require("terracompiler")
--- terra compiler gets loaded at the end of the file after everything else
 
 
 ----------------------
@@ -266,29 +178,11 @@ function orion.gather( thisast, input,x,y,maxXV,maxYV,clamp)
   clamp = clamp.value
   assert(type(clamp)=="boolean")
 
-  local negmaxXV = maxXV:shallowcopy()
-  negmaxXV.value = -negmaxXV.value
-  negmaxXV = orion.ast.new(negmaxXV):copyMetadataFrom(maxXV)
-
-  local negmaxYV = maxYV:shallowcopy()
-  negmaxYV.value = -negmaxYV.value
-  negmaxYV = orion.ast.new(negmaxYV):copyMetadataFrom(maxXV)
-
   local px = orion.ast.new({kind="position",coord="x"}):copyMetadataFrom(thisast)
   local py = orion.ast.new({kind="position",coord="y"}):copyMetadataFrom(thisast)
 
-  local a = orion.ast.new({kind="binop", lhs=px, rhs=negmaxXV, op="+"}):copyMetadataFrom(thisast)
-  local b = orion.ast.new({kind="binop", lhs=py, rhs=negmaxYV, op="+"}):copyMetadataFrom(thisast)
-  local hackBL = orion.ast.new({kind="transform",expr = input, arg1 = a, arg2 = b}):copyMetadataFrom(thisast)
-
-  local c = orion.ast.new({kind="binop", lhs=px, rhs=maxXV, op="+"}):copyMetadataFrom(thisast)
-  local d = orion.ast.new({kind="binop", lhs=py, rhs=maxYV, op="+"}):copyMetadataFrom(thisast)
-  local hackTR = orion.ast.new({kind="transform",expr = input, arg1 = c, arg2 = d}):copyMetadataFrom(thisast)
-
   return orion.ast.new({kind="gather",
                         input=input, 
-                        hackBL=hackBL, 
-                        hackTR=hackTR,
                         x=x,
                         y=y,
                         maxX=maxX,
@@ -394,6 +288,43 @@ function orion.quoteToOrion(luavalue, ast)
   return nil
 end
 
+-- takes in a func and returns targetTable, key for the identifier
+-- if this ends up indexing into a nil table, return (nil, id of nil table in ident list)
+function orion.identifierToVariable(root, ident)
+  assert(type(ident)=="table")
+  for k,v in pairs(ident) do 
+    if type(v)~="string" and type(v)~="number" then 
+      print("ERROR")
+      for a,b in pairs(ident) do
+        print(to_string(b))
+	print("BREAK")
+      end      
+    end
+
+    assert(type(v)=="string" or type(v)=="number") 
+  end
+
+  if #ident == 0 then
+    return root, nil
+  end
+
+  if #ident == 1 then
+    return root, ident[1]
+  end
+
+  local target = root[ident[1]]
+        
+  for i=2,(#ident-1) do
+    if target==nil then
+      return nil,i
+    else
+      target = target[ident[i]]
+    end
+  end
+
+  return target, ident[#ident]
+end
+
 -- take a 'func' ast node, resolve its identifier, and plop in
 -- the ast node for its value. This is either:
 -- (a) a lua variable, which becomes a const
@@ -420,7 +351,7 @@ function orion.resolveIdentifiers(ast,xvar,yvar,zvar,env)
     i=i+1
   end
 
-  local targetTable,key = orion.util.identifierToVariable(env,identifier)
+  local targetTable,key = orion.identifierToVariable(env,identifier)
   
   if #identifier==1 and (identifier[1]==xvar) then
     -- check if this is the position argument first
@@ -475,10 +406,10 @@ end
 
 
 ---------------------------------------------------------
-local Parser = terralib.require("parsing")
-local lang = {}
+orion.Parser = terralib.require("parsing")
+orion.lang = {}
 
-lang.value = function(p)
+orion.lang.value = function(p)
 
     if p:nextif("true") then
       return orion.ast.new({kind="value",value=true}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
@@ -496,7 +427,7 @@ lang.value = function(p)
 end
 
 ----------------------------------------------------------
-lang.expr = Parser.Pratt():prefix(Parser.default,function(p)
+orion.lang.expr = orion.Parser.Pratt():prefix(orion.Parser.default,function(p)
     return p:value()
   end)
 
@@ -523,7 +454,7 @@ lang.expr = Parser.Pratt():prefix(Parser.default,function(p)
 
 
   for op,_ in pairs(orion.binops) do
-    lang.expr = lang.expr:infix(op,precedence[op],function(p,lhs)
+    orion.lang.expr = orion.lang.expr:infix(op,precedence[op],function(p,lhs)
       local op = p:next().type
       local rhs = p:expr(precedence[op])
       return orion.ast.new({kind="binop", op=op, lhs=lhs, rhs=rhs}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
@@ -531,7 +462,7 @@ lang.expr = Parser.Pratt():prefix(Parser.default,function(p)
   end
 
   for op,_ in pairs(orion.unops) do
-    lang.expr = lang.expr:prefix(op,
+    orion.lang.expr = orion.lang.expr:prefix(op,
       function(p)
         local op = p:next().type
         local expr = p:expr(90)
@@ -540,7 +471,7 @@ lang.expr = Parser.Pratt():prefix(Parser.default,function(p)
   end
 
   -- postfix
-  lang.expr = lang.expr:infix("[", 100, 
+  orion.lang.expr = orion.lang.expr:infix("[", 100, 
     function(p,lhs)
       p:expect("[")
       local idx = p:expr()
@@ -548,7 +479,7 @@ lang.expr = Parser.Pratt():prefix(Parser.default,function(p)
       return orion.ast.new({kind="index",index=idx,expr = lhs}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
     end)
 
-  lang.expr = lang.expr:infix("(", 100, 
+  orion.lang.expr = orion.lang.expr:infix("(", 100, 
     function(p,lhs)
       p:expect("(")
 
@@ -566,7 +497,7 @@ lang.expr = Parser.Pratt():prefix(Parser.default,function(p)
       return orion.ast.new(newnode):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
     end)
 
-  lang.expr = lang.expr:prefix("(",function(p)
+  orion.lang.expr = orion.lang.expr:prefix("(",function(p)
     p:expect("(")
     local expr = p:expr()
     p:expect(")")
@@ -645,18 +576,9 @@ lang.expr = Parser.Pratt():prefix(Parser.default,function(p)
       end
       seen[name] = 1
 
-      local ty
-      if p:nextif(":") then
-        ty = p:typeexpr()
-      end
-
       p:expect("=")
 
       local expr = p:expr()
-
-      if ty~=nil then
-        expr = orion.ast.new({kind="cast",expr=expr,type=ty}):copyMetadataFrom(expr)
-      end
 
       p:nextif(";") -- accept a semicolon at the end if the user added one
 
@@ -699,7 +621,7 @@ lang.expr = Parser.Pratt():prefix(Parser.default,function(p)
   end)
 
 ------------------------------------------------------------
-lang.identifier = function(p)
+orion.lang.identifier = function(p)
 
   local ident = {}
   table.insert(ident,p:expect(p.name).value)
@@ -716,7 +638,7 @@ lang.identifier = function(p)
 end
 
 ------------------------------------------------------------
-lang.type = function(p)
+orion.lang.type = function(p)
 
   local ty
 
@@ -758,57 +680,8 @@ lang.type = function(p)
   return p:expr()
 end
 
-lang.typeexpr = function(p)
-
-  local cropMode, type, x, y, w, h
-
-  repeat
-    if p:matches(p.name) then
-      local name = p:cur().value
-
-      if name=="cropNone" then
-        cropMode = orion.cropNone
-        p:next()
-      elseif name=="cropGrow" then
-        cropMode = orion.cropGrow
-        p:next()
-      elseif name=="cropShrink" then
-        cropMode = orion.cropShrink
-        p:next()
-      elseif name=="cropSame" then
-        cropMode = orion.cropSame
-        p:next()
-      elseif name=="crop" then
-        cropMode = orion.cropExplicit
-        
-        p:next()
-        p:expect("(")
-        
-        x = p:expect(p.number).value
-        p:expect(",")
-        y = p:expect(p.number).value
-        p:expect(",")
-        w = p:expect(p.number).value
-        if w<=0 then p:error("crop width must be > 0") end
-        p:expect(",")
-        h = p:expect(p.number).value
-        if h<=0 then p:error("crop height must be > 0") end
-        
-        p:expect(")")
-      else
-        type = p:type() --orion.type.stringToType(name)
-      end
-    else
-      -- could be an escape for exx
-      type = p:type() --orion.type.stringToType(name)
-    end
-  until p:nextif(",") == false 
-
-  return type, cropMode, x, y, w ,h
-end
-
 ------------------------------------------------------------
-lang.func = function(p)
+orion.lang.func = function(p)
   local ident = p:identifier()
   
   local newnode = {kind="func"}
@@ -817,7 +690,7 @@ lang.func = function(p)
 end
 
   -----------------------------------------------------------
-lang.imageFunction = function(p)
+orion.lang.imageFunction = function(p)
 
     p:expect("im")
 
@@ -839,21 +712,11 @@ lang.imageFunction = function(p)
     yvar = p:expect(p.name).value
     p:expect(")")
 
-    local castType, cropMode, x, y, w, h
-    if p:nextif(":") then castType, cropMode,x,y,w,h = p:typeexpr() end
-
     local rvalue = p:expr()
-    if castType~=nil then rvalue=orion.ast.new({kind="cast",expr=rvalue,type=castType}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename) end
 
     p:expect("end")
 
     -- insert the crop
-    if cropMode==nil then cropMode=orion.defaultCrop end
-    if cropMode == orion.cropExplicit then
-      rvalue = orion.ast.new({kind="crop", mode=cropMode, expr=rvalue, x=x,y=y,w=w,h=h}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
-    elseif cropMode~=orion.cropNone then
-      rvalue = orion.ast.new({kind="crop", mode=cropMode, expr=rvalue}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
-    end
 
     local chosenName
     if ident==nil then
@@ -885,7 +748,6 @@ function orion.compileTimeProcess(imfunc, envfn)
     print("start process, node count:",imfunc.rvalue:S("*"):count(),imfunc.rvalue:name()) 
   end
 
-  imfunc.rvalue:check()
 
   local env = envfn()
   local rvalue = imfunc.rvalue
@@ -1011,52 +873,3 @@ function orion.compileTimeProcess(imfunc, envfn)
 
   return rvalue
 end
-
-return {
-  name = "orion";
-  entrypoints = {"im"};
-  keywords = {"map","reduce","let","in","switch","default","case"};
-  statement = function(self,lex)
-    local imfunc = Parser.Parse(lang,lex,"imageFunction")
-    imfunc.rvalue:check()
-
-    if orion.verbose then
-      print("Parse Done -----------")
-      imfunc.rvalue:printpretty()
-    end
- 
-    return 
-      function(envfn)
-      return orion.compileTimeProcess(imfunc,envfn)
-      end, {imfunc.identifier}
-  end;
-  localstatement = function(self,lex)
-    local imfunc = Parser.Parse(lang,lex,"imageFunction")
-    imfunc.rvalue:check()
-
-    if orion.verbose then
-      print("Parse Done -----------")
-      imfunc.rvalue:printpretty()
-    end
- 
-    return 
-      function(envfn)
-      return orion.compileTimeProcess(imfunc,envfn)
-      end, {imfunc.identifier}
-  end;
-  expression = function(self,lex)
-    local imfunc = Parser.Parse(lang,lex,"imageFunction")
-    imfunc.rvalue:check()
-
-    if orion.verbose then
-      print("Parse Done -----------")
-      imfunc.rvalue:printpretty()
-    end
-
-
-    return 
-      function(envfn)
-      return orion.compileTimeProcess(imfunc,envfn)
-      end
-  end
-}

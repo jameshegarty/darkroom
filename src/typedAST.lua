@@ -101,6 +101,105 @@ function orion.typedAST.synthOffset(ast,coord)
   return orion.typedAST.convertOffset(ast,coord)
 end
 
+
+-- returns the stencil with (0,0,0) at the origin
+-- if input isn't null, only calculate stencil for this input (a kernelGraph node)
+function typedASTFunctions:stencil(input)
+
+  if self.kind=="binop" then
+    return self.lhs:stencil(input)
+    :translate(self.translate1_lhs,self.translate2_lhs,0)
+    :unionWith(self.rhs:stencil(input):translate(self.translate1_rhs,self.translate2_rhs,0))
+  elseif self.kind=="multibinop" then
+    local res = Stencil.new()
+
+    for i=1,self:arraySize("lhs") do
+      res = res:unionWith(self["lhs"..i]:stencil(input):translate(self["translate1_lhs"..i], self["translate2_lhs"..i],0))
+    end
+
+    for i=1,self:arraySize("rhs") do
+      res = res:unionWith(self["rhs"..i]:stencil(input):translate(self["translate1_rhs"..i], self["translate2_rhs"..i],0))
+    end
+
+    return res
+  elseif self.kind=="multiunary" then
+    local res = Stencil.new()
+
+    for i=1,self:arraySize("expr") do
+      res = res:unionWith(self["expr"..i]:stencil(input):translate(self["translate1_expr"..i], self["translate2_expr"..i],0))
+    end
+
+    return res
+  elseif self.kind=="unary" then
+    return self.expr:stencil(input):translate(self.translate1_expr,self.translate2_expr,0)
+  elseif self.kind=="assert" then
+    return self.cond:stencil(input):translate(self.translate1_cond,self.translate2_cond,0)
+    :unionWith(self.expr:stencil(input):translate(self.translate1_expr,self.translate2_expr,0))
+  elseif self.kind=="cast" then
+    return self.expr:stencil(input):translate(self.translate1_expr,self.translate2_expr,0)
+  elseif self.kind=="select" or self.kind=="vectorSelect" then
+    return self.cond:stencil(input)
+    :translate(self.translate1_cond,self.translate2_cond,0)
+    :unionWith(self.a:stencil(input)
+               :translate(self.translate1_a,self.translate2_a,0) 
+               :unionWith(self.b:stencil(input)
+                          :translate(self.translate1_b,self.translate2_b,0)))
+  elseif self.kind=="position" or self.kind=="tap" or self.kind=="value" then
+    return Stencil.new()
+  elseif self.kind=="tapLUTLookup" then
+    return self.index:stencil(input):translate(self.translate1_index,self.translate2_index,0)
+  elseif self.kind=="input" then
+    --if input~=nil then assert(false) end
+    return Stencil.new():add(0,0,0)
+  elseif self.kind=="load" then
+    assert(orion.scheduledIR.isScheduledIR(self.from))
+    local s = Stencil.new()
+    if input==nil or input==self.from then s = s:add(0,0,0) end
+    return s
+  elseif self.kind=="gather" then
+    --if input~=nil then assert(false) end
+    assert(self.input.kind=="load")
+    assert(orion.scheduledIR.isScheduledIR(self.input.from))
+
+    if input~=nil and self.input.from~=input then
+      return Stencil.new()
+    else
+      local g = self.input:stencil(input)
+      g = g:unionWith(self.hackBL:stencil(input):translate(self.translate1_hackBL, self.translate2_hackBL,0))
+      g = g:unionWith(self.hackTR:stencil(input):translate(self.translate1_hackTR, self.translate2_hackTR,0))
+      return g:unionWith(self.x:stencil(input)):unionWith(self.y:stencil(input))
+    end
+  elseif self.kind=="array" then
+    local exprsize = self:arraySize("expr")
+
+    local s = Stencil.new()
+    s = s:unionWith(Stencil.new())
+    for i=1,exprsize do
+      s = s:unionWith(self["expr"..i]:stencil(input):translate(
+                        self["translate1_expr"..i],
+                        self["translate2_expr"..i],
+                        0))
+    end
+
+    return s
+  elseif self.kind=="reduce" then
+    local s = Stencil.new()
+    local i=1
+    while self["expr"..i] do
+      s = s:unionWith(self["expr"..i]:stencil(input):translate(self["translate1_expr"..i],self["translate2_expr"..i],0))
+      i=i+1
+    end
+    return s
+  elseif self.kind=="index" then
+    return self.expr:stencil(input)
+  elseif self.kind=="crop" then
+    return self.expr:stencil(input)
+  end
+
+  print(self.kind)
+  assert(false)
+end
+
 function typedASTFunctions:irType()
   return "typedAST"
 end
@@ -132,23 +231,11 @@ function orion.typedAST._toTypedAST(inast, inputWidth, inputHeight)
       assert(orion.ast.isAST(origast))
       local ast = origast:shallowcopy()
 
-      -- crops and cropsTranslated are used to calculate the crop region on crop modes
-      -- 'crops' is used for cropSame (this aren't translated
-      -- 'cropsTranslated' is used for cropGrow and cropShrink
-      -- The _key_ of these tables is the crop, so that we deduplicate crops (or else the list can
-      -- grow huge for now reason). All the crop modes are unaffected by the deduplication...
-      local crops = {} -- crops unaffected by translation
-      local cropsTranslated = {} -- crops affected by translation
-
       if ast.kind=="value" then
         if ast.type==nil then ast.type=orion.type.valueToType(ast.value) end
         assert(ast.type~=nil)
-        crops[orion.cropIR.infinite():copyMetadataFrom(origast)] = 1
-        cropsTranslated[orion.cropIR.infinite():copyMetadataFrom(origast)] = 1
       elseif ast.kind=="unary" then
         ast.expr = inputs["expr"][1]
-        crops = inputs["expr"][2]
-        cropsTranslated = inputs["expr"][3]
         
         if ast.op=="-" then
           if orion.type.astIsUint(ast.expr) then
@@ -195,11 +282,7 @@ function orion.typedAST._toTypedAST(inast, inputWidth, inputHeight)
       elseif ast.kind=="binop" then
         
         local lhs = inputs["lhs"][1]
-        local lhscrops = inputs["lhs"][2]
-        local lhscropsTranslated = inputs["lhs"][3]
         local rhs = inputs["rhs"][1]
-        local rhscrops = inputs["rhs"][2]
-        local rhscropsTranslated = inputs["rhs"][3]
         
         if lhs.type==nil then print("ST"..to_string(lhs)) end
         
@@ -219,31 +302,15 @@ function orion.typedAST._toTypedAST(inast, inputWidth, inputHeight)
         ast.lhs = lhs
         ast.rhs = rhs
         
-        appendSet( crops, lhscrops )
-        appendSet( crops, rhscrops )
-        appendSet( cropsTranslated, lhscropsTranslated )
-        appendSet( cropsTranslated, rhscropsTranslated )
-
       elseif ast.kind=="input" then
-        local crp = orion.cropIR.explicit(0,0,inputWidth,inputHeight)
-        crops[crp:copyMetadataFrom(origast)] = 1
-        cropsTranslated[crp:copyMetadataFrom(origast)] = 1
       elseif ast.kind=="position" then
         -- if position is still in the tree at this point, it means it's being used in an expression somewhere
         -- choose a reasonable type...
         ast.type=orion.type.int(32)
-        crops[orion.cropIR.infinite():copyMetadataFrom(origast)] = 1
-        cropsTranslated[orion.cropIR.infinite():copyMetadataFrom(origast)] = 1
       elseif ast.kind=="select" or ast.kind=="vectorSelect" then
         local cond = inputs["cond"][1]
-        local condcrops = inputs["cond"][2]
-        local condcropsTranslated = inputs["cond"][3]
         local a = inputs["a"][1]
-        local acrops = inputs["a"][2]
-        local acropsTranslated = inputs["a"][3]
         local b = inputs["b"][1]
-        local bcrops = inputs["b"][2]
-        local bcropsTranslated = inputs["b"][3]
 
         if ast.kind=="vectorSelect" then
           if orion.type.arrayOver(cond.type)~=orion.type.bool() then
@@ -287,18 +354,8 @@ function orion.typedAST._toTypedAST(inast, inputWidth, inputHeight)
         ast.a = a
         ast.b = b
         
-        appendSet(crops,condcrops)
-        appendSet(crops,acrops)
-        appendSet(crops,bcrops)
-
-        appendSet( cropsTranslated, condcropsTranslated )
-        appendSet( cropsTranslated, acropsTranslated )
-        appendSet( cropsTranslated, bcropsTranslated )
-        
       elseif ast.kind=="index" then
         local expr = inputs["expr"][1]
-        crops = inputs["expr"][2]
-        cropsTranslated = inputs["expr"][3]
         
         if orion.type.isArray(expr.type)==false then
           orion.error("Error, you can only index into an array type!",origast:linenumber(),origast:offset())
@@ -321,8 +378,6 @@ function orion.typedAST._toTypedAST(inast, inputWidth, inputHeight)
         
       elseif ast.kind=="transform" then
         ast.expr = inputs["expr"][1]
-        crops = inputs["expr"][2]
-        local cropsTranslatedIn = inputs["expr"][3]
         
         -- this just gets the value of the thing we're translating
         ast.type = ast.expr.type
@@ -330,14 +385,6 @@ function orion.typedAST._toTypedAST(inast, inputWidth, inputHeight)
         local i=1
         while ast["arg"..i] do
           ast["arg"..i] = inputs["arg"..i][1] 
-          
-          for c,_ in pairs(inputs["arg"..i][2]) do
-            assert(orion.cropIR.isCropIR(c))
-            if c.kind~="infinite" then
-              orion.error("Argument to image fn should have infinite crop!",origast:linenumber(),origast:offset())
-            end
-          end
-
           i=i+1
         end
         
@@ -362,12 +409,6 @@ function orion.typedAST._toTypedAST(inast, inputWidth, inputHeight)
         -- the parser was supposed to guarantee this.
         assert(i>2)
 
-        cropsTranslated = {}
-
-        for c,_ in pairs(cropsTranslatedIn) do
-          cropsTranslated[c:translate(newtrans.translate1, newtrans.translate2)]=1
-        end
-
         ast=newtrans
 
       elseif ast.kind=="array" then
@@ -375,10 +416,6 @@ function orion.typedAST._toTypedAST(inast, inputWidth, inputHeight)
         local cnt = 1
         while ast["expr"..cnt] do
           ast["expr"..cnt] = inputs["expr"..cnt][1]
-          local crop = inputs["expr"..cnt][2]
-          appendSet(crops, crop)
-          local cropTranslated = inputs["expr"..cnt][3]
-          appendSet(cropsTranslated, cropTranslated)
           cnt = cnt + 1
         end
         
@@ -443,8 +480,6 @@ function orion.typedAST._toTypedAST(inast, inputWidth, inputHeight)
         ast.expr = inputs["expr"][1]
         -- extract the type from the type node
         ast.type = inputs["type"][1].type
-        crops = inputs["expr"][2]
-        cropsTranslated = inputs["expr"][3]
         
         if orion.type.checkExplicitCast(ast.expr.type,ast.type,origast)==false then
           orion.error("Casting from "..ast.expr.type:str().." to "..ast.type:str().." isn't allowed!",origast:linenumber(),origast:offset())
@@ -454,43 +489,19 @@ function orion.typedAST._toTypedAST(inast, inputWidth, inputHeight)
       elseif ast.kind=="assert" then
 
         ast.cond = inputs["cond"][1]
-        local condCrop = inputs["cond"][2]
-        local condCropTranslated = inputs["cond"][3]
         ast.expr = inputs["expr"][1]
-        local exprCrop = inputs["expr"][2]
-        local exprCropTranslated = inputs["expr"][3]
         ast.printval = inputs["printval"][1]
-        local printvalCrop = inputs["printval"][2]
-        local printvalCropTranslated = inputs["printval"][3]
-        
+
         if orion.type.astIsBool(ast.cond)==false then
           orion.error("Error, condition of assert must be boolean",ast:linenumber(),ast:offset())
           return nil
         end
 
         ast.type = ast.expr.type
-        
-        appendSet(crops, condCrop)
-        appendSet(crops, exprCrop)
-        appendSet(crops, printvalCrop)
-
-        appendSet(cropsTranslated, condCropTranslated)
-        appendSet(cropsTranslated, exprCropTranslated)
-        appendSet(cropsTranslated, printvalCropTranslated)
 
       elseif ast.kind=="mapreducevar" then
         local low = inputs["low"][1]
-        local lowCrop = inputs["low"][2]
-        local lowCropTranslated = inputs["low"][3]
         local high = inputs["high"][1]
-        local highCrop = inputs["high"][2]
-        local highCropTranslated = inputs["high"][3]
-
-        appendSet(crops,lowCrop)
-        appendSet(crops,highCrop)
-
-        appendSet(cropsTranslated, lowCropTranslated )
-        appendSet(cropsTranslated, highCropTranslated )
 
         -- we don't need this anymore. Only needed this to calculate the type.
         ast.low=nil
@@ -499,18 +510,11 @@ function orion.typedAST._toTypedAST(inast, inputWidth, inputHeight)
         ast.type = orion.type.meet(low.type,high.type,"mapreducevar", origast)
       elseif ast.kind=="tap" then
         -- taps should be tagged with type already
-        crops[orion.cropIR.infinite():copyMetadataFrom(origast)]=1
-        cropsTranslated[orion.cropIR.infinite():copyMetadataFrom(origast)]=1
       elseif ast.kind=="tapLUTLookup" then
         ast.index = inputs["index"][1]
-        crops = inputs["index"][2]
-        cropsTranslated = inputs["index"][3]
 
         -- tapLUTs should be tagged with type already
         assert(orion.type.isType(ast.type))
-
-        crops[orion.cropIR.infinite():copyMetadataFrom(origast)]=1
-        cropsTranslated[orion.cropIR.infinite():copyMetadataFrom(origast)]=1
 
         if orion.type.isUint(ast.index.type)==false and
           orion.type.isInt(ast.index.type)==false then
@@ -520,66 +524,13 @@ function orion.typedAST._toTypedAST(inast, inputWidth, inputHeight)
         end
       elseif ast.kind=="crop" then
         ast.expr = inputs["expr"][1]
-        crops = inputs["expr"][2]
-        cropsTranslated = inputs["expr"][3]
-        
         ast.type = ast.expr.type
-        
-        assert(keycount(crops)>0)
-        
-        if ast.mode==orion.cropSame or
-          ast.mode==orion.cropGrow or
-          ast.mode==orion.cropShrink then
-
-          local cropList = cropsTranslated
-          if ast.mode==orion.cropSame then cropList = crops end
-
-          for c,_ in pairs(cropList) do
-            if ast.crop==nil then
-              ast.crop = c
-            else
-              ast.crop = ast.crop:meet(c,ast.mode)
-            end
-          end
-
-          ast.kind="cropBaked"
-          ast.mode=nil
-          ast.x=nil
-          ast.y=nil
-          ast.width=nil
-          ast.height=nil
-
-          crops = {}
-          crops[ast.crop] = 1
-          cropsTranslated = {}
-          cropsTranslated[ast.crop] = 1
-        elseif ast.mode==orion.cropExplicit then
-          ast.kind="cropBaked"
-          ast.crop = orion.cropIR.explicit( ast.x, ast.y, ast.x+ast.w, ast.y+ast.h ):copyMetadataFrom(origast)
-          ast.mode=nil
-          ast.x=nil
-          ast.y=nil
-          ast.w=nil
-          ast.h=nil
-          
-          crops = {}
-          crops[ast.crop] = 1
-          cropsTranslated = {}
-          cropsTranslated[ast.crop] = 1
-        else
-          print(ast.mode.name)
-          assert(false)
-        end
       elseif ast.kind=="reduce" then
         local i=1
         local typeSet = {}
 
         while ast["expr"..i] do
           ast["expr"..i] = inputs["expr"..i][1]
-          local crop = inputs["expr"..i][2]
-          local cropTranslated = inputs["expr"..i][3]
-          appendSet(crops,crop)
-          appendSet(cropsTranslated,cropTranslated)
           table.insert(typeSet,ast["expr"..i].type)
           
           i=i+1
@@ -589,8 +540,6 @@ function orion.typedAST._toTypedAST(inast, inputWidth, inputHeight)
       elseif ast.kind=="outputs" then
         -- doesn't matter, this is always the root and we never need to get its type
         ast.type = inputs.expr1[1].type
-        crops = inputs.expr1[2]
-        cropsTranslated = inputs.expr1[3]
 
         local i=1
         while ast["expr"..i] do
@@ -601,8 +550,6 @@ function orion.typedAST._toTypedAST(inast, inputWidth, inputHeight)
       elseif ast.kind=="type" then
         -- ast.type is already a type, so don't have to do anything
         -- shouldn't matter, but need to return something
-        crops[orion.cropIR.empty()] = 1
-        cropsTranslated[orion.cropIR.empty()] = 1
       elseif ast.kind=="gather" then
         ast.type = inputs.input[1].type
         ast.input = inputs.input[1]
@@ -619,13 +566,6 @@ function orion.typedAST._toTypedAST(inast, inputWidth, inputHeight)
           orion.error("Error, y argument to gather must be int but is "..ast.y.type:str(), origast:linenumber(), origast:offset())
         end
 
-        appendSet(crops, inputs.input[2])
-        appendSet(crops, inputs.x[2])
-        appendSet(crops, inputs.y[2])
-
-        appendSet(cropsTranslated, inputs.input[3])
-        appendSet(cropsTranslated, inputs.x[3])
-        appendSet(cropsTranslated, inputs.y[3])
       else
         orion.error("Internal error, typechecking for "..ast.kind.." isn't implemented!",ast.line,ast.char)
         return nil
@@ -634,33 +574,24 @@ function orion.typedAST._toTypedAST(inast, inputWidth, inputHeight)
       if orion.type.isType(ast.type)==false then print(ast.kind) end
       ast = orion.typedAST.new(ast):copyMetadataFrom(origast)
       assert(orion.type.isType(ast.type))
-      assert(keycount(crops)>0)
 
-      for c,k in pairs(crops) do
-        assert(orion.cropIR.isCropIR(c))
-        assert(type(k)=="number")
-      end
-      for c,k in pairs(cropsTranslated) do
-        assert(orion.cropIR.isCropIR(c))
-        assert(type(k)=="number")
-      end
-
-      return {ast, crops, cropsTranslated}
+      return {ast}
     end)
 
   return res[1], res[2]
 end
 
-function orion.typedAST.astToTypedAST(ast, inputWidth, inputHeight)
+function orion.typedAST.astToTypedAST(ast, inputWidth, inputHeight, options)
   assert(orion.ast.isAST(ast))
   assert(type(inputWidth)=="number")
   assert(type(inputHeight)=="number")
+  assert(type(options)=="table")
 
   -- first we run CSE to clean up the users code
   -- this will save us a lot of time/memory later on
   ast = orion.optimize.CSE(ast,{})
 
-  if orion.verbose or orion.printstage then 
+  if options.verbose or options.printstage then 
     print("toTyped") 
     print("nodecount",ast:S("*"):count())
     print("maxDepth",ast:maxDepth())
@@ -678,72 +609,10 @@ function orion.typedAST.astToTypedAST(ast, inputWidth, inputHeight)
   -- we also don't want to do these desugaring in compileTimeProcess,
   -- b/c that will potentially grow memory usage exponentially
   ast = ast:S(function(n) 
-                return n.kind=="mapreduce" or 
-                  n.kind=="let" or 
+                return n.kind=="let" or 
                   n.kind=="switch" end):process(
     function(node)
-      if node.kind=="mapreduce" then
-        local tmpAST = node:shallowcopy()
-        
-        -- figure out what the mapreduce variable ranges are
-        -- this must happen at compile time
-        local i=1
-        while tmpAST["varname"..i] do
-          local lowAST, lowCrop = orion.typedAST._toTypedAST(node["varlow"..i], inputWidth, inputHeight)
-          local low = lowAST:eval()
-          
-          local highAST, highCrop = orion.typedAST._toTypedAST(node["varhigh"..i], inputWidth, inputHeight)
-          local high = highAST:eval()
-          
-          if type(low)~="number" then
-            orion.error("low range must be compile time const")
-          end
-          
-          if type(high)~="number" then
-            orion.error("low range must be compile time const")
-          end
-          
-          if low>high then
-            orion.error("low must be <= high")
-          end
-          
-          tmpAST["varlow"..i] = low
-          tmpAST["varhigh"..i] = high
-          
-          i=i+1
-        end
-        
-        -- now desugar the mapreduce
-        
-        local newnode = {kind="reduce",op=tmpAST.reduceop, type=tmpAST.type}
-        local exprCount = 1
-        
-        -- replace the vars
-        -- remember: this is a N*M operation, where
-        -- N = number of MR vars, M = # of values they can take on
-        local function replacevar(index,inputast)
-          --inputast:check()
-          if tmpAST["varname"..index]==nil then -- base case
-            newnode["expr"..exprCount]=inputast
-            exprCount = exprCount+1
-          else
-            for varval = tmpAST["varlow"..index],tmpAST["varhigh"..index] do
-              
-              local newexpr = inputast:S("mapreducevar variable="..tmpAST["varname"..index]):process(
-                function(fin)
-                  assert(orion.ast.isAST(fin))
-                  return orion.ast.new({kind="value",value=varval}):copyMetadataFrom(fin)
-                end)
-              
-              replacevar(index+1,newexpr) -- recurse
-            end
-          end
-        end
-        
-        replacevar(1,tmpAST.expr) -- this modifies newnode
-        
-        return orion.ast.new(newnode):copyMetadataFrom(node)
-      elseif node.kind=="let" then
+      if node.kind=="let" then
         local cnt = 1
         local namemap = {}
 
@@ -781,181 +650,26 @@ function orion.typedAST.astToTypedAST(ast, inputWidth, inputHeight)
       end
     end)
 
-  if orion.verbose or orion.printstage then 
+  if options.verbose then
     print("desugar done")
   end
 
   -- should have been eliminated
   if orion.debug then assert(ast:S(function(n) return n.kind=="mapreducevar" or n.kind=="letvar" or n.kind=="switch" end):count()==0) end
-  ast:check()
 
-  if orion.printstage then
+  if options.printstage then
     print("_toTypedAST",collectgarbage("count"))
   end
 
   local typedAST = orion.typedAST._toTypedAST(ast, inputWidth, inputHeight)
-  typedAST:check()
 
-  if orion.verbose or orion.printstage then
+  if options.verbose or options.printstage then
     print("conversion to typed AST done ------------")
-  end
-
-  if orion.verbose then
-    typedAST:printpretty()
   end
 
   return typedAST
 end
 
-function orion.typedAST.printprettys(node,root,parent,key,assignments)
-  return typedASTFunctions.printprettys(node,root,parent,key,assignments)
-end
-
--- parent,key is used by later IRs
--- assignments is used to store variables we've assigned to
--- assignments: varname -> string
-function typedASTFunctions:printprettys(root,parent,key,assignments)
-  assert(orion.IR.isIR(root))
-  assert(type(assignments)=="table")
-
-  local out = "["..orion.type.typeToString(self.type).."]"
-
-  if self.kind=="func" then
-    local i=1
-    while self["identifier"..i] do
-      out = out..self["identifier"..i]
-      if self["identifier"..(i+1)] then out=out.."." end
-      i=i+1
-    end
-
-  elseif self.kind=="binop" then
-    out = out.."("..self.lhs:printprettys(root,self,"lhs",assignments)..")"
-    out = out..self.op.."("..self.rhs:printprettys(root,self,"rhs",assignments)..")"
-  elseif self.kind=="multibinop" then
-    out = out.."("
-    self:map("lhs",
-             function(n,i) 
-               out = out..n:printprettys(root,self,"lhs"..i,assignments)..","
-             end)
-    out = out..")"
-
-    out = out..self.op.."("
-    self:map("rhs",
-             function(n,i) 
-               out = out..n:printprettys(root,self,"rhs"..i,assignments)..","
-             end)
-    out = out..")"
-  elseif self.kind=="multiunary" then
-    out = out..self.op.."("
-    self:map("expr",
-             function(n,i) 
-               out = out..n:printprettys(root,self,"expr"..i,assignments)..","
-             end)
-    out = out..")"
-
-  elseif self.kind=="unary" then
-    out=out..self.op.."("..self.expr:printprettys(root,self,"expr",assignments)..")"
-  elseif self.kind=="value" then
-    out=out..tostring(self.value)
-  elseif self.kind=="special" then
-    out=out.."_special_"..self.id
-  elseif self.kind=="position" then
-    out=out..self.coord
-  elseif self.kind=="cast" then
-    out = out..self.expr:printprettys(root,self,"expr",assignments)
-  elseif self.kind=="tap" then
-    out=out.."_tap_"..self.tapname
-  elseif self.kind=="tapLUTLookup" then
-    out=out.."_tapLUT_"..self.tapname.."["..self.index:printprettys(root,self,"index",assignments).."]"
-  elseif self.kind=="transformBaked" then
-    out = out..self.expr:printprettys(root,self,"expr",assignments).."("
-
-    local i=1
-    while self["translate"..i] do
-      out = out..orion.dimToCoord[i].."*"..self["scale"..i].."+"..self["translate"..i]
-      if self["translate"..(i+1)] then out = out.."," end
-      i=i+1
-    end
-    out = out..")"
-
-  elseif self.kind=="reduce" then
-    out = out .. self.op .. "("
-
-    local i=1
-    while self["expr"..i] do
-      out = out..self["expr"..i]:printprettys(root,self,"expr"..i,assignments)
-      if self["expr"..(i+1)] then out = out..",\n" end
-      i=i+1
-    end
-    
-    out = out  .. ")"
-  elseif self.kind=="select" then
-    out=out.."if "..self.cond:printprettys(root,self,"cond",assignments).." then "..self.a:printprettys(root,self,"a",assignments).." else "..self.b:printprettys(root,self,"b",assignments).." end"
-  elseif self.kind=="vectorSelect" then
-    out=out.."vectorSelect("..self.cond:printprettys(root,self,"cond",assignments)..","..self.a:printprettys(root,self,"a",assignments)..","..self.b:printprettys(root,self,"b",assignments)..")"
-  elseif self.kind=="cropBaked" then
-    out = out.."cropBaked("..self.expr:printprettys(root,self,"expr",assignments)..","..self.crop:printprettys()..")"
-  elseif self.kind=="array" or
-    self.kind=="toAOS" then
-
-    out = out..self.kind.."("
-
-    self:map("expr", 
-             function(n,index)
-               
-               out = out..n:printprettys(root,self,"expr"..index,assignments)..", "
-             end)
-
-    out = out..")"
-  elseif self.kind=="assert" then
-    out = out.."assert("..self.expr:printprettys(root,self,"expr",assignments)..","..self.printval:printprettys(root,self,"printval",assignments)
-    out = out..","..self.cond:printprettys(root,self,"cond",assignments)..")"
-  elseif self.kind=="multiout" then
-    out = out.."multiout("
-
-    self:map("expr", 
-             function(n,index)
-               out = out..n:printprettys(root,self,"expr"..index,assignments)..", "
-             end)
-
-    out = out..")"
-  elseif self.kind=="toSOA" then
-    out = out.."toSOA("..self.special..","..self.index..")"
-  elseif self.kind=="index" then
-    out = out.."("..self.expr:printprettys(root,self,"expr",assignments)..")["..self.index.."]"
-  elseif self.kind=="gather" then
-    out = "gather(\n"..self.input:printprettys(root,self,"input",assignments)..",\n"
-    out = out..self.x:printprettys(root,self,"x",assignments)..",\n"
-    out = out..self.y:printprettys(root,self,"y",assignments)..",\n"
-    out = out..tostring(self.maxX)..", "..tostring(self.maxY)..", "..tostring(self.clamp)..")"
-  else
-    print(self.kind)  
-    assert(false)
-  end
-
-  -- decide if we should display this stored in a variable
-  local displayInVar = false
-  if true then
-    -- CSE mode, only store stuff that has multiple parents
-    displayInVar = (self:parentCount(root)>1)
-  else
-
-  end
-
-  if displayInVar then
-    assignments[self:name()] = out
-    return self:name()
-  end
-
-  return out
-end
-
-function typedASTFunctions:printpretty()
-  local assignments = {}
-  local out = self:printprettys(self,nil,nil,assignments)
-  for k,v in pairs(assignments) do print(k,"=",v) end
-  print(out)
-end
 
 function orion.typedAST.isTypedAST(ast) return getmetatable(ast)==typedASTMT end
 

@@ -5,6 +5,8 @@ orionSimple.imageInputs = {}
 orionSimple.width = nil
 orionSimple.height = nil
 
+terralib.require("image")
+
 -- convenience function. Loads an image and returns it as an orion function
 -- it only makes sense to call this guy at compile time
 function orionSimple.load(filename, boundaryCond)
@@ -132,8 +134,8 @@ local function makeBindConstant(orionType)
     
     for i=0,w*h do data[i] = constantValue end
     
-    var im : Image
-    im:init(w,h,w,c,sizeof(baseTerraType)*8,isFloat,isSigned,[&uint8](data),[&uint8](data))
+    var img : Image
+    img:init(w,h,w,c,sizeof(baseTerraType)*8,isFloat,isSigned,[&uint8](data),[&uint8](data))
     
     if orion.verbose then cstdio.printf("Bind Constant %d w %d h %d bits %d\n",boundId, w,h,sizeof(baseTerraType)*8) end
     
@@ -143,7 +145,7 @@ local function makeBindConstant(orionType)
     end
     
     orion._boundImagesRuntime:getPtr(boundId).active = true
-    orion._boundImagesRuntime:getPtr(boundId).image = im
+    orion._boundImagesRuntime:getPtr(boundId).image = img
   end
 end
 

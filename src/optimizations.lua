@@ -210,14 +210,13 @@ function orion.optimize.isZero(val)
 end
 
 -- ast should be a typed ast
-function orion.optimize.optimize(ast)
-  assert(orion.internalIR.isInternalIR(ast))
+function orion.optimize.optimize(ast, options)
+  assert(orion.typedAST.isTypedAST(ast))
+  assert(type(options)=="table")
 
-  if orion.printstage then
+  if options.printstage then
     print("Optimize")
   end
-
-  ast:check()
 
   -- remove noop casts
   ast = ast:S("cast"):process(function(ast) if ast.type==ast.expr.type then return ast.expr else return ast end end)
@@ -235,7 +234,7 @@ function orion.optimize.optimize(ast)
         if (vf==0 and n.type==orion.type.uint(8) and ast.expr.value >=0 and ast.expr.value <256) or
           (vf==0 and n.type==orion.type.uint(16) and ast.expr.value >=0 and ast.expr.value < math.pow(2,16)) or
           (vf==0 and n.type==orion.type.uint(32) and ast.expr.value >=0 and ast.expr.value < math.pow(2,32)) then
-          return orion.internalIR.new(n):copyMetadataFrom(ast.expr)
+          return orion.typedAST.new(n):copyMetadataFrom(ast.expr)
         end
       end
     end)
@@ -389,184 +388,11 @@ function orion.optimize.optimize(ast)
       end)
   end
   
-  ast:check()
-
   local cseRepo={}
   ast = orion.optimize.CSE(ast, cseRepo)
 
-  --ast = orion.optimize.constantFold(ast)
-
-  --ast = orion.optimize.optimizeMath(ast)
-
-
-  ast:check()
-
-  if orion.verbose then
+  if options.verbose then
     print("Optimizations Done --------------------------")
-    ast:printpretty()
-  end
-
-  return ast
-end
-
--- makes sure that children of index nodes aren't holding around
--- array nodes unnecessarily
---
--- theoretically, we could have done this before typechecking,
--- which would have maybe been easier. But I wasn't sure that our
--- type rules would behave 100% as expected, so I think this is safer...
-function orion.optimize.cleanupVectors(ast)
-  assert(orion.typedAST.isTypedAST(ast))
-  ast:check()
-
-
-  ast = ast:S("index"):process(
-    function(n)
-      local index = n.index
-      local q = n.expr:S(function(n) return orion.type.isArray(n.type) end)
-
-      return q:process(
-        function(n)
-          local out = n:shallowcopy()
-          
-          if n.kind=="binop" or
-            n.kind=="unary" or
-            n.kind=="select" or
-            n.kind=="vectorSelect" or
-            n.kind=="gather" or
-            n.kind=="reduce" then
-            -- these guys act elementwise so we can treat them all the same
-            out.type = orion.type.arrayOver(out.type)
-          elseif n.kind=="array" then
-            -- by defn its inputs are scalar
-return  n["expr"..(index+1)]
-          elseif n.kind=="cast" or
-            n.kind=="transformBaked" or
-            n.kind=="cropBaked" then
-            -- these guys just happen to share the same format
-            out.type = orion.type.arrayOver(out.type)
-          elseif n.kind=="input" then
-            out.channel = index -- indicates to only read one channel
-            out.type = orion.type.arrayOver(n.type)
-          else
-            print(n.kind)
-            assert(false)
-          end
-          
-          if orion.type.isArray(out.type) then
-            print(n.kind)
-            assert(false)
-          end
-          
-          local res = orion.typedAST.new(out):copyMetadataFrom(n)
-          return res
-        end)
-    end)
-
-  return ast
-end
-
-function orion.optimize.toSOA(ast)
-  -- we do this on the typed ast b/c the internal IR is confusing
-  assert(orion.typedAST.isTypedAST(ast))
-  ast:check()
-
-  if orion.printstage then
-    print("toSOA",ast:S("index"):count())
-  end
-
-  if orion.verbose then print("convert arrays to SOA") end
-
-  -- find all potential 'sinks' for arrays, and convert them
-  -- into an equivilant form that doesn't use arrays
-
-  local function proc(ast)
-    if orion.type.isArray(ast.type) then
-      local len = orion.type.arrayLength(ast.type)
-
-      local restable = {}
-      for i=1,len do
-        local expr = {kind="index", index=i-1, expr = ast, type = orion.type.arrayOver(ast.type)}
-        table.insert(restable, orion.typedAST.new(expr):copyMetadataFrom(ast))
-      end
-      
-      return restable
-    end
-
-    return ast
-  end
-
-  if ast.kind=="outputs" then
-    -- need to special case this
-    local newMultiout = ast:shallowcopy()
-
-    for i=1,ast:arraySize("expr") do
-      newMultiout["expr"..i] = proc(ast["expr"..i])
-    end
-
-    ast = orion.typedAST.new(newMultiout):copyMetadataFrom(ast)
-  else
-    ast = proc(ast)
-  end
-
-  -- These are binary operators that consume array(s) but produce a scalar value
-  ast = ast:S("binop"):process(
-    function(n)
-      if n.op=="dot" then
-        local newnode = {kind="multibinop", type = n.type, op=n.op}
-        local len = orion.type.arrayLength(n.lhs.type)
-        for i=1,len do
-          local lhs = {kind="index", index=i-1, expr = n.lhs, type = orion.type.arrayOver(n.lhs.type)}
-          newnode["lhs"..i] = orion.typedAST.new(lhs):copyMetadataFrom(n)
-
-          local rhs = {kind="index", index=i-1, expr = n.rhs, type = orion.type.arrayOver(n.rhs.type)}
-          newnode["rhs"..i] = orion.typedAST.new(rhs):copyMetadataFrom(n)
-        end
-        return orion.typedAST.new(newnode):copyMetadataFrom(n)
-      end
-    end)
-
-  -- these are unary operators that consume an array put produce a scalar value
-  ast = ast:S("unary"):process(
-    function(n)
-      if n.op=="arrayAnd" then
-        local newnode = {kind="multiunary", type = n.type, op=n.op}
-        local len = orion.type.arrayLength(n.expr.type)
-        for i=1,len do
-          local expr = {kind="index", index=i-1, expr = n.expr, type = orion.type.arrayOver(n.expr.type)}
-          newnode["expr"..i] = orion.typedAST.new(expr):copyMetadataFrom(n)
-        end
-        return orion.typedAST.new(newnode):copyMetadataFrom(n)
-        
-      end
-    end)
-
-  ast:check()
-
-  -- at this point, everything should be set up so that it's scalar
-  -- run a pass to cleanup unnecessary array nodes
-
-  if orion.printstage then print("cleanup") end
-
-  ast = orion.optimize.cleanupVectors(ast)
-  if orion.printstage then print("cleanup done, nodecount:",ast:S("*"):count()) end
-
-  -- check that it worked
-  ast:S("*"):process(function(n)
-                       if n.kind~="toAOS" and n.kind~="outputs" then
-                         if orion.type.isArray(n.type) then
-                           n:printpretty()
-                           assert(false)
-                         end
-                       end
-                     end)
-
-  if orion.verbose or orion.printstage then
-    print("Conversion to SOA done -----------")
-  end
-
-  if orion.verbose then 
-    ast:printpretty()
   end
 
   return ast

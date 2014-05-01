@@ -76,7 +76,7 @@ return self.ast
 
     -- first, decide if we're ready to replace this node yet
     local changed = false -- did it change at all?
-    for k,v in oldast:children() do
+    for k,v in oldast:inputs() do
       if self.affected[v] and replacedNodes[v]==nil then 
         -- not ready to replace it yet - some of its children haven't yet been processed
 return
@@ -118,7 +118,7 @@ return
   -- mark the nodes in the list with no affected inputs as ready
   for i=starti,endi,stepi do
     local ready = true
-    for k,v in self.list[i]:children() do
+    for k,v in self.list[i]:inputs() do
       if self.affected[v]~=nil then ready=false end
     end
 
@@ -179,13 +179,13 @@ function astQuery:traverse(func)
           assert(results[node]~=nil)
           for k,v in pairs(results[node]) do inargsInv[v] = 1 end
         else
-          for k,v in node:children() do search(v) end
+          for k,v in node:inputs() do search(v) end
         end
       else
         seen[node] = 1
       end
     end
-    for k,v in self.list[i]:children() do search(v) end
+    for k,v in self.list[i]:inputs() do search(v) end
 
     local inargs = {}
     for k,v in pairs(inargsInv) do table.insert(inargs,k) end
@@ -233,7 +233,7 @@ function IRFunctions:visitEach(func)
         stack[cur][#stack[cur]] = nil
       elseif seen[nextNode]==nil then
         stack[next] = {}
-        for _,c in nextNode:children() do
+        for _,c in nextNode:inputs() do
           table.insert( stack[next], c )
         end
         expanded[nextNode]=1
@@ -260,7 +260,7 @@ function IRFunctions:visitEach(func)
   for _,node in ipairs(visitList) do
 
     local argList = {}
-    for k,v in node:children() do
+    for k,v in node:inputs() do
       assert(seen[v])
       argList[k]=value[v]
     end
@@ -280,7 +280,7 @@ function IRFunctions:visitEach(func)
     if seen[node]~=nil then return value[node] end
 
     local argList = {}
-    for k,v in node:children() do
+    for k,v in node:inputs() do
       argList[k]=trav(v)
     end
 
@@ -387,7 +387,7 @@ local function Sinternal(self, query, stopQuery, list, visited)
     -- mark as visited
     visited[self]=1
     
-    for k,v in self:children() do
+    for k,v in self:inputs() do
 
       if v:matches(stopQuery) then
         -- do nothing. this is a stop node
@@ -463,7 +463,7 @@ function Finternal(self, queryFunc, list, visited)
       table.insert(list,self)
     else
 
-      for k,v in self:children() do
+      for k,v in self:inputs() do
         Finternal( v, queryFunc, list, visited )
       end
     end
@@ -552,7 +552,7 @@ end
 -- like pairs(), but only return the k,v pairs where the v is another IR node
 -- by defn, this function only returns v's that have the same metatable as self
 -- note that this can return the same value under different keys!
-function IRFunctions:children()
+function IRFunctions:inputs()
   local f, s, var = pairs(self)
 
   local function filteredF(s,var)
@@ -576,7 +576,7 @@ function orion.IR.buildParentCache(root)
   local visited={}
   local function build(node)
     if visited[node]==nil then
-      for k,child in node:children() do
+      for k,child in node:inputs() do
         if orion.IR._parentsCache[root][child]==nil then
           orion.IR._parentsCache[root][child]={}
         end
@@ -633,9 +633,9 @@ function IRFunctions:keyCount()
   return kc
 end
 
-function IRFunctions:childrenCount()
+function IRFunctions:inputCount()
   local cc=0
-  for k,v in self:children() do cc=cc+1 end
+  for k,v in self:inputs() do cc=cc+1 end
   return cc
 end
 
@@ -644,60 +644,6 @@ function IRFunctions:parentCount(root)
   for k,v in self:parents(root) do pc=pc+1 end
   return pc
 end
-
---[==[
-function IRFunctions:maxDepth()
-
-  local seen = {}
-  local expanded = {}
-
-  local visitList = {}
-  local stack = {}
-  stack[1] = {self}
-
-  local res = 0
-  while #stack>0 do
-    -- need to add all children of everything in this list to the stack
-    -- do a DFS
-    local cur = #stack
-    local next = #stack+1
-
-    res = math.max(res,#stack)
-
-    if #stack[cur]==0 then
-      stack[cur]=nil
-    else
-
-      local nextNode = stack[cur][#stack[cur]]
-      if expanded[nextNode] then
-        -- we must have already added its children
-        if seen[nextNode]==nil then
-          seen[nextNode] = 1
-        end
-        
-        stack[cur][#stack[cur]] = nil
-      elseif seen[nextNode]==nil then
-        stack[next] = {}
-        for _,c in nextNode:children() do
-          table.insert( stack[next], c )
-        end
-        expanded[nextNode]=1
-        
-        if #stack[next]==0 then
-          seen[nextNode] = 1
-          stack[cur][#stack[cur]] = nil
-          stack[next]=nil
-        end
-      else
-        stack[cur][#stack[cur]] = nil
-      end
-
-    end
-  end
-
-  return res
-end
-]==]
 
 function IRFunctions:maxDepth()
 
@@ -708,7 +654,7 @@ function IRFunctions:maxDepth()
     if seen[node] then return seen[node] end
     local res = 0
 
-    for k,v in node:children() do
+    for k,v in node:inputs() do
       res = math.max(res, trav(v)+1)
     end
 
@@ -882,135 +828,4 @@ end
 -- use whatever clever algorithm you want here
 function IRFunctions:makeNewName()
   return "unnamed"
-end
-
-
-function IRFunctions:check()
-  if orion.debug==false then return end
---  return
-  --print(debug.traceback())
-
-  --local q = self:S("*")
-  --print("check",q:count())
-
-  self:visitEach(
-    function(node)
-      orion.IR.check(node)
-
-      if node:keyCount()~=node:expectedKeycount() then
-        print("keycount mismatch","kind:",node.kind,"has:",node:keyCount(),"expected:",node:expectedKeycount())
-        for k,v in pairs(node) do print(k) end
-        
-        assert(false)
-      end
-
-      node:checkfn()
-    end)
-
-
-end
-
-function IRFunctions:printprettyJSON(filename)
-  local function printTableJSON(tab)
-    local isArray = true
-    for k,v in pairs(tab) do if type(k)~="number" then isArray=false end end
-
-    io.write(isArray and "[\n" or "{\n")
-
-    for k,v in pairs(tab) do
-      if isArray==false then
-        io.write("\"")
-        io.write(tostring(k))
-        io.write("\":")
-      end
-
-      if type(v)=="number" or type(v)=="boolean" then
-        io.write(tostring(v))
-      elseif  type(v)=="string" then
-        io.write("\"")
-        io.write(v)
-        io.write("\"")
-      elseif type(v)=="table" then
-        printTableJSON(v)
-      else
-        io.write("\"")
-        io.write(type(v))
-        io.write("\"")
-      end
-
-      if next(tab,k)~=nil then io.write(",") end
-    end
-
-    io.write(isArray and "]\n" or "}\n")
-  end
-
-  -------------------------
-  -- this just collects what info we're interested in
-  local dataTable = {}
-  local irTable = {}
-  local function collectTables(tab,depth)
-    if dataTable[tab]~=nil or depth<=0 then
-      do return end
-    end
-
-    for _,v in pairs(irTable) do
-      if v[tab]~=nil then return end
-    end
-
-    if orion.IR.isIR(tab) then
---      for k,v in pairs(tab) do print(k) end
-      if irTable[tab:irType()] == nil then irTable[tab:irType()]={} end
-      irTable[tab:irType()][tab] = 1
-    end
-
-    dataTable[tab] = {}
-    for k,v in pairs(tab) do
-      if type(v)=="table" then v = "$"..tostring(v) end
-      dataTable[tab][k] = v
-    end
-
-    if orion.IR.isIR(tab) and tab.extraDebug~=nil then
-      for k,v in pairs(tab:extraDebug()) do
-        dataTable[tab][k] = v
-      end
-    end
-
-    for k,v in pairs(tab) do
-      if type(v)=="table" then
-        collectTables(v,depth-1)
-      end
-    end
-  end
-
-  self:visitEach(
-    function(ast)
-      collectTables(ast,6)
-    end)
-  -------------------------
-
-  local function tod3(tab)
-    local nodeToIndex = {}
-    local res = {nodes={}, links={}}
-    for ast,_ in pairs(tab) do 
-      table.insert(res.nodes, {name=ast:name(),group=0,kind=ast.kind,dataTable="$"..tostring(ast)})
-      nodeToIndex[ast] = #res.nodes-1
-    end
-
-    for ast,_ in pairs(tab) do 
-      for _,child in ast:children() do
-        table.insert(res.links,{source=nodeToIndex[child],target=nodeToIndex[ast],value=1})
-      end
-    end
-
-    return res
-  end
-
-  for k,v in pairs(irTable) do irTable[k] = tod3(v) end
-
-  local res = {dataTable=dataTable, irTable = irTable}
-
-  io.output(filename)
-  printTableJSON(res)
-
-  io.close()
 end

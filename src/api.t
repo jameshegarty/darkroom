@@ -45,159 +45,43 @@ end
 function orion.frontEnd(ast, imageWidth, imageHeight, options)
   assert(type(options)=="table")
 
-  local typedAST = orion.typedAST.astToTypedAST( ast, imageWidth, imageHeight )
+  if options.callbackAST~=nil then options.callbackAST(ast) end
 
-  if options.platform=="cpu" then
-    -- on cpu we turn vector operations into struct of array form
-    -- (we eliminate vectors)
-    typedAST = orion.optimize.toSOA(typedAST)
-  end
-
-  local internalIR,base1,base2 = orion.internalIR.typedASTToInternalIR(typedAST)
+  local typedAST = orion.typedAST.astToTypedAST( ast, imageWidth, imageHeight, options )
+  if options.callbackTypedAST~=nil then options.callbackTypedAST(typedAST) end
 
   -- optimize
-  internalIR = orion.optimize.optimize(internalIR)
+  local optimizedTypedAST = orion.optimize.optimize(typedAST, options)
 
   -- determine the set of nodes to make scheduling decisions on
-  local scheduleList
-  
-  if options.schedule=="materializeall" then
-    scheduleList = orion.schedule.allNodes(internalIR)
-  else
-    scheduleList = orion.schedule.allStencilNodes(internalIR)
-  end
+  local kernelGraph = orion.kernelGraph.typedASTToKernelGraph(optimizedTypedAST, options)
+  if options.callbackKernelGraph~=nil then options.callbackKernelGraph(kernelGraph) end
 
-  scheduleList = orion.schedule.addNecessaryNodes(internalIR, scheduleList)
-
-  local kernelGraph = orion.kernelGraph.internalIRToKernelGraph(internalIR, scheduleList, options.region, base1, base2)
-
-  return kernelGraph, base1, base2
-end
-
-function orion.getScheduleTable(scheduledIR, schedule)
-  local tab = {}
-  scheduledIR:visitEach(
-    function(node)
-      local thisRungroup = 1
-
-      if schedule then
-        thisRungroup = schedule[node].rungroup
-      end
-
-      if node.kind=="toAOS" then
-        -- toAOS doesn't require a LB
-      elseif node.kind=="single" or
-        node.kind=="toSOA" then
-
-        local typesize = 0
-
-        if node.kind=="single" then
-          typesize = node.kernel.type:sizeof()
-        elseif node.kind=="toSOA" then
-          typesize = node.type:sizeof()
-        else
-          assert(false)
-        end
-
-        local t = {__typesize = typesize}
-
-        local consumedExternally = false
-        for consumer,_ in node:parents(scheduledIR) do
-          if schedule then
-            local consumerRungroup = schedule[consumer].rungroup
-            if consumerRungroup~=thisRungroup then consumedExternally=true end
-          end
-        end
-
-        if consumedExternally==false then
-          for consumer,_ in node:parents(scheduledIR) do
-            
-            if consumer.kind=="single" then
-              local firstLine = 0
-              local lastLine = 0
-              
-              local s = consumer.kernel:stencil(node)
-
-              if s:area()>0 then
-                firstLine = s:min(2)
-                lastLine = s:max(2)
-              end
-              
-              t[consumer:name()] = {firstLine = firstLine, lastLine = lastLine}
-            elseif consumer.kind=="multiout" then
-              -- this leads to a false dependency
-            elseif  consumer.kind=="toAOS" then
-              -- no stencil
-            else
-              print(consumer.kind)
-              assert(false)
-            end
-          end
-        end
-
-        tab[thisRungroup] = tab[thisRungroup] or {}
-        tab[thisRungroup][node:name()] = t
-      elseif node.kind=="multiout" then
-        print("outputs:")
-        for k,v in node:children() do
-          print(v:name())
-        end
-      else
-        print(node.kind)
-        assert(false)
-      end
-    end)
-
-  return tab
-end
-
-function orion.printSchedule(scheduledIR,schedule)
-  local tab = orion.getScheduleTable(scheduledIR,schedule)
-  print("{")
-  print(table_print(tab))
-  print("}")
+  return kernelGraph
 end
 
 function orion.backEnd(
-    kernelGraph, 
-    base1, 
-    base2, 
+    kernelGraph,
     inputWidth, 
     inputHeight, 
     inputImages, 
     options)
 
   assert(type(options)=="table")
-  assert(type(base1)=="number")
-  assert(type(base2)=="number")
   assert(type(inputImages)=="table")
-
-  if options.printoptimal then
-    orion.printSchedule(scheduledIR)
-    print("base1",base1)
-    print("base2",base2)
-  end
-
-  if orion.verbose or orion.printstage then
-    print("schedule nodes",scheduledIR:S("*"):count())
-  end
 
   if options.platform=="cpu" or options.platform == nil then
     
-    
-    if orion.printstage or orion.verbose then print("start compile") end
+    if options.verbose then print("start compile") end
     
     local res = orion.terracompiler.compile( 
       kernelGraph, 
-      options.region, 
-      base1, 
-      base2, 
-      options.stripcount, 
       inputImages, 
       inputWidth, 
-      inputHeight )
+      inputHeight,
+      options)
     
-    if orion.printstage or orion.verbose then 
+    if options.printstage or options.verbose then 
       print("Start terra compile") 
       print("mem",collectgarbage("count"))
     end
@@ -206,11 +90,10 @@ function orion.backEnd(
     res:compile() -- we may want to do this later (out of this scope), so that more stuff can be GCed?
     local endt = orion.currentTimeInSeconds()
     
-    if orion.printstage or orion.verbose then
-      print("compile time",(endt-start))
+    if options.printstage or options.verbose then
+      print("Terra compile done, compile time",(endt-start))
     end
 
-    if orion.printstage or orion.verbose then print("Terra compile done") end
 return res
 
   elseif options.platform=="convolution" then
@@ -224,26 +107,21 @@ end
 
 function orion.compile(inputImageFunctions, outputImageFunctions, tapInputs, inputWidth, inputHeight, options)
 
-  local function checkinput(tab)
-    if type(tab)~="table" then
-      print("Error, input to orion.compile must be an array of image functions")
+  local function checkinput(tab,arg,argtype,minsize)
+    if type(tab)~="table" or #tab<minsize then
+      orion.error("Error, "..arg.." orion.compile must be an array of "..argtype)
     end
 
     for k,v in ipairs(tab) do
       if tab[k]==nil or orion.ast.isAST(tab[k])==false then
-        print("Error, orion.compile expects an array of image functions. Not a single image function.")
+        orion.error("Error, "..arg.." orion.compile must be an array of "..argtype)
       end  
-    end
-    
-    if #tab==0 then
-      print("Error, orion.compile expects an array of image functions. Not a single image function.")
     end
   end
 
-  checkinput(inputImageFunctions)
-  checkinput(outputImageFunctions)
-
-  assert(type(tapInputs)=="table")
+  checkinput(inputImageFunctions,"input to","image functions",1)
+  checkinput(outputImageFunctions,"output from","image functions",1)
+  checkinput(tapInputs,"tap inputs to","tap image functions",0)
   assert(type(inputWidth)=="number")
   assert(type(inputHeight)=="number")
   assert(type(options)=="table" or options==nil)
@@ -252,29 +130,28 @@ function orion.compile(inputImageFunctions, outputImageFunctions, tapInputs, inp
   -- see results before the compile is totally complete
   io.stdout:setvbuf("no") 
 
-  if orion.printstage then
-    print("start compile")
+  local function checkoptions(options)
+    if options==nil then options={} end
+    if options.platform==nil then options.platform="cpu" end
+    assert(options.platform=="cpu" or options.platform=="convolution")
+    if options.verbose ~= nil then assert(type(options.verbose)=="boolean"); orion.verbose = options.verbose; end
+    if options.printruntime ~= nil then assert(type(options.printruntime)=="boolean"); orion.printruntime = options.printruntime; end
+    if options.looptimes ~= nil then assert(type(options.looptimes)=="number"); orion.looptimes = options.looptimes; end
+    if options.printasm ~=nil then assert(type(options.printasm)=="boolean"); orion.printasm = options.printasm; end
+    if options.V == nil then options.V=4 end
+    if options.cores == nil then options.cores=4 end
+    if options.stripcount == nil then options.stripcount=options.cores end
+    if options.fastmath ~= nil then assert(type(options.fastmath)=="boolean"); orion.fastmath = options.fastmath; end
+    
+    options.width = inputWidth
+    options.height = inputHeight
+
+    return options
   end
 
+  options = checkoptions(options)
 
-  -- fill in defaults
-  if options==nil then options={} end
-  if options.region==nil then options.region="default" end
-  assert(options.region=="default" or options.region=="centered" or options.region=="specify")
-  if options.platform==nil then options.platform="cpu" end
-  assert(options.platform=="cpu" or options.platform=="convolution")
-  if options.debug ~= nil then assert(type(options.debug)=="boolean"); orion.debug = options.debug; end
-  if options.debugimages ~= nil then assert(type(options.debugimages)=="boolean"); orion.debugimages = options.debugimages; end
-  if options.verbose ~= nil then assert(type(options.verbose)=="boolean"); orion.verbose = options.verbose; end
-  if options.printruntime ~= nil then assert(type(options.printruntime)=="boolean"); orion.printruntime = options.printruntime; end
-  if options.looptimes ~= nil then assert(type(options.looptimes)=="number"); orion.looptimes = options.looptimes; end
-  if options.printasm ~=nil then assert(type(options.printasm)=="boolean"); orion.printasm = options.printasm; end
-  if options.printschedule ~=nil then assert(type(options.printschedule)=="boolean"); end
-  if options.printoptimal ~=nil then assert(type(options.printoptimal)=="boolean"); end
-  if options.printstage ~=nil then assert(type(options.printstage)=="boolean"); orion.printstage = options.printstage; end
-  if options.stripcount == nil then options.stripcount=orion.tune.cores end
-  if options.fastmath ~= nil then assert(type(options.fastmath)=="boolean"); orion.fastmath = options.fastmath; end
-  if options.ilp ~= nil then assert(type(options.ilp)=="boolean"); orion.ilp = options.ilp; end
+  if options.printstage then print("start compile") end
 
   -- do the compile
   local newnode = {kind="outputs"}
@@ -283,16 +160,14 @@ function orion.compile(inputImageFunctions, outputImageFunctions, tapInputs, inp
   end
   local ast = orion.ast.new(newnode):setLinenumber(0):setOffset(0):setFilename("null_outputs")
 
-  local scheduledIR, base1, base2 = orion.frontEnd(
+  local kernelGraph = orion.frontEnd(
     ast, 
     inputWidth, 
     inputHeight, 
     options)
 
   return orion.backEnd(
-    scheduledIR, 
-    base1, 
-    base2, 
+    kernelGraph, 
     inputWidth, 
     inputHeight, 
     inputImageFunctions, 
