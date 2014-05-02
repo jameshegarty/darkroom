@@ -28,24 +28,9 @@ function kernelGraphFunctions:makeNewName()
   return "kernelGraphNode"
 end
 
-function kernelGraphFunctions:isARoot(root)
-  if self:parentCount(root) == 0 then
-    return true
-  end
-
-  return false
-end
-
-
-function kernelGraphFunctions:root()
-  if self.kind=="single" then
-    return self.kernel
-  else
-    assert(false)
-  end
-end
-
 function kernelGraphFunctions:maxUse(input)
+  assert(self.kernel~=nil)
+  if self.kernel:stencil(input):area()==0 then return 0 end
   return self.kernel:stencil(input):max(2)
 end
 
@@ -60,15 +45,17 @@ function orion.kernelGraph.typedASTToKernelGraph(typedAST, options)
   -- translation from the new kernel we generate to the original version
   local origKernel = {}
 
+  local function parentIsOutputs(node) for v,k in node:parents(typedAST) do if v.kind=="outputs" then return true end return false end end
+
   -- We do this with a traverse instead of a process b/c we're converting
   -- from one type of AST to another
   local kernelGraph = typedAST:S(
     function(node) 
-      return node.kind=="crop" or node:parentCount(typedAST)==0
+      return node.kind=="crop" or parentIsOutputs(node) or node:parentCount(typedAST)==0
     end)
   :traverse(
     function(node,args)
-      local newnode = {kind="single"}
+      local newnode = {}
 
       -- go through and replace all the references to input nodes with loads
       local childCount = 1
@@ -101,8 +88,12 @@ function orion.kernelGraph.typedASTToKernelGraph(typedAST, options)
           return res
         end)
       
-      newnode.kernel = kernel
-      
+      if kernel.kind=="outputs" then
+        newnode.kernel = nil
+      else
+        newnode.kernel = kernel
+      end
+
       origKernel[kernel] = node
       return orion.kernelGraph.new(newnode):copyMetadataFrom(node)
     end)

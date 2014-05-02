@@ -42,12 +42,12 @@ function orion.tapLUT(ty, count, name)
   return orion.ast.new({kind="tapLUT",type=ty,count=count,tapname=name,id=orion._tapLUTcount-1}):setLinenumber(0):setOffset(0):setFilename("null_tapLUT")
 end
 
-function orion.frontEnd(ast, imageWidth, imageHeight, options)
+function orion.frontEnd(ast, options)
   assert(type(options)=="table")
 
   if options.callbackAST~=nil then options.callbackAST(ast) end
 
-  local typedAST = orion.typedAST.astToTypedAST( ast, imageWidth, imageHeight, options )
+  local typedAST = orion.typedAST.astToTypedAST( ast, options )
   if options.callbackTypedAST~=nil then options.callbackTypedAST(typedAST) end
 
   -- optimize
@@ -60,12 +60,7 @@ function orion.frontEnd(ast, imageWidth, imageHeight, options)
   return kernelGraph
 end
 
-function orion.backEnd(
-    kernelGraph,
-    inputWidth, 
-    inputHeight, 
-    inputImages, 
-    options)
+function orion.backEnd( kernelGraph, inputImages, options)
 
   assert(type(options)=="table")
   assert(type(inputImages)=="table")
@@ -77,8 +72,6 @@ function orion.backEnd(
     local res = orion.terracompiler.compile( 
       kernelGraph, 
       inputImages, 
-      inputWidth, 
-      inputHeight,
       options)
     
     if options.printstage or options.verbose then 
@@ -160,16 +153,6 @@ function orion.compile(inputImageFunctions, outputImageFunctions, tapInputs, inp
   end
   local ast = orion.ast.new(newnode):setLinenumber(0):setOffset(0):setFilename("null_outputs")
 
-  local kernelGraph = orion.frontEnd(
-    ast, 
-    inputWidth, 
-    inputHeight, 
-    options)
-
-  return orion.backEnd(
-    kernelGraph, 
-    inputWidth, 
-    inputHeight, 
-    inputImageFunctions, 
-    options)
+  local kernelGraph = orion.frontEnd( ast, options )
+  return orion.backEnd( kernelGraph, inputImageFunctions, options)
 end

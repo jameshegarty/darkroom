@@ -107,9 +107,7 @@ end
 function typedASTFunctions:stencil(input)
 
   if self.kind=="binop" then
-    return self.lhs:stencil(input)
-    :translate(self.translate1_lhs,self.translate2_lhs,0)
-    :unionWith(self.rhs:stencil(input):translate(self.translate1_rhs,self.translate2_rhs,0))
+    return self.lhs:stencil(input):unionWith(self.rhs:stencil(input))
   elseif self.kind=="multibinop" then
     local res = Stencil.new()
 
@@ -152,7 +150,6 @@ function typedASTFunctions:stencil(input)
     --if input~=nil then assert(false) end
     return Stencil.new():add(0,0,0)
   elseif self.kind=="load" then
-    assert(orion.scheduledIR.isScheduledIR(self.from))
     local s = Stencil.new()
     if input==nil or input==self.from then s = s:add(0,0,0) end
     return s
@@ -194,6 +191,8 @@ function typedASTFunctions:stencil(input)
     return self.expr:stencil(input)
   elseif self.kind=="crop" then
     return self.expr:stencil(input)
+  elseif self.kind=="transformBaked" then
+    return self.expr:stencil(input):translate(self.translate1,self.translate2,0)
   end
 
   print(self.kind)
@@ -222,9 +221,7 @@ function typedASTFunctions:eval()
 end
 
 
-function orion.typedAST._toTypedAST(inast, inputWidth, inputHeight)
-  assert(type(inputWidth)=="number")
-  assert(type(inputHeight)=="number")
+function orion.typedAST._toTypedAST(inast)
 
   local res = inast:visitEach(
     function(origast,inputs)
@@ -581,10 +578,8 @@ function orion.typedAST._toTypedAST(inast, inputWidth, inputHeight)
   return res[1], res[2]
 end
 
-function orion.typedAST.astToTypedAST(ast, inputWidth, inputHeight, options)
+function orion.typedAST.astToTypedAST(ast, options)
   assert(orion.ast.isAST(ast))
-  assert(type(inputWidth)=="number")
-  assert(type(inputHeight)=="number")
   assert(type(options)=="table")
 
   -- first we run CSE to clean up the users code
@@ -661,7 +656,7 @@ function orion.typedAST.astToTypedAST(ast, inputWidth, inputHeight, options)
     print("_toTypedAST",collectgarbage("count"))
   end
 
-  local typedAST = orion.typedAST._toTypedAST(ast, inputWidth, inputHeight)
+  local typedAST = orion.typedAST._toTypedAST(ast)
 
   if options.verbose or options.printstage then
     print("conversion to typed AST done ------------")

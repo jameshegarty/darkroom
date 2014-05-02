@@ -688,7 +688,11 @@ end
 function kernelGraphPrintPretty(root)
   root:visitEach(function(node)
                    print(node:name().." -------------")
+                   if node.kernel==nil then
+                     print("(OUTPUT NODE)")
+                   else
                    typedASTPrintPretty(node.kernel)
+                   end
                  end)
 end
 
