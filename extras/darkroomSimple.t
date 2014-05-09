@@ -311,17 +311,32 @@ function astFunctions:id()
 end
 
 function orionSimple.compile(outList, options)
-  local fn = orion.compile(orionSimple.images,outList,{},orionSimple.width, orionSimple.height, options)
 
   local outDecl = {}
   local outArgs = {}
   local outRes = {}
-  for k,v in pairs(outList) do
-    local s = symbol(Image)
-    table.insert(outDecl,quote var [s] end)
-    table.insert(outRes,s)
-    table.insert(outArgs, `&[s])
+
+  local ocallbackKernelGraph = options.callbackKernelGraph
+  options.callbackKernelGraph = function(kernelGraph)
+    for k,v in kernelGraph:inputs() do
+      local s = symbol(Image)
+      table.insert(outDecl,
+        quote 
+          var [s] 
+          var data : &opaque
+          cstdlib.posix_memalign( [&&opaque](&data), 4*1024, [orionSimple.width*orionSimple.height*v.kernel.type:sizeof()])
+          s:initSimple([orionSimple.width],[orionSimple.height],1,[v.kernel.type:sizeof()]*8,[v.kernel.type:isFloat()],[v.kernel.type:isInt()],true,data)
+        end)
+      table.insert(outRes,s)
+      table.insert(outArgs, `s.data)
+    end
+    if ocallbackKernelGraph ~= nil then ocallbackKernelGraph(kernelGraph) end
   end
+  
+  local fn = orion.compile(orionSimple.images,outList,{},orionSimple.width, orionSimple.height, options)
+
+  options.callbackKernelGraph = ocallbackKernelGraph
+
 
   local fin = terra()
     [outDecl]

@@ -1,7 +1,5 @@
-package.path = package.path .. ";../src/?.lua;../src/?.t;../?.so"
-
 terralib.require "test"
-import "orion"
+import "darkroom"
 
 im out1(x,y)  testinput(x,y)/orion.uint8(2) end
 im out2(x,y) testinput(x,y)/orion.uint8(2) end

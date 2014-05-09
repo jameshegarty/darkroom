@@ -3,6 +3,7 @@ local cstdlib = terralib.includec("stdlib.h")
 local cstring = terralib.includec("string.h")
 
 pageSize = 4*1024
+verbose = false
 
 local chack = terralib.includecstring [[
 #include<stdio.h>
@@ -1160,7 +1161,7 @@ terra Image:save(filename : &int8)
   cstdio.printf("EXT %s\n",ext)
 
   if self.bits==8 and (self.channels==1 or self.channels==3) and self.floating==false and self.isSigned==false then
-    if orion.verbose then cstdio.printf("Assuming uint8\n") end
+    if verbose then cstdio.printf("Assuming uint8\n") end
     if cstring.strcmp(ext,"jjm")==0 then
        var us = self:deepcopyUnstride()
        orion.util.saveImageJJM( filename, self.width, self.height, self.width, self.channels, self.bits, self.floating, self.isSigned, us.data ) -- self.data )
@@ -1176,11 +1177,11 @@ terra Image:save(filename : &int8)
     end 
     return true
   elseif self.bits==32 and self.channels==1 and self.floating then
-    if orion.verbose then cstdio.printf("saving a 32 bit 1 channel float\n") end
+    if verbose then cstdio.printf("saving a 32 bit 1 channel float\n") end
     orion.util.saveImageAutoLevels( filename, self.width, self.height, self.stride, 1, [&float](self.data) )
     return true
   elseif self.bits==32 and self.channels==1 and self.floating==false and cstring.strcmp(ext,"jjm")>0 then
-    if orion.verbose then cstdio.printf("saving a 32 bit 1 channel float\n") end
+    if verbose then cstdio.printf("saving a 32 bit 1 channel float\n") end
     orion.util.saveImageI( filename, self.width, self.height, self.stride, 1, [&int](self.data) )
     return true
   elseif self.bits==32 and (self.channels==2 or self.channels==3) and self.floating then

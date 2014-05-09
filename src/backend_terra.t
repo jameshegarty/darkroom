@@ -39,6 +39,7 @@ local vmIV = terralib.includecstring [[
 #include <stdlib.h>
 #include <assert.h>
 
+// lines in the linebuffer may cross the pages, so we have to triple buffer it
 void * makeCircular (void* address, int bytes) {
   char path[] = "/tmp/ring-buffer-XXXXXX";
   int file_descriptor = mkstemp(path);
@@ -58,6 +59,13 @@ void * makeCircular (void* address, int bytes) {
                   bytes, PROT_READ | PROT_WRITE,
                   MAP_FIXED | MAP_SHARED, file_descriptor, 0);
     assert(addressp == (char*)address + bytes);
+
+    ///////////// triple buffer
+    addressp = mmap ((char*)address + bytes*2,
+                  bytes, PROT_READ | PROT_WRITE,
+                  MAP_FIXED | MAP_SHARED, file_descriptor, 0);
+    assert(addressp == (char*)address + bytes*2);
+    ////////////////
 
     assert(!close (file_descriptor));
   return address;
@@ -89,9 +97,10 @@ function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightS
                stripWidth = stripWidth, 
                rightStencil=rightStencil,
                linebufferPosition = 0,
-               debug=debug}
+               debug=debug,
+               iv={},
+               base={}}
 
-  tab.iv = {}
   tab.ivDebugX = {}
   tab.ivDebugY = {}
   tab.ivDebugId = {}
@@ -112,6 +121,7 @@ function LineBufferWrapperFunctions:declare( loopid, x, y, core, stripId, linebu
   local res = {}
 
   if self.iv[loopid]==nil then self.iv[loopid] = symbol(&self.orionType:toTerraType()) end
+  if self.base[loopid]==nil then self.base[loopid] = symbol(&self.orionType:toTerraType()) end
     
   if self.debug then
     if self.ivDebugX[loopid]==nil then self.ivDebugX[loopid] = symbol(&int) end
@@ -128,14 +138,16 @@ function LineBufferWrapperFunctions:declare( loopid, x, y, core, stripId, linebu
   if self.debug then table.insert(res, quote var [self.posX[loopid]] = x; var [self.posY[loopid]] = y; end) end
 
   local l = {self.iv[loopid]}
+  local base = {self.base[loopid]}
   if self.debug then l = {self.iv[loopid], self.ivDebugX[loopid], self.ivDebugY[loopid], self.ivDebugId[loopid] } end
 
-  for _,buf in pairs(l) do
+  for k,buf in pairs(l) do
     table.insert(res, 
       quote 
         vmIV.makeCircular(linebufferBase,[self:size()])
         -- we always start in the second segment of the circular buffer b/c we always read from smaller addresses
         var leftBound = [self.stripWidth]*stripId + [self.leftStencil]
+        var [base[k]] = [&self.orionType:toTerraType()](linebufferBase)
         var [buf] = [&self.orionType:toTerraType()](linebufferBase)+(x-leftBound)+([self:size()]/(2*[self.orionType:sizeof()]))
         linebufferBase = [&int8](linebufferBase) + [self:size()]
       end)
@@ -147,9 +159,9 @@ end
 function LineBufferWrapperFunctions:lineWidth() return self.stripWidth-self.leftStencil+self.rightStencil end
 -- this is how many bytes this linebuffer will consume
 -- we round up to the nearest page size (for the circular buffer that must be page aligned). The double for the double mapping in VM space
-function LineBufferWrapperFunctions:size() return upToNearest(4*1024,self.lines*self:lineWidth())*2 end
+function LineBufferWrapperFunctions:size() return upToNearest(4*1024,self.lines*self:lineWidth()) end
 -- debugging requires 3 extra buffers
-function LineBufferWrapperFunctions:allocateSize() if self.debug then return self:size()*4 else return self:size() end end
+function LineBufferWrapperFunctions:allocateSize() if self.debug then return self:size()*3*4 else return self:size()*3 end end
 
 
 function LineBufferWrapperFunctions:set( loopid, value, V )
@@ -220,7 +232,7 @@ function LineBufferWrapperFunctions:get(loopid, relX,relY, V)
         end)
       end
   else
-    return `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]] + relX),{align=V})
+    return `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]] + relY*[self:lineWidth()]+ relX),{align=V})
   end
 end
 
@@ -352,7 +364,11 @@ function LineBufferWrapperFunctions:nextLine(loopid,  sub)
 
   local res = {}
 
-  table.insert(res, quote [self.iv[loopid]] = [self.iv[loopid]] - sub end)
+  table.insert(res, 
+    quote 
+      [self.iv[loopid]] = [self.iv[loopid]] - sub + [self:lineWidth()] 
+      if [self.iv[loopid]] >= [self.base[loopid]]+[self:size()*2] then [self.iv[loopid]] = [self.iv[loopid]] - [self:size()] end
+    end)
 
   if self.debug then
     table.insert(res, quote [self.dataDebugX[line][loopid]] = [tempDebugX[i]] end)
@@ -381,19 +397,6 @@ function newImageWrapper( basePtr, orionType, stride, debug )
   return setmetatable(tab,ImageWrapperMT)
 end
 
-
--- called by the producer
-function ImageWrapperFunctions:alloc(stripCount)
-
-    local r = self.register
-    local rc = self.refCount
-    assert(type(r)=="number")
-    assert(type(rc)=="number")
-
-    return `orion.runtime.createRegister(r,rc)
-
-end
-
 function ImageWrapperFunctions:declare( loopid, x, y, core, stripId )
   assert(type(loopid)=="number")
   assert(terralib.isquote(x) or terralib.issymbol(x))
@@ -410,10 +413,10 @@ function ImageWrapperFunctions:set( loopid, value, V )
   assert(type(loopid)=="number")
   assert(type(V)=="number")
 
-    local res = {}
+  local res = {}
     
-    if self.debug then
-      table.insert(res,
+  if self.debug then
+    table.insert(res,
                    quote
 --                     orionAssert( ([self.data[loopid]]-[self.basePtr])<maxv,"wrote beyond end of array")
                      orionAssert( (int64([self.data[loopid]])-int64([self.basePtr]))>=0,"wrote before start of array")
@@ -421,13 +424,10 @@ function ImageWrapperFunctions:set( loopid, value, V )
       end)
     end
 
-    if self.consumedInternally==nil or self.consumedInternally==false then
-      table.insert(res,quote terralib.attrstore([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]]),value,{nontemporal=true}) end)
-    else
-      table.insert(res,quote terralib.attrstore([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]]),value,{}) end)
-    end
 
-    return res
+  table.insert(res,quote terralib.attrstore([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]]),value,{nontemporal=true}) end)
+
+  return res
 end
 
 -- relX and relY should be integer constants relative to
@@ -1116,6 +1116,8 @@ return
             [outputs[n]:nextLine( loopid, `needed.right-needed.left)];
             [nextInputImagesLine( inputs, n, loopid, `needed.right-needed.left)];
           end
+
+          cstdio.printf("kernel done %s\n",[n:name()])
       end)
   end)
 
@@ -1261,7 +1263,7 @@ function orion.terracompiler.allocateImageWrappers(kernelGraph, inputImageSymbol
             options.terradebug)
 
           linebufferSize = linebufferSize + outputs[n]:allocateSize()
-          print("OUT lbwrapper","kernelNode",n,n:name(),"wrapper",outputs[n],"outputs",outputs)
+          print("OUT lbwrapper","kernelNode",n,n:name(),"wrapper",outputs[n],"outputs",outputs,"lines",n:bufferSize(kernelGraph))
         end
       end
     end)

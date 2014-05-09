@@ -1,7 +1,5 @@
-package.path = package.path .. ";../src/?.lua;../src/?.t"
-
 terralib.require("test")
-import "orion"
+import "darkroom"
 
 test(im(x,y) : uint8
      switch x%4

@@ -603,6 +603,14 @@ function TypeFunctions:sizeof()
   return terralib.sizeof(self:toTerraType())
 end
 
+function TypeFunctions:isFloat()
+  return orion.type.isFloat(self)
+end
+
+function TypeFunctions:isInt()
+  return orion.type.isInt(self)
+end
+
 -- this calculates the precision of the result of a reduction tree.
 -- op is the reduction op
 -- typeTable is a list of the types we're reducing over

@@ -1,7 +1,5 @@
-package.path = package.path .. ";../src/?.lua;../src/?.t"
-
 terralib.require("test")
-import "orion"
+import "darkroom"
 
 local const = orion.load("frame_1024.bmp")
 

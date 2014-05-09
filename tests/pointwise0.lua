@@ -1,5 +1,3 @@
-package.path = package.path .. ";../src/?.lua;../src/?.t"
-
 terralib.require("test")
 import "darkroom"
 

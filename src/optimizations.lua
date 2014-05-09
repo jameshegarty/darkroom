@@ -239,7 +239,7 @@ function orion.optimize.optimize(ast, options)
       end
     end)
 
-  if orion.fastmath then
+  if options.fastmath then
 
     ast = orion.optimize.constantFold(ast)
 

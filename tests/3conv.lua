@@ -1,11 +1,8 @@
-package.path = package.path .. ";../src/?.lua;../src/?.t;../?.so"
-
 terralib.require "test"
-
-import "orion"
+import "darkroom"
 
 --a=testinput
-im a(x,y) : float32  testinput(x,y) end
+im a(x,y)   orion.float32(testinput(x,y)) end
 
 im b(x,y) 
   (a(x-1,y-1)+a(x,y-1)+a(x+1,y-1)+
@@ -27,4 +24,4 @@ end
 
 
 
-test(im(x,y) : uint8 d(x,y) end)
+test(im(x,y) orion.uint8(d(x,y)) end)
