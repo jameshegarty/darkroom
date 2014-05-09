@@ -34,6 +34,21 @@ function kernelGraphFunctions:maxUse(input)
   return self.kernel:stencil(input):max(2)
 end
 
+function kernelGraphFunctions:minUse(input)
+  assert(self.kernel~=nil)
+  if self.kernel:stencil(input):area()==0 then return 0 end
+  return self.kernel:stencil(input):min(2)
+end
+
+function kernelGraphFunctions:bufferSize(root)
+  local bufferSize = 1
+  for v,_ in self:parents(root) do
+    local b = v:minUse(self)+1
+    if b>bufferSize then bufferSize=b end
+  end
+  return bufferSize
+end
+
 function orion.kernelGraph.typedASTToKernelGraph(typedAST, options)
   assert(orion.typedAST.isTypedAST(typedAST))
   assert(type(options)=="table")

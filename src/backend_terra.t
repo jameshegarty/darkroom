@@ -6,21 +6,11 @@ cpthread = terralib.includec("pthread.h")
 
 orion.terracompiler = {}
 
-function initInputImages( inputs, kernelNode, loopid )
-  for _,v in pairs(inputs[kernelNode]) do v:init(loopid) end
-end
 
-function declareInputImages( inputs, kernelNode, loopid)
+function declareInputImages( inputs, kernelNode, loopid, x, y, core, stripId, linebufferBase )
   assert(type(loopid)=="number")
   local res = {}
-  for _,v in pairs(inputs[kernelNode]) do table.insert(res, v:declare(loopid)) end
-  return res
-end
-
-function setInputImagePositions( inputs, kernelNode, loopid, x, y, core, stripId)
-  assert(type(loopid)=="number")
-  local res = {}
-  for _,v in pairs(inputs[kernelNode]) do table.insert(res, v:setPosition(loopid,x,y,core,stripId)) end
+  for _,v in pairs(inputs[kernelNode]) do table.insert(res, v:declare(loopid,x,y,core,stripId,linebufferBase)) end
   return res
 end
 
@@ -42,405 +32,125 @@ end
 
 
 -----------------------------------
--- the imageWrapper assists the terra codegenerator by wrapping up the data sources
--- (buffer and special input) in a consistant way and providing a nice interface
--- that codegens strength reduced versions of loads etc.
+local vmIV = terralib.includecstring [[
+#include <stdio.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <assert.h>
 
-orion.lineBufferWrapper={}
-orion.lineBufferWrapper.nextRegister = 0
--- cachedBuffer is used to hold values for cached imageWrappers
-orion.lineBufferWrapper.cachedBuffer = {buffer=global(&opaque, nil), linebuffer=global(&opaque, nil), special=global(&opaque, nil)}
--- this is the max stencil size we support with a cached buffer
-orion.lineBufferWrapper.cachedBufferMaxWidth = 50
-orion.lineBufferWrapper.cachedBufferMaxSize = terralib.sizeof(double)*4*orion.lineBufferWrapper.cachedBufferMaxWidth*orion.lineBufferWrapper.cachedBufferMaxWidth
-orion.lineBufferWrapper.cachedBufferMaxCount = 50
-orion.lineBufferWrapper.nextCachedId = 0
-orion.lineBufferWrapper.linebufferBuffer = global(&opaque, nil)
-orion.lineBufferWrapper.linebufferDebugX = global(&int, nil)
-orion.lineBufferWrapper.linebufferDebugY = global(&int, nil)
-orion.lineBufferWrapper.linebufferDebugId = global(&int, nil)
-orion.lineBufferWrapper.maxLinebufferSize = 1024*1024
--- this is the number of strips that we will run _concurrently_
--- the strip is actually mapped mod maxLinebufferStrips
---orion.lineBufferWrapper.maxLinebufferStrips = orion.tune.cores
-orion.lineBufferWrapper.nextLinebufferId = 0
-orion.lineBufferWrapper.linebufferNextPosition = {} -- rungroup -> next available LB position
--- depending on what coord stuff lands on, growToNearestX may
--- make the linebuffer required larger at runtime than we calculate
--- at compile time (ie left=3 goes to left=0). So pad both sides of the LB
-orion.lineBufferWrapper.lbPadding = 4*8
+void * makeCircular (void* address, int bytes) {
+  char path[] = "/tmp/ring-buffer-XXXXXX";
+  int file_descriptor = mkstemp(path);
+  
+  assert(file_descriptor > 0);
+  assert(!unlink(path));
+ 
+  assert(!ftruncate(file_descriptor, bytes));
+
+  void * addressp =
+    mmap(address, bytes, PROT_READ | PROT_WRITE,
+         MAP_FIXED | MAP_SHARED, file_descriptor, 0);
+ 
+    assert(address == addressp);
+  
+    addressp = mmap ((char*)address + bytes,
+                  bytes, PROT_READ | PROT_WRITE,
+                  MAP_FIXED | MAP_SHARED, file_descriptor, 0);
+    assert(addressp == (char*)address + bytes);
+
+    assert(!close (file_descriptor));
+  return address;
+                                                  }
+
+void* allocateCircular( int bytes ){
+  void * address = mmap (NULL, bytes << 1, PROT_NONE,
+                         MAP_ANON | MAP_PRIVATE, -1, 0);
+ 
+  assert(address != MAP_FAILED);
+  return address;
+                                   }
+                                      ]]
 
 LineBufferWrapperFunctions = {}
 LineBufferWrapperMT={__index=LineBufferWrapperFunctions}
 
-
-
--- tab.terraType should be the base type of the data stored in this image
--- ie, if it's a floating point image, tab.terraType should be float
-function orion.lineBufferWrapper.new( lines, orionType )
+function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightStencil, debug )
   assert(type(lines)=="number")
+  assert(type(leftStencil)=="number")
+  assert(type(stripWidth)=="number")
+  assert(type(rightStencil)=="number")
+  assert(type(debug)=="boolean")
   assert(orion.type.isType(orionType))
 
-  local tab = {lines=lines, orionType=orionType}
+  local tab = {lines=lines, 
+               orionType=orionType, 
+               leftStencil = leftStencil, 
+               stripWidth = stripWidth, 
+               rightStencil=rightStencil,
+               linebufferPosition = 0,
+               debug=debug}
 
-  -- this holds the IVs for the LB.
-  -- index 0 is the current location we're pointing at.
-  -- index -1 is the previous line (line at index0 -1), etc
-  -- the higher indices hold stuff in the past b/c this is
-  -- what we will read when we do a stencil read (all stencils have neg indices)
-
-  tab.data = {} -- line -> loop
-  tab.used = {}
-  tab.base = {}
-  tab.baseDebugX = {}
-  tab.baseDebugY = {}
-  tab.baseDebugId = {}
-  tab.dataDebugX = {}
-  tab.dataDebugY = {}
-  tab.dataDebugId = {}
+  tab.iv = {}
+  tab.ivDebugX = {}
+  tab.ivDebugY = {}
+  tab.ivDebugId = {}
   tab.posX = {}
   tab.posY = {}
   
-  for i=-(tab.lines-1),0 do
-    tab.data[i] = {}
-    tab.used[i] = {}
-    tab.base[i] = {}
-    tab.baseDebugX[i] = {}
-    tab.baseDebugY[i] = {}
-    tab.baseDebugId[i] = {}
-    tab.dataDebugX[i] = {}
-    tab.dataDebugY[i] = {}
-    tab.dataDebugId[i] = {}
-  end
-
-  tab.gatherPointer = {}
-  tab.gatherPointerDebugX = {}
-  tab.gatherPointerDebugY = {}
-  tab.gatherPointerDebugId = {}
-  tab.gatherPointerY = {}
-  tab.gatherPointerUsed = {}
-  
-  if tab.id==nil then
-    tab.id = orion.lineBufferWrapper.nextLinebufferId
-    orion.lineBufferWrapper.nextLinebufferId = orion.lineBufferWrapper.nextLinebufferId + 1
-  end
-
   return setmetatable(tab,LineBufferWrapperMT)
 end
 
--- called by the producer
-function LineBufferWrapperFunctions:alloc(stripCount)
 
-    assert(type(stripCount)=="number")
-
-    assert(orion.lineBufferWrapper.maxLinebufferSize % orion.tune.pageSize == 0)
-
-    -- self.linebufferPosition is in bytes
-    if self.linebufferPosition == nil then
-      local pos = orion.lineBufferWrapper.linebufferNextPosition[self.rungroup] or 0
-
-      -- conservatively round up so that everything is properly aligned
-      orion.lineBufferWrapper.linebufferNextPosition[self.rungroup] = upToNearest(
-        orion.tune.V*4, pos + 
-          terralib.sizeof(self.terraType) * self.lines * self:lineWidth(stripCount)  )
-
-      if orion.lineBufferWrapper.linebufferNextPosition[self.rungroup] >= 
-        orion.lineBufferWrapper.maxLinebufferSize then
-        print("Exceeded max LB size ",orion.lineBufferWrapper.maxLinebufferSize)
-        assert(false)
-      end
-
-
-      self.linebufferPosition = pos
-    end
-
-    local res = {}
-    table.insert(res,quote 
-      if orion.lineBufferWrapper.linebufferBuffer==nil then
-        stdlib.posix_memalign( 
-          &orion.lineBufferWrapper.linebufferBuffer, 
-          orion.tune.pageSize,  
-          orion.lineBufferWrapper.maxLinebufferSize*orion.tune.cores)
-      end
-    end)
-
-    if orion.debug then
-      table.insert(res,quote 
-                     if orion.lineBufferWrapper.linebufferDebugX==nil then
-                       stdlib.posix_memalign( 
-                         [&&opaque](&orion.lineBufferWrapper.linebufferDebugX), 
-                         orion.tune.pageSize,  
-                         orion.lineBufferWrapper.maxLinebufferSize*orion.tune.cores*sizeof(int))
-                     end
-                     if orion.lineBufferWrapper.linebufferDebugY==nil then
-                       stdlib.posix_memalign( 
-                         [&&opaque](&orion.lineBufferWrapper.linebufferDebugY), 
-                         orion.tune.pageSize,  
-                         orion.lineBufferWrapper.maxLinebufferSize*orion.tune.cores*sizeof(int))
-                     end
-                     if orion.lineBufferWrapper.linebufferDebugId==nil then
-                       stdlib.posix_memalign( 
-                         [&&opaque](&orion.lineBufferWrapper.linebufferDebugId),
-                         orion.tune.pageSize,  
-                         orion.lineBufferWrapper.maxLinebufferSize*orion.tune.cores*sizeof(int))
-                     end
-      end)
-
-    end
-
-    return quote res end
-end
-
--- called by a consumer
-function LineBufferWrapperFunctions:init(loopid)
-  assert(type(loopid)=="number")
-  assert(type(self.id)=="number")
-
-  -- always points to the lowest memory address
-  -- so adding Y*linewidth will get to the line you want to gather from
-  if self.gatherPointer[loopid]==nil then
-    self.gatherPointer[loopid] = symbol(&self.orionType:toTerraType())
-    self.gatherPointerDebugX[loopid] = symbol(&int)
-    self.gatherPointerDebugY[loopid] = symbol(&int)
-    self.gatherPointerDebugId[loopid] = symbol(&int)
-    self.gatherPointerY[loopid] = symbol(int) -- relative Y stored in gather pointer
-    self.gatherPointerUsed [loopid]= false
-  end
-  
-  -- base is used when we don't store an IV for the line
-  self.base[loopid] = symbol(&self.orionType:toTerraType())
-
-  if orion.debug then
-    self.baseDebugX[loopid] = symbol(&int)
-    self.baseDebugY[loopid] = symbol(&int)
-    self.baseDebugId[loopid] = symbol(&int)
-  end
-
-  -- each line has its own IV
-  for line = -(self.lines-1),0 do
-
-    if self.data[line][loopid]==nil then
-      assert(terralib.types.istype(self.orionType:toTerraType()))
-      self.data[line][loopid] = symbol(&self.orionType:toTerraType())
-      self.used[line][loopid] = false
-    end
-    
-    -- we don't actually know what stuff is written to at the time we set stuff up (declare variables).
-    -- so just assume that everything is written to, it's prob not a huge inefficiency.
-    self.used[0][loopid] = true
-    
-    
-    if orion.debug then
-      
-      if self.dataDebugX[line][loopid]==nil then
-        self.dataDebugX[line][loopid] = symbol(&int)
-      end
-      
-      if self.dataDebugY[line][loopid]==nil then
-        self.dataDebugY[line][loopid] = symbol(&int)
-      end
-      
-      if self.dataDebugId[line][loopid]==nil then
-        self.dataDebugId[line][loopid] = symbol(&int)
-      end
-      
-      self.posX[loopid] = symbol(int)
-      self.posY[loopid] = symbol(int)
-    end
-  end
-end
-
-function LineBufferWrapperFunctions:declare(loopid)
-
-    local res = {}
-
-    if self.gatherPointerUsed[loopid] then
-      table.insert(res, quote
-                     var [self.gatherPointer[loopid]] = nil
-                     var [self.gatherPointerDebugX[loopid]] = nil
-                     var [self.gatherPointerDebugY[loopid]] = nil
-                     var [self.gatherPointerDebugId[loopid]] = nil
-                     var [self.gatherPointerY[loopid]] = -9999999
-      end)
-    end
-
-    table.insert(res, quote var [self.base[loopid]] end)
-
-    if orion.debug then
-        table.insert(res, quote
-                       var [self.baseDebugX[loopid]]
-                       var [self.baseDebugY[loopid]]
-                       var [self.baseDebugId[loopid]]
-      end)
-    end
-
-    for line = -(self.lines-1),0 do
-      -- meh, doesn't actually matter what we do here b/c
-      -- we're going to set position before we do anything
-
-      if self.used[line][loopid] then
-      table.insert(res, quote
-                     var [self.data[line][loopid]] = [&self.terraType](orion.lineBufferWrapper.linebufferBuffer)
-                     
---          orion.lineBufferWrapper.maxLinebufferSize * strip +
---          [orion.lineBufferWrapper.linebufferPosition[self.id]]
-        end)
-      end
-
-      if orion.debug then
-        table.insert(res, quote
-                       var [self.dataDebugX[line][loopid]]
-                       var [self.dataDebugY[line][loopid]]
-                       var [self.dataDebugId[line][loopid]]
-                       var [self.posX[loopid]]
-                       var [self.posY[loopid]]
-        end)
-      end
-
-    end
-    return quote res end
-
-end
-
--- the size of this image is the 'valid region'
--- the (x,y) is global space 
--- asserts that this is in the valid region
-function LineBufferWrapperFunctions:setPosition( 
-    loopid, x, y, 
-    core, 
-    stripId, 
-    stripCount, 
-    stripList,
-    stripSymbolCache,
-    retime)
-
+function LineBufferWrapperFunctions:declare( loopid, x, y, core, stripId, linebufferBase )
   assert(type(loopid)=="number")
   assert(terralib.isquote(x) or terralib.issymbol(x))
   assert(terralib.isquote(y) or terralib.issymbol(y))
   assert(terralib.isquote(core) or terralib.issymbol(core))
-  assert(terralib.isquote(stripId) or terralib.issymbol(stripId))
-  assert(type(stripCount)=="number")
-  assert(type(stripList)=="table")
-  assert(type(stripSymbolCache)=="table")
-  assert(type(retime)=="number")
+  assert(terralib.issymbol(stripId))
 
   local res = {}
 
-  assert(terralib.issymbol(stripId))
-  
-  if self.startPosY==nil then
-    -- this is kind of a hack: the only time we set position is in the header of the loop
-    -- the first guy to set position is the output. So we just set this variable the first
-    -- time it's seen. Then all the inputs are based on this.
+  if self.iv[loopid]==nil then self.iv[loopid] = symbol(&self.orionType:toTerraType()) end
     
-    -- NOTE that there is only one of these for all the loops. the reason is that this is used
-    -- to satisfy cross-loop dependencies. Ie one loop writes at a certain Y, and another
-    -- loop has to know where in the LB to consume this from
-    
-    self.startPosY = symbol(int)
-    table.insert(res, quote var [self.startPosY] = y end)
+  if self.debug then
+    if self.ivDebugX[loopid]==nil then self.ivDebugX[loopid] = symbol(&int) end
+    if self.ivDebugY[loopid]==nil then self.ivDebugY[loopid] = symbol(&int) end
+    if self.ivDebugId[loopid]==nil then self.ivDebugId[loopid] = symbol(&int) end
+    self.posX[loopid] = symbol(int)
+    self.posY[loopid] = symbol(int)
   end
 
-  if orion.debug then
-    table.insert(res, quote [self.posX[loopid]] = x; [self.posY[loopid]] = y; end)
-  end
+  -- as a simplification, we make sure that everybody starts on the same line. Pipeline scheduling guarantees this will always work
+  if self.startPosY==nil then self.startPosY=symbol(int); table.insert(res, quote var [self.startPosY] = y end) end
+  table.insert(res,quote orionAssert(y==[self.startPosY], "every linebuffer must start on same line") end)
 
-    local baseOffset = symbol(int)
-    local base = symbol()
-    local leftBound = symbol()
-    local baseAddX = symbol(int)
-    local baseX = symbol()
-    local baseY = symbol()
-    local baseId = symbol()
+  if self.debug then table.insert(res, quote var [self.posX[loopid]] = x; var [self.posY[loopid]] = y; end) end
 
-    table.insert(res, quote 
-                     var [baseOffset] = core * [orion.lineBufferWrapper.maxLinebufferSize] + self.linebufferPosition
-                     var [base] = [&uint8](orion.lineBufferWrapper.linebufferBuffer) + baseOffset
-                     var [leftBound] = [self.region:stripRuntime(stripId, stripCount, stripList, stripSymbolCache)]:growToNearestX(orion.tune.V).left
-                     var [baseAddX] = (x-leftBound+orion.lineBufferWrapper.lbPadding)
+  local l = {self.iv[loopid]}
+  if self.debug then l = {self.iv[loopid], self.ivDebugX[loopid], self.ivDebugY[loopid], self.ivDebugId[loopid] } end
 
-                     var [baseX] = orion.lineBufferWrapper.linebufferDebugX + baseOffset
-                     var [baseY] = orion.lineBufferWrapper.linebufferDebugY + baseOffset
-                     var [baseId] = orion.lineBufferWrapper.linebufferDebugId + baseOffset
-          -- base is used when we don't have an IV for this line
-          [self.base[loopid]] = [&self.terraType](base) + baseAddX
-end)
-
-    if orion.debug then
-        table.insert(res, quote
-                       [self.baseDebugId[loopid]] = baseId + baseAddX
-                       [self.baseDebugY[loopid]] = baseY + baseAddX
-                       [self.baseDebugX[loopid]] = baseX + baseAddX
+  for _,buf in pairs(l) do
+    table.insert(res, 
+      quote 
+        vmIV.makeCircular(linebufferBase,[self:size()])
+        -- we always start in the second segment of the circular buffer b/c we always read from smaller addresses
+        var leftBound = [self.stripWidth]*stripId + [self.leftStencil]
+        var [buf] = [&self.orionType:toTerraType()](linebufferBase)+(x-leftBound)+([self:size()]/(2*[self.orionType:sizeof()]))
+        linebufferBase = [&int8](linebufferBase) + [self:size()]
       end)
-    end
+  end
 
-    if self.gatherPointerUsed[loopid] then
-
-      -- solve for line
-      -- 0 = fixedModulus(self.lines-1+line+(y-[self.startPosY]),self.lines)
-      -- self.lines-1+line+(y-[self.startPosY]) % self.lines == 0
-      table.insert(res, 
-        quote 
-          for line = -(self.lines-1),0 do
-            var l = fixedModulus(self.lines-1+line+(y-[self.startPosY]),self.lines)
-            if l==0 then
-              [self.gatherPointer[loopid]] = [&self.terraType](base) + baseAddX
-              [self.gatherPointerY[loopid]] = line
-            end
-          end
-        end)
-
-      if orion.debug then
-        table.insert(res, 
-          quote 
-            [self.gatherPointerDebugX[loopid]] = baseX + baseAddX
-            [self.gatherPointerDebugY[loopid]] = baseY + baseAddX
-            [self.gatherPointerDebugId[loopid]] = baseId + baseAddX
-          end)
-      end
-    end
-
-    -- each line has its own IV
-    for line = -(self.lines-1),0 do
---      local baseAdd = symbol(int)
-      local l = symbol(int)
-
-      if self.used[line][loopid] then
-        table.insert(res, 
-          quote 
-            var [l] = fixedModulus(self.lines-1+line+(y-[self.startPosY])+(retime-self.retime),self.lines)
-
---            cstdio.printf("SET POS id %d loopid %d line %d startPosY %d y %d l %d\n",self.id,loopid,line,self.startPosY,y,l)
---            cstdio.printf("RT %d %d %d\n",retime,self.retime,self.lines)
-            -- we expand this out so that vector size aligned stuff in abs coord space
-            -- is vector size aligned in memory
-          
-            --                     cstdio.printf("SETPOS id:%d loopid:%d l:%d lmod:%d line:%d self.lines:%d y:%d startPosY:%d\n",self.id, loopid, l, l%self.lines, line, self.lines, y, self.startPosY)
-            --                     cstdio.printf("x:%d leftBound:%d\n",x,leftBound)
-
-            [self.data[line][loopid]] =  [&self.terraType](base) + l*[self:lineWidth(stripCount)] + baseAddX
-        end)
-
-
-        if orion.debug then
-          table.insert(res, 
-            quote
-              orionAssert(uint64(base) % (orion.tune.V*sizeof([self.terraType]))==0, "lb base not aligned")
-              orionAssert(uint64([self:lineWidth(stripCount)]) % orion.tune.V==0, "lb lineWidth not aligned")
-              
-              var baseAdd = l*[self:lineWidth(stripCount)] + baseAddX
-              
-              [self.dataDebugX[line][loopid]] = baseX + baseAdd
-              [self.dataDebugY[line][loopid]] = baseY + baseAdd
-              [self.dataDebugId[line][loopid]] = baseId + baseAdd
-              
-            end)
-        end
-      end
+  return quote res end
 end
 
-  return res
-end
+function LineBufferWrapperFunctions:lineWidth() return self.stripWidth-self.leftStencil+self.rightStencil end
+-- this is how many bytes this linebuffer will consume
+-- we round up to the nearest page size (for the circular buffer that must be page aligned). The double for the double mapping in VM space
+function LineBufferWrapperFunctions:size() return upToNearest(4*1024,self.lines*self:lineWidth())*2 end
+-- debugging requires 3 extra buffers
+function LineBufferWrapperFunctions:allocateSize() if self.debug then return self:size()*4 else return self:size() end end
+
 
 function LineBufferWrapperFunctions:set( loopid, value, V )
   assert(terralib.isquote(value))
@@ -449,7 +159,7 @@ function LineBufferWrapperFunctions:set( loopid, value, V )
 
     local res = {}
 
-    if orion.debug then
+    if self.debug then
       for i=0,V-1 do
         table.insert(res,quote
 
@@ -466,42 +176,27 @@ function LineBufferWrapperFunctions:set( loopid, value, V )
                        @([self.dataDebugY[0][loopid]]+i) = [self.posY[loopid]]
                        @([self.dataDebugId[0][loopid]]+i) = [self.id]
 
-                       orionAssert(uint64([self.data[0][loopid]]) % (V*sizeof([self.terraType])) == 0,"lb set not aligned")
+                       orionAssert(uint64([self.data[0][loopid]]) % (V*sizeof([self.orionType:toTerraType()])) == 0,"lb set not aligned")
         end)
       end
     end
 
-    self.used[0][loopid] = true
-    table.insert(res,quote 
---                   cstdio.printf("SET %d\n", [self.data[0][loopid]])
---                   cstdio.printf("linebufferBuffer:%d mbs:%d lbp:%d\n",orion.lineBufferWrapper.linebufferBuffer,[orion.lineBufferWrapper.maxLinebufferSize],self.linebufferPosition)
-                   @[&vector(self.terraType,V)]([self.data[0][loopid]]) = value 
---                   cstdio.printf("SETD\n")
-end)
-
+    table.insert(res,quote @[&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]]) = value end)
 
     return res
 end
 
 -- relX and relY should be integer constants relative to
 -- the current location
-function LineBufferWrapperFunctions:get(loopid, relX,relY, V, retime)
+function LineBufferWrapperFunctions:get(loopid, relX,relY, V)
   assert(type(loopid)=="number")
   assert(type(relX)=="number")
   assert(type(relY)=="number")
   assert(type(V)=="number")
-  assert(type(retime)=="number")
 
-  local origRelY = relY
-  if self.kind=="linebuffer" then
-    relY = relY + self.retime - retime
-  end
+  assert(relY<=0)
 
-  local debugChecks = {}
-
-    assert(relY<=0)
-
-    if orion.debug then
+  if self.debug then
       for i=0,V-1 do
         table.insert(debugChecks,quote
 
@@ -524,14 +219,9 @@ function LineBufferWrapperFunctions:get(loopid, relX,relY, V, retime)
                        orionAssert(@([self.dataDebugY[relY][loopid]]+i+relX) == [self.posY[loopid]]+origRelY, "incorrect LB Y")
         end)
       end
-    end
-
-    self.used[relY][loopid] = true
-
-    return quote [debugChecks] in
-      terralib.attrload([&vector(self.terraType,V)]([self.data[relY][loopid]] + relX),{align=V})
-      end
-
+  else
+    return `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]] + relX),{align=V})
+  end
 end
 
 function LineBufferWrapperFunctions:gather(
@@ -611,7 +301,7 @@ function LineBufferWrapperFunctions:gather(
       resTableDebugY[i+1] = `@(addrDebugY)
       resTableDebugId[i+1] = `@(addrDebugId)
 
-      if orion.debug then
+      if self.debug then
         table.insert(debugChecks,
           quote
 
@@ -632,7 +322,7 @@ function LineBufferWrapperFunctions:gather(
       end
     end
 
-    return quote [res];[debugChecks] in vectorof(self.terraType,resTable) end
+    return quote [res];[debugChecks] in vectorof([self.orionType:toTerraType()],resTable) end
 
 
 end
@@ -641,149 +331,52 @@ function LineBufferWrapperFunctions:next(loopid,v)
   assert(type(loopid)=="number")
   assert(type(v)=="number")
   
+  local res = {}
 
-    local res = {}
+  table.insert(res, quote [self.iv[loopid]] = [self.iv[loopid]] + v end)
 
-    if self.gatherPointerUsed[loopid] then
-      table.insert(res, quote [self.gatherPointer[loopid]] = [self.gatherPointer[loopid]] + v end)
+  if self.debug then
+    table.insert(res, quote [self.ivDebugX[loopid]] = [self.ivDebugX[loopid]] + v end)
+    table.insert(res, quote [self.ivDebugY[loopid]] = [self.ivDebugY[loopid]] + v end)
+    table.insert(res, quote [self.ivDebugId[loopid]] = [self.ivDebugId[loopid]] + v end)
+    table.insert(res, quote [self.posX[loopid]] = [self.posX[loopid]] + v end)
+  end
 
-      if orion.debug then
-        table.insert(res, quote [self.gatherPointerDebugX[loopid]] = [self.gatherPointerDebugX[loopid]] + v end)
-        table.insert(res, quote [self.gatherPointerDebugY[loopid]] = [self.gatherPointerDebugY[loopid]] + v end)
-        table.insert(res, quote [self.gatherPointerDebugId[loopid]] = [self.gatherPointerDebugId[loopid]] + v end)
-      end
-    end
-
-    for line = -(self.lines-1),0 do
-
-      if self.used[line][loopid] then
-        table.insert(res, quote [self.data[line][loopid]] = [self.data[line][loopid]] + v end)
-
-        if orion.debug then
-          table.insert(res, quote [self.dataDebugX[line][loopid]] = [self.dataDebugX[line][loopid]] + v end)
-          table.insert(res, quote [self.dataDebugY[line][loopid]] = [self.dataDebugY[line][loopid]] + v end)
-          table.insert(res, quote [self.dataDebugId[line][loopid]] = [self.dataDebugId[line][loopid]] + v end)
-        end
-      end
-    end
-
-    if orion.debug then
-      table.insert(res, quote [self.posX[loopid]] = [self.posX[loopid]] + v end)
-    end
-
-    return quote res end
-
+  return quote res end
 end
 
 -- sub: this is the number of pixels we looped over since last calling nextline
 -- basically: the number of times we called nextVector this row * the vector width
-function LineBufferWrapperFunctions:nextLine(loopid,  sub, stripCount, y, retime)
+function LineBufferWrapperFunctions:nextLine(loopid,  sub)
   assert(terralib.isquote(sub))
-  assert(type(stripCount)=="number")
-  assert(terralib.issymbol(y))
-  assert(type(retime)=="number")
 
-    local res = {}
-    local temp = {}
-    local tempDebugX = {}
-    local tempDebugY = {}
-    local tempDebugId = {}
+  local res = {}
 
-    if self.gatherPointerUsed[loopid] then
-      table.insert(res, quote 
-                   [self.gatherPointerY[loopid]] = ([self.gatherPointerY[loopid]] - 1)%self.lines;
-                   [self.gatherPointer[loopid]] = [self.gatherPointer[loopid]] - sub
-      end)
+  table.insert(res, quote [self.iv[loopid]] = [self.iv[loopid]] - sub end)
 
-      if orion.debug then
-        table.insert(res, quote 
-                   [self.gatherPointerDebugX[loopid]] = [self.gatherPointerDebugX[loopid]] - sub
-                   [self.gatherPointerDebugY[loopid]] = [self.gatherPointerDebugY[loopid]] - sub
-                   [self.gatherPointerDebugId[loopid]] = [self.gatherPointerDebugId[loopid]] - sub
-       end)
-     end
-    end
+  if self.debug then
+    table.insert(res, quote [self.dataDebugX[line][loopid]] = [tempDebugX[i]] end)
+    table.insert(res, quote [self.dataDebugY[line][loopid]] = [tempDebugY[i]] end)
+    table.insert(res, quote [self.dataDebugId[line][loopid]] = [tempDebugId[i]] end)
+    table.insert(res, quote [self.posY[loopid]] = [self.posY[loopid]] + 1 end)
+    table.insert(res, quote [self.posX[loopid]] = [self.posX[loopid]] - sub end)
+  end
 
-    for line = -(self.lines-1),0 do
-      temp[line] = symbol(&self.terraType)
-      if orion.debug then
-        tempDebugX[line] = symbol(&int)
-        tempDebugY[line] = symbol(&int)
-        tempDebugId[line] = symbol(&int)
-      end
-
-      local i = line - 1
-      if i < -(self.lines-1) then i =  0 end
-
-      if self.used[line][loopid] then
-        table.insert(res, quote var [temp[line]] = [self.data[line][loopid]] - sub end)
-
-        if orion.debug then
-          table.insert(res, quote var [tempDebugX[line]] = [self.dataDebugX[line][loopid]] - sub end)
-          table.insert(res, quote var [tempDebugY[line]] = [self.dataDebugY[line][loopid]] - sub end)
-          table.insert(res, quote var [tempDebugId[line]] = [self.dataDebugId[line][loopid]] - sub end)
-        end
-      elseif self.used[i][loopid] then
-
-        local baseAdd = symbol(int)
-
-        table.insert(res, quote 
-                       var l = fixedModulus(self.lines-1+line+(y-[self.startPosY])+(retime-self.retime),self.lines)
-                       var [baseAdd] = l*[self:lineWidth(stripCount)]
-                 end)
-
-        table.insert(res, quote var [temp[line]] = [self.base[loopid]] + baseAdd end)
-
-        if orion.debug then
-          table.insert(res, quote var [tempDebugX[line]] = [self.baseDebugX[loopid]] + baseAdd end)
-          table.insert(res, quote var [tempDebugY[line]] = [self.baseDebugY[loopid]] + baseAdd end)
-          table.insert(res, quote var [tempDebugId[line]] = [self.baseDebugId[loopid]] + baseAdd end)
-        end
-
-      end
-    end
-
-    for line = -(self.lines-1),0 do
-      if self.used[line][loopid] then
-        local i = line + 1
-        if i > 0 then i =  -(self.lines-1) end
-
-        table.insert(res, quote [self.data[line][loopid]] = [temp[i]] end)
-
-        if orion.debug then
-          table.insert(res, quote [self.dataDebugX[line][loopid]] = [tempDebugX[i]] end)
-          table.insert(res, quote [self.dataDebugY[line][loopid]] = [tempDebugY[i]] end)
-          table.insert(res, quote [self.dataDebugId[line][loopid]] = [tempDebugId[i]] end)
-        end
-      end
-    end
-
-    if orion.debug then
-      table.insert(res, quote [self.posY[loopid]] = [self.posY[loopid]] + 1 end)
-      table.insert(res, quote [self.posX[loopid]] = [self.posX[loopid]] - sub end)
-    end
-
-    return quote res end
-
+  return quote res end
 end
 
-
-orion.imageWrapper={}
 
 ImageWrapperFunctions = {}
 ImageWrapperMT={__index=ImageWrapperFunctions}
 
-function orion.imageWrapper.isImageWrapper(im)
-  return getmetatable(im)==ImageWrapperMT
-end
-
 -- tab.terraType should be the base type of the data stored in this image
 -- ie, if it's a floating point image, tab.terraType should be float
-function orion.imageWrapper.new( basePtr, orionType, stride)
+function newImageWrapper( basePtr, orionType, stride, debug )
   assert(orion.type.isType(orionType))
   assert(type(stride)=="number")
+  assert(type(debug) == "boolean")
 
-  local tab = {data={},basePtr=basePtr,orionType=orionType, stride=stride}
+  local tab = {data={},basePtr=basePtr,orionType=orionType, stride=stride, debug=debug}
 
   return setmetatable(tab,ImageWrapperMT)
 end
@@ -801,55 +394,15 @@ function ImageWrapperFunctions:alloc(stripCount)
 
 end
 
--- called by a consumer
-function ImageWrapperFunctions:init(loopid)
-  assert(type(loopid)=="number")
-  if self.data[loopid]==nil then
-    self.data[loopid] = symbol(&(self.orionType:toTerraType()))
-  end
-end
-
-function ImageWrapperFunctions:declare(loopid)
-    return quote  var [self.data[loopid]] : &self.orionType:toTerraType() end
-end
-
-
--- the size of this image is the 'valid region'
--- the (x,y) is global space 
--- asserts that this is in the valid region
-function ImageWrapperFunctions:setPosition( 
-    loopid, x, y, 
-    core, 
-    stripId)
-
+function ImageWrapperFunctions:declare( loopid, x, y, core, stripId )
   assert(type(loopid)=="number")
   assert(terralib.isquote(x) or terralib.issymbol(x))
   assert(terralib.isquote(y) or terralib.issymbol(y))
   assert(terralib.isquote(core) or terralib.issymbol(core))
   assert(terralib.isquote(stripId) or terralib.issymbol(stripId))
 
-  local res = {}
-
-
-  table.insert(res, quote [self.data[loopid]] =  [&self.orionType:toTerraType()]([self.basePtr] + y*[self.stride] + x)  end)
-
-                 -- keep these tests commented out b/c it's actually
-                 -- usually ok to set the position out of bounds initially
---[[
-                 if orion.debug then
-                   table.insert(res, quote 
-                                cstdio.printf("lol %d %d\n",y,[self.region:getBottom()])
-                                orionAssert((y-[self.region:getBottom()])>=0,"set y out of bound\n") 
-                 end)
-
-table.insert(res, quote 
-             cstdio.printf("lolx %d %d\n",x,[self.region:getLeft()])
-             orionAssert((x-[self.region:getLeft()]) >=0,"set x out of bound\n") 
-             end)
-end
-]]
-
-  return res
+  if self.data[loopid]==nil then self.data[loopid] = symbol(&(self.orionType:toTerraType())) end
+  return quote var [self.data[loopid]] =  [&self.orionType:toTerraType()]([self.basePtr] + y*[self.stride] + x) end
 end
 
 function ImageWrapperFunctions:set( loopid, value, V )
@@ -859,11 +412,11 @@ function ImageWrapperFunctions:set( loopid, value, V )
 
     local res = {}
     
-    if orion.debug then
+    if self.debug then
       table.insert(res,
                    quote
 --                     orionAssert( ([self.data[loopid]]-[self.basePtr])<maxv,"wrote beyond end of array")
-                     orionAssert( ([self.data[loopid]]-[self.basePtr])>=0,"wrote before start of array")
+                     orionAssert( (int64([self.data[loopid]])-int64([self.basePtr]))>=0,"wrote before start of array")
                      orionAssert( uint64([self.data[loopid]]) % (V*sizeof([self.orionType:toTerraType()])) == 0, "write is not aligned!")
       end)
     end
@@ -888,7 +441,7 @@ function ImageWrapperFunctions:get(loopid, relX,relY, V)
 
   local debugChecks = {}
 
-  if orion.debug then
+  if self.debug then
 --    local regionWidth = self.region:growToNearestX(orion.tune.V):getWidth()
     table.insert(debugChecks,
                  quote
@@ -900,9 +453,10 @@ function ImageWrapperFunctions:get(loopid, relX,relY, V)
                  orionAssert( (this-[self.basePtr])>=0,"read before start of array")
 --                 orionAssert( (this-[self.basePtr])<maxv,"read beyond end of array")
   end)
+  else
+    return `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]] + relY*[self.stride] + relX),{align=V})
   end
 
-  return quote [debugChecks] in terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]] + relY*[self.stride] + relX),{align=V}) end
 end
 
 function ImageWrapperFunctions:gather(
@@ -931,7 +485,7 @@ function ImageWrapperFunctions:gather(
   local debugChecks = {}
 
 
-  if orion.debug then
+  if self.debug then
     local regionWidth = self.region:growToNearestX(orion.tune.V):getWidth()
 
     table.insert(debugChecks,
@@ -1124,8 +678,6 @@ function orion.terracompiler.codegen(
 
   local stat = {}
 
-  inkernel = orion.optimize.CSE(inkernel,{})
-
   local expr =inkernel:visitEach(
     function(node,inputs)
 
@@ -1139,8 +691,10 @@ function orion.terracompiler.codegen(
       
       if node.kind=="load" then
         assert(orion.kernelGraph.isKernelGraph(node.from))
-        print(inputImages[node.from],node.from)
-        out = inputImages[node.from]:get(loopid, node.x,node.y,V);
+
+        print("node",kernelNode)
+        print("image/lb wrapper:",inputImages[node.from],"node.from",node.from,node.from:name(),"outputs",outputs,"inputs",inputImages)
+        out = inputImages[kernelNode][node.from]:get(loopid, 0,0,  V);
       elseif node.kind=="input" then
         out = inputImages[kernelNode][node.id]:get(loopid,0,0,V)
       elseif node.kind=="binop" then
@@ -1359,6 +913,8 @@ function orion.terracompiler.codegen(
       elseif node.kind=="crop" then
         -- just pass through, crop only affects loop iteration space
         out = inputs["expr"]
+      elseif node.kind=="transformBaked" then
+        out = inputs["expr"]
       else
 --        node:printpretty()
         orion.error("Internal error, unknown ast kind "..node.kind)
@@ -1434,8 +990,8 @@ function validStencil(kernelGraph, kernelNode)
   end
 end
 
-function stripLeft(strip, options) return strip*stripWidth(options) end
-function stripRight(strip, options) return (strip+1)*stripWidth(options) end
+function stripLeft(strip, options) return `strip*[stripWidth(options)] end
+function stripRight(strip, options) return `(strip+1)*[stripWidth(options)] end
 
 -- return interiorValue or exteriorValue depending if this strip's edge is on the exterior of the region we're calculating or not
 terra interiorSelectLeft(strip : int, interiorValue : int, exteriorValue : int)
@@ -1449,15 +1005,17 @@ terra interiorSelectRight(strip : int, stripcount : int, interiorValue : int, ex
 end
 
 function needed(kernelGraph, kernelNode, strip, options)
-  return {left = `stripLeft(strip)+interiorSelectLeft(strip,[upToNearest(options.V, neededInteriorStencil(kernelGraph, kernelNode):min(1))],[upToNearest(options.V,neededExteriorStencil(kernelGraph, kernelNode):min(1))]),
-          right = `stripRight(strip)+interiorSelectRight(strip,[options.stripcount],[upToNearest(options.V,neededInteriorStencil(kernelGraph, kernelNode):max(1))],[upToNearest(options.V,neededExteriorStencil(kernelGraph, kernelNode):max(1))]),
+  local lInterior = upToNearest(options.V, neededInteriorStencil(kernelGraph, kernelNode):min(1))
+  local lExterior = upToNearest(options.V,neededExteriorStencil(kernelGraph, kernelNode):min(1))
+  return {left = `[stripLeft(strip,options)]+interiorSelectLeft(strip,lInterior,lExterior),
+          right = `[stripRight(strip,options)]+interiorSelectRight(strip,[options.stripcount],[upToNearest(options.V,neededInteriorStencil(kernelGraph, kernelNode):max(1))],[upToNearest(options.V,neededExteriorStencil(kernelGraph, kernelNode):max(1))]),
           top = `options.height+[neededExteriorStencil(kernelGraph, kernelNode):max(2)],
           bottom = `[neededExteriorStencil(kernelGraph, kernelNode):min(2)]}
 end
 
 function valid(kernelGraph, kernelNode, strip, options)
-  return {left = `stripLeft(strip)+interiorSelectLeft(strip,0,[validStencil(kernelGraph, kernelNode):min(1)]),
-          right = `stripRight(strip)+interiorSelectRight(strip,0,[validStencil(kernelGraph, kernelNode):max(1)]),
+  return {left = `[stripLeft(strip,options)]+interiorSelectLeft(strip,0,[validStencil(kernelGraph, kernelNode):min(1)]),
+          right = `[stripRight(strip,options)]+interiorSelectRight(strip,[options.stripcount],0,[validStencil(kernelGraph, kernelNode):max(1)]),
           top = `options.height+[validStencil(kernelGraph, kernelNode):max(2)],
           bottom = `[validStencil(kernelGraph, kernelNode):min(2)]}
 end
@@ -1466,8 +1024,8 @@ end
 -- be vector aligned (and also expand the needed regions so that this works).
 -- after overcomputing the valid region, we write of it with the boundary info
 function validVector(kernelGraph, kernelNode, strip, options)
-  return {left = `stripLeft(strip)+interiorSelectLeft(strip,0,[upToNearest(options.V,validStencil(kernelGraph, kernelNode):min(1))]),
-          right = `stripRight(strip)+interiorSelectRight(strip,0,[upToNearest(options.V,validStencil(kernelGraph, kernelNode):max(1))]),
+  return {left = `[stripLeft(strip,options)]+interiorSelectLeft(strip,0,[upToNearest(options.V,validStencil(kernelGraph, kernelNode):min(1))]),
+          right = `[stripRight(strip,options)]+interiorSelectRight(strip,[options.stripcount],0,[upToNearest(options.V,validStencil(kernelGraph, kernelNode):max(1))]),
           top = `options.height+[validStencil(kernelGraph, kernelNode):max(2)],
           bottom = `[validStencil(kernelGraph, kernelNode):min(2)]}
 end
@@ -1480,6 +1038,7 @@ function orion.terracompiler.codegenInnerLoop(
     inputs,
     outputs,
     y,
+    linebufferBase,
     options)
 
   assert(type(options)=="table")
@@ -1502,38 +1061,24 @@ return
       local valid = valid(kernelGraph,n,strip,options)
       local validVectorized = validVector(kernelGraph,n,strip,options) -- always larger than valid to the nearest vector width
 
-      initInputImages(inputs,n,loopid);
-      outputs[n]:init(loopid);
-
-      -- we need to call these upfront so that the LBs can remember which IVs were actually used. But after init.
-      local expr,statements=orion.terracompiler.codegen( n.kernel,  options.V, x, y, loopid, options.stripcount, n, inputs, outputs)
-
       table.insert(loopStartCode,
         quote
-          if orion.verbose then cstdio.printf("Run Kernel %s\n", n:name()) end
-
-          [declareInputImages( inputs, n, loopid)];
-          [outputs[n]:declare(loopid)];
-          
-          [setInputImagePositions( inputs, n, loopid, needed.left, needed.bottom, core, strip)];
-          [outputs[n]:setPosition( loopid, needed.left, needed.bottom, core, strip)];
+          [declareInputImages( inputs, n, loopid, needed.left, needed.bottom, core, strip, linebufferBase)];
+          [outputs[n]:declare(loopid, needed.left, needed.bottom, core, strip, linebufferBase )];
           
           if orion.verbose then
-            cstdio.printf("valid:\n")
-            cstdio.printf("validSS:\n")
-            cstdio.printf("needed:\n")
+            cstdio.printf("V %d cores %d\n",options.V,options.cores)
+            cstdio.printf("valid l %d r %d t %d b %d\n",[valid.left],[valid.right],[valid.top],[valid.bottom])
+            cstdio.printf("validVectorized l %d r %d t %d b %d\n",[validVectorized.left],[validVectorized.right],[validVectorized.top],[validVectorized.bottom])
+            cstdio.printf("needed l %d r %d t %d b %d\n",[needed.left],[needed.right],[needed.top],[needed.bottom])
           end
         end)
 
+      local expr,statements=orion.terracompiler.codegen( n.kernel,  options.V, x, y, loopid, options.stripcount, n, inputs, outputs)
 
       table.insert(loopCode,
         quote
-
---          if valid.width>0 then orionAssert(bottom<=valid.bottom, "VB") end
---          if needed.width>0 then orionAssert(bottom<=needed.bottom, "NB") end
---          if valid.width>0 then orionAssert(top>=valid.top, "VT") end
---          if needed.width>0 then orionAssert(top>=needed.top, "NT") end
-
+          cstdio.printf("dokernel %s\n",[n:name()])
 
           if (y >= [needed.bottom] and y < [valid.bottom]) or (y >= valid.top and y < needed.top) then
                                                                  -- top/bottom row(s) (all boundary)
@@ -1578,15 +1123,37 @@ return
 end
 
 -- codegen all the code that runs per thread (and preamble)
-function orion.terracompiler.codegenThread(kernelGraph, options)
+function orion.terracompiler.codegenThread(kernelGraph, inputs, options)
   assert(orion.kernelGraph.isKernelGraph(kernelGraph))
+  assert(type(inputs)=="table")
   assert(type(options)=="table")
 
   local core = symbol(int)
   local y = symbol(int)
+  local input = symbol(&opaque)
+  local inputArgs = `[&&opaque](&([&int8](input)[4]))
+
+  -- generate code to deserialize the input image array from the input argument
+  local inputImageSymbolMap = {}
+  local declareInputImages = {}
+  local demarshalCount = 0
+  for k,v in pairs(inputs) do
+    inputImageSymbolMap[v.expr.id] = symbol(&(v.expr.type:toTerraType()))
+    table.insert(declareInputImages,quote var [inputImageSymbolMap[v.expr.id]] = [&(v.expr.type:toTerraType())](inputArgs[demarshalCount]) end)
+    demarshalCount = demarshalCount + 1
+  end
+
+  local outputImageSymbolMap = {}
+  local declareOutputImages = {}
+  for k,v in kernelGraph:inputs() do     
+    outputImageSymbolMap[k] = symbol(&(v.kernel.type:toTerraType()))
+    table.insert(declareOutputImages,quote var [outputImageSymbolMap[k]] = [&(v.kernel.type:toTerraType())](inputArgs[demarshalCount]) end)
+    demarshalCount = demarshalCount + 1
+  end
 
   -- add the input lists and output to the kernelGraph
-  local inputs, outputs = orion.terracompiler.allocateImageWrappers(kernelGraph, options)
+  local inputs, outputs, linebufferSize = orion.terracompiler.allocateImageWrappers(kernelGraph, inputImageSymbolMap, outputImageSymbolMap, options)
+
   local loopCode = {}
   assert(options.stripcount % options.cores == 0)
   local stripsPerCore = math.floor(options.stripcount/options.cores)
@@ -1594,6 +1161,7 @@ function orion.terracompiler.codegenThread(kernelGraph, options)
   ------
   local strip = symbol(int)
 
+  local linebufferBase = symbol(&opaque,"linebufferBase")
   local thisLoopStartCode, thisLoopCode = orion.terracompiler.codegenInnerLoop(
     core,
     strip,
@@ -1601,30 +1169,33 @@ function orion.terracompiler.codegenThread(kernelGraph, options)
     inputs,
     outputs,
     y, 
+    linebufferBase,
     options)
 
   if options.printstage then
     print("strip list count",#stripList)
   end
 
-  local input = symbol(&opaque)
-
   return terra( [input] ) : &opaque
     var [core] = @([&int](input))
+    declareInputImages
+    declareOutputImages
 
-    if options.verbose then cstdio.printf("Run Loop %d",core) end
+    if options.verbose then cstdio.printf("Run Thread %d\n",core) end
 
-    [orion.kernelGraph.outputImageMap(function(n) return n:alloc(stripCount) end)]
+    -- allocate line buffer for this thread
+    var linebuffers : &opaque = vmIV.allocateCircular([linebufferSize])
 
     var start = orion.currentTimeInSeconds()
     for i=0,stripsPerCore do
 
       var [strip] = core*stripsPerCore+i
-      stripList
 
+      var [linebufferBase] = linebuffers -- the image wrappers will mutate linebufferBase each time they allocate a buffer in the start code
       thisLoopStartCode
 
       for [y] = 0, options.height do
+        cstdio.printf("doline %d\n",y)
         thisLoopCode
       end
 
@@ -1635,24 +1206,25 @@ function orion.terracompiler.codegenThread(kernelGraph, options)
 end
 
 
-function orion.terracompiler.allocateImageWrappers(kernelGraph, options)
+function orion.terracompiler.allocateImageWrappers(kernelGraph, inputImageSymbolMap, outputImageSymbolMap, options)
   assert(orion.IR.isIR(kernelGraph))
   assert(type(options)=="table")
 
   local inputs = {} -- kernelGraphNode->{input wrappers}
   local outputs = {} -- kernelGraphNode->output wrapper
+  local linebufferSize = 0
 
   local inputWrappers = {}
   local function getInputWrapper(id,type)
     if inputWrappers[id]==nil then
-      inputWrappers[id] = orion.imageWrapper.new(id,type,options.width)
+      inputWrappers[id] = newImageWrapper( inputImageSymbolMap[id],type,options.width, options.terradebug )
     end
     return inputWrappers[id]
   end
 
   local function parentIsOutput(node)
-    for v,k in node:parents(kernelGraph) do if v==kernelGraph then return true end end
-    return false
+    for v,k in node:parents(kernelGraph) do if v==kernelGraph then return k end end
+    return nil
   end
 
   kernelGraph:S("*"):traverse(
@@ -1660,28 +1232,47 @@ function orion.terracompiler.allocateImageWrappers(kernelGraph, options)
       inputs[n] = {}
 
       -- collect the inputs
-      n:map("child", function(child,i) inputs[n][child] = child.outputImage end)
+      n:map("child", function(child,i) 
+              print("input","KernelNode",n,"from",child,"wrapper",outputs[child],"inputs",inputs)
+              inputs[n][child] = outputs[child]
+                     end)
 
       -- if this uses any input files, we need to add those too
       if n~=kernelGraph then -- root is just a list of outputs
 
         n.kernel:S("input"):traverse(
           function(node)
+            print("inputs","kernelNode",n,"from",node.id)
             inputs[n][node.id] = getInputWrapper(node.id,node.type)
           end)
 
         -- make the output
-        if parentIsOutput(n) then
-          outputs[n] = orion.imageWrapper.new(7,n.kernel.type,stripWidth(options))
-          print("OUTt",n,n:name())
+        if parentIsOutput(n)~=nil then
+          outputs[n] = newImageWrapper( outputImageSymbolMap[parentIsOutput(n)], n.kernel.type, options.width, options.terradebug)
+
+          print("OUT imageWrapper","kernelNode:",n,n:name(),"wrapper",outputs[n])
         else
-          outputs[n] = orion.lineBufferWrapper.new(3, n.kernel.type)
-          print("OUT",n,n:name())
+          outputs[n] = newLineBufferWrapper(
+            n:bufferSize(kernelGraph), 
+            n.kernel.type,
+            neededInteriorStencil(kernelGraph,n):min(1),
+            stripWidth(options),
+            neededInteriorStencil(kernelGraph,n):max(1),
+            options.terradebug)
+
+          linebufferSize = linebufferSize + outputs[n]:allocateSize()
+          print("OUT lbwrapper","kernelNode",n,n:name(),"wrapper",outputs[n],"outputs",outputs)
         end
       end
     end)
 
-  return inputs, outputs
+  for k,v in pairs(inputs) do
+    for kk,vv in pairs(v) do
+      print(inputs,k,kk,vv)
+    end
+  end
+
+  return inputs, outputs, linebufferSize
 end
 
 -- this should return a terra function that when called executes the pipeline
@@ -1696,62 +1287,74 @@ function orion.terracompiler.compile(
   assert(type(options)=="table")
 
   -- make symbols for the input images
-  local inputImageSymbolMap = {}   -- maps from bound image id to &Image symbol
   local inputImageSymbolTable = {} -- symbols in order
+  local marshalInputs = {}
+  local marshalBytes = 4 -- first thing it contains is an int32 thread id
+  local stripStorePtr = symbol(&&opaque)
   for _,v in ipairs(inputImages) do
     assert(v.kind=="crop")
     assert(v.expr.kind=="input")
     assert(type(v.expr.id)=="number")
-    inputImageSymbolMap[v.expr.id] = symbol(&Image)
-    table.insert(inputImageSymbolTable, inputImageSymbolMap[v.expr.id])
+    table.insert(inputImageSymbolTable, symbol(&opaque))
+    table.insert(marshalInputs, quote @stripStorePtr = [inputImageSymbolTable[#inputImageSymbolTable]]; stripStorePtr = stripStorePtr + 1 end)
+    marshalBytes = marshalBytes + terralib.sizeof(&opaque)
+  end
+
+  local outputImageSymbolTable = {}
+  local marshalOutputs = {}
+  for k,v in kernelGraph:inputs() do 
+    table.insert(outputImageSymbolTable, symbol(&opaque)) 
+    table.insert(marshalOutputs, quote @stripStorePtr = [outputImageSymbolTable[#outputImageSymbolTable]]; stripStorePtr = stripStorePtr + 1 end)
+    marshalBytes = marshalBytes + terralib.sizeof(&opaque)
   end
 
   -- schedule nodes to determine linebuffer size
   local schedule = schedule(kernelGraph)
 
-  local outputImageSymbolTable = kernelGraph:map("inputImages",function(n) 
-                                                   for k,v in pairs(n) do print(k,v) end
-                                                   return n.data end)
-  for k,v in pairs(outputImageSymbolTable) do print(k,v,terralib.issymbol(v)) end
-
-  local threadCode = orion.terracompiler.codegenThread( kernelGraph, options )
+  local threadCode = orion.terracompiler.codegenThread( kernelGraph, inputImages, options )
 
   threadCode:printpretty()
 
-  return terra([inputImageSymbolTable], [outputImageSymbolTable])
+  local fin = terra([inputImageSymbolTable], [outputImageSymbolTable])
     var start = orion.currentTimeInSeconds()
     
-    var threads : cpthread.pthread_t[orion.tune.cores]
-    var stripStore : int[orion.tune.cores]
+    var threads : cpthread.pthread_t[options.cores]
+    var stripStore : int8[options.cores*marshalBytes]
     
-    for i=0, orion.looptimes do
+    for l=0, options.looptimes do
       -- launch the kernel for each strip
       
-      if orion.tune.cores==1 then
+      if options.cores==1 then
         -- don't launch a thread to save thread launch overhead
-        stripStore[0]=0
-        threadCode(&stripStore[0])
+        @([&int32](&stripStore)) = 0
+        var [stripStorePtr] = [&&opaque](&stripStore[4])
+        marshalInputs
+        marshalOutputs
+        threadCode(&stripStore)
       else
-        for i=0,orion.tune.cores do
-          --                           cstdio.printf("Launch %d\n",i)
-          stripStore[i] = i
-          cpthread.pthread_create(&threads[i],nil,threadCode, &stripStore[i]);
+        for i=0,options.cores do
+          @([&int32](stripStore[i*marshalBytes])) = 0
+          var [stripStorePtr] = [&&opaque](&stripStore[i*marshalBytes])
+          marshalInputs
+          marshalOutputs
+          cpthread.pthread_create(&threads[i],nil,threadCode, &stripStore);
         end
-        for i=0,orion.tune.cores do
+        for i=0,options.cores do
           cpthread.pthread_join(threads[i],nil)
-          --                             cstdio.printf("join %d\n",i)
         end
       end
     end
     
     if options.printruntime then
-      var len : double = (orion.currentTimeInSeconds()-start)/orion.looptimes
+      var len : double = (orion.currentTimeInSeconds()-start)/options.looptimes
       var bytes :double= 0
       var gbps :double= (bytes/len)/(1024*1024*1024)
       var gb :double= bytes / (1024*1024*1024)
-      var lt : int = orion.looptimes
+      var lt : int = options.looptimes
       cstdio.printf("loopTimes:%d avgRuntime:%f GB/s:%f GB:%f\n",lt,len,gbps,gb)
     end
     
   end
+  fin:printpretty()
+  return fin
 end

@@ -128,13 +128,15 @@ function orion.compile(inputImageFunctions, outputImageFunctions, tapInputs, inp
     if options.platform==nil then options.platform="cpu" end
     assert(options.platform=="cpu" or options.platform=="convolution")
     if options.verbose ~= nil then assert(type(options.verbose)=="boolean"); orion.verbose = options.verbose; end
-    if options.printruntime ~= nil then assert(type(options.printruntime)=="boolean"); orion.printruntime = options.printruntime; end
-    if options.looptimes ~= nil then assert(type(options.looptimes)=="number"); orion.looptimes = options.looptimes; end
+    if options.printruntime ~= nil then assert(type(options.printruntime)=="boolean") else options.printruntime = false; end
+    if options.looptimes ~= nil then assert(type(options.looptimes)=="number") else options.looptimes = 1; end
     if options.printasm ~=nil then assert(type(options.printasm)=="boolean"); orion.printasm = options.printasm; end
     if options.V == nil then options.V=4 end
-    if options.cores == nil then options.cores=4 end
+    if options.cores == nil then options.cores=1 end
     if options.stripcount == nil then options.stripcount=options.cores end
-    if options.fastmath ~= nil then assert(type(options.fastmath)=="boolean"); orion.fastmath = options.fastmath; end
+    if options.fastmath ~= nil then assert(type(options.fastmath)=="boolean") else options.fastmath = false end
+    if options.terradebug ~= nil then assert(type(options.terradebug)=="boolean") else options.terradebug = false end
+    if options.pagesize ~= nil then assert(type(options.pagesize)=="number") else options.pagesize = 4*1024 end
     
     options.width = inputWidth
     options.height = inputHeight

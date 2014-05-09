@@ -43,7 +43,7 @@ function orionSimple.load(filename, boundaryCond)
 
   local inp = orion.input(_type)
   table.insert(orionSimple.images,inp)
-  table.insert(orionSimple.imageInputs,im)
+  table.insert(orionSimple.imageInputs,`im.data)
 
   return inp
 end
@@ -318,17 +318,19 @@ function orionSimple.compile(outList, options)
   local outRes = {}
   for k,v in pairs(outList) do
     local s = symbol(Image)
-    table.insert(outDecl,quote var [s]
-  end)
-table.insert(outRes,s)
-table.insert(outArgs, `&[s])
+    table.insert(outDecl,quote var [s] end)
+    table.insert(outRes,s)
+    table.insert(outArgs, `&[s])
   end
 
-  return terra()
+  local fin = terra()
     [outDecl]
     fn([orionSimple.imageInputs],[outArgs])
     return [outRes]
-         end
+  end
+
+  fin:printpretty()
+  return fin
 end
 
 return orionSimple

@@ -702,5 +702,5 @@ function orion.compile(inputImageFunctions, outputImageFunctions, tapInputs, inp
   options.callbackAST = function(node) print(astPrintPrettys(node)) end
   options.callbackTypedAST = function(node) typedASTPrintPretty(node) end
   options.callbackKernelGraph = function(node) kernelGraphPrintPretty(node) end
-  origCompile(inputImageFunctions, outputImageFunctions, tapInputs, inputWidth, inputHeight, options)
+  return origCompile(inputImageFunctions, outputImageFunctions, tapInputs, inputWidth, inputHeight, options)
 end
