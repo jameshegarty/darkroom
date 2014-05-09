@@ -112,11 +112,11 @@ function typedASTFunctions:stencil(input)
     local res = Stencil.new()
 
     for i=1,self:arraySize("lhs") do
-      res = res:unionWith(self["lhs"..i]:stencil(input):translate(self["translate1_lhs"..i], self["translate2_lhs"..i],0))
+      res = res:unionWith(self["lhs"..i]:stencil(input))
     end
 
     for i=1,self:arraySize("rhs") do
-      res = res:unionWith(self["rhs"..i]:stencil(input):translate(self["translate1_rhs"..i], self["translate2_rhs"..i],0))
+      res = res:unionWith(self["rhs"..i]:stencil(input))
     end
 
     return res
@@ -124,24 +124,21 @@ function typedASTFunctions:stencil(input)
     local res = Stencil.new()
 
     for i=1,self:arraySize("expr") do
-      res = res:unionWith(self["expr"..i]:stencil(input):translate(self["translate1_expr"..i], self["translate2_expr"..i],0))
+      res = res:unionWith(self["expr"..i]:stencil(input))
     end
 
     return res
   elseif self.kind=="unary" then
-    return self.expr:stencil(input):translate(self.translate1_expr,self.translate2_expr,0)
+    return self.expr:stencil(input)
   elseif self.kind=="assert" then
-    return self.cond:stencil(input):translate(self.translate1_cond,self.translate2_cond,0)
-    :unionWith(self.expr:stencil(input):translate(self.translate1_expr,self.translate2_expr,0))
+    return self.cond:stencil(input):unionWith(self.expr:stencil(input))
   elseif self.kind=="cast" then
-    return self.expr:stencil(input):translate(self.translate1_expr,self.translate2_expr,0)
+    return self.expr:stencil(input)
   elseif self.kind=="select" or self.kind=="vectorSelect" then
     return self.cond:stencil(input)
-    :translate(self.translate1_cond,self.translate2_cond,0)
     :unionWith(self.a:stencil(input)
-               :translate(self.translate1_a,self.translate2_a,0) 
                :unionWith(self.b:stencil(input)
-                          :translate(self.translate1_b,self.translate2_b,0)))
+                          ))
   elseif self.kind=="position" or self.kind=="tap" or self.kind=="value" then
     return Stencil.new()
   elseif self.kind=="tapLUTLookup" then

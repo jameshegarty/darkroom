@@ -1,9 +1,7 @@
-package.path = package.path .. ";../src/?.lua;../src/?.t"
-
 terralib.require "test"
-import "orion"
+import "darkroom"
 
-im a(x,y) : cropNone x+y*2 end
-im b(x,y) : cropNone a(x-10,y+5) end
+im a(x,y)  x+y*2 end
+im b(x,y)  a(x-10,y+5) end
 
-test(im(x,y) : crop(0,0,128,64),uint8 b(x-10,y) end)
+test(im(x,y) orion.uint8(b(x-10,y)) end)

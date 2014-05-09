@@ -1,7 +1,5 @@
-package.path = package.path .. ";../src/?.lua;../src/?.t"
-
 terralib.require "test"
-import "orion"
+import "darkroom"
 
 local targetX = orion.tap(orion.type.int(32), "targetX")
 local targetY = orion.tap(orion.type.int(32), "targetY")

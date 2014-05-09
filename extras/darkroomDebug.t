@@ -556,7 +556,7 @@ function typedASTPrintPrettys(self,root,assignments)
     out = out..")"
 
   elseif self.kind=="unary" then
-    out=out..self.op.."("..self.expr:printprettys(root,self,"expr",assignments)..")"
+    out=out..self.op.."("..typedASTPrintPrettys(self.expr,root,assignments)..")"
   elseif self.kind=="value" then
     out=out..tostring(self.value)
   elseif self.kind=="input" then
@@ -592,7 +592,7 @@ function typedASTPrintPrettys(self,root,assignments)
     
     out = out  .. ")"
   elseif self.kind=="select" then
-    out=out.."if "..self.cond:printprettys(root,self,"cond",assignments).." then "..self.a:printprettys(root,self,"a",assignments).." else "..self.b:printprettys(root,self,"b",assignments).." end"
+    out=out.."if "..typedASTPrintPrettys(self.cond,root,assignments).." then "..typedASTPrintPrettys(self.a,root,assignments).." else "..typedASTPrintPrettys(self.b,root,assignments).." end"
   elseif self.kind=="vectorSelect" then
     out=out.."vectorSelect("..self.cond:printprettys(root,self,"cond",assignments)..","..self.a:printprettys(root,self,"a",assignments)..","..self.b:printprettys(root,self,"b",assignments)..")"
   elseif self.kind=="crop" then
@@ -699,8 +699,12 @@ end
 -- install debug hooks
 local origCompile = orion.compile
 function orion.compile(inputImageFunctions, outputImageFunctions, tapInputs, inputWidth, inputHeight, options)
+  print("debug orion.compile")
   options.callbackAST = function(node) print(astPrintPrettys(node)) end
   options.callbackTypedAST = function(node) typedASTPrintPretty(node) end
-  options.callbackKernelGraph = function(node) kernelGraphPrintPretty(node) end
+  local ocallbackKernelGraph = options.callbackKernelGraph
+  options.callbackKernelGraph = function(node) kernelGraphPrintPretty(node); if ocallbackKernelGraph~=nil then ocallbackKernelGraph(node) end end
+  options.callbackKernelGraph = ocallbackKernelGraph
+  options.terradebug = true
   return origCompile(inputImageFunctions, outputImageFunctions, tapInputs, inputWidth, inputHeight, options)
 end

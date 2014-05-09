@@ -43,7 +43,10 @@ local vmIV = terralib.includecstring [[
 void * makeCircular (void* address, int bytes) {
   char path[] = "/tmp/ring-buffer-XXXXXX";
   int file_descriptor = mkstemp(path);
-  
+ 
+  assert(bytes % (4*1024) == 0);
+  assert((int)address % (4*1024) == 0);
+
   assert(file_descriptor > 0);
   assert(!unlink(path));
  
@@ -82,6 +85,7 @@ void* allocateCircular( int bytes ){
 
 LineBufferWrapperFunctions = {}
 LineBufferWrapperMT={__index=LineBufferWrapperFunctions}
+linebufferCount = 0
 
 function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightStencil, debug )
   assert(type(lines)=="number")
@@ -92,21 +96,21 @@ function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightS
   assert(orion.type.isType(orionType))
 
   local tab = {lines=lines, 
+               id = linebufferCount, -- for debugging
                orionType=orionType, 
                leftStencil = leftStencil, 
                stripWidth = stripWidth, 
                rightStencil=rightStencil,
                linebufferPosition = 0,
                debug=debug,
-               iv={},
-               base={}}
+               iv={}, 
+               ivDebugX = {}, 
+               ivDebugY={}, 
+               ivDebugId = {}, 
+               posX={}, posY={}}
 
-  tab.ivDebugX = {}
-  tab.ivDebugY = {}
-  tab.ivDebugId = {}
-  tab.posX = {}
-  tab.posY = {}
-  
+  linebufferCount = linebufferCount + 1
+
   return setmetatable(tab,LineBufferWrapperMT)
 end
 
@@ -121,7 +125,6 @@ function LineBufferWrapperFunctions:declare( loopid, x, y, core, stripId, linebu
   local res = {}
 
   if self.iv[loopid]==nil then self.iv[loopid] = symbol(&self.orionType:toTerraType()) end
-  if self.base[loopid]==nil then self.base[loopid] = symbol(&self.orionType:toTerraType()) end
     
   if self.debug then
     if self.ivDebugX[loopid]==nil then self.ivDebugX[loopid] = symbol(&int) end
@@ -138,18 +141,29 @@ function LineBufferWrapperFunctions:declare( loopid, x, y, core, stripId, linebu
   if self.debug then table.insert(res, quote var [self.posX[loopid]] = x; var [self.posY[loopid]] = y; end) end
 
   local l = {self.iv[loopid]}
-  local base = {self.base[loopid]}
+  local baseKey = {"base"}
+  local bufType = {self.orionType:toTerraType()}
   if self.debug then l = {self.iv[loopid], self.ivDebugX[loopid], self.ivDebugY[loopid], self.ivDebugId[loopid] } end
+  if self.debug then baseKey = {"base","baseDebugX","baseDebugY","baseDebugId"} end
+  if self.debug then bufType = {self.orionType:toTerraType(), int, int, int} end
 
   for k,buf in pairs(l) do
+    -- only allocate space the first time
+    if self[baseKey[k]]==nil then
+      self[baseKey[k]] = symbol(&bufType[k],baseKey[k])
+      table.insert(res, 
+        quote
+          vmIV.makeCircular(linebufferBase,[self:modularSize(bufType[k])*terralib.sizeof(bufType[k])])
+          var [self[baseKey[k]]] = [&bufType[k]](linebufferBase)
+          linebufferBase = [&int8](linebufferBase) + [self:modularSize(bufType[k])*terralib.sizeof(bufType[k])*3]
+        end)
+    end
+
     table.insert(res, 
       quote 
-        vmIV.makeCircular(linebufferBase,[self:size()])
         -- we always start in the second segment of the circular buffer b/c we always read from smaller addresses
         var leftBound = [self.stripWidth]*stripId + [self.leftStencil]
-        var [base[k]] = [&self.orionType:toTerraType()](linebufferBase)
-        var [buf] = [&self.orionType:toTerraType()](linebufferBase)+(x-leftBound)+([self:size()]/(2*[self.orionType:sizeof()]))
-        linebufferBase = [&int8](linebufferBase) + [self:size()]
+        var [buf] = [self[baseKey[k]]]+(x-leftBound)+[self:modularSize(bufType[k])]
       end)
   end
 
@@ -157,12 +171,17 @@ function LineBufferWrapperFunctions:declare( loopid, x, y, core, stripId, linebu
 end
 
 function LineBufferWrapperFunctions:lineWidth() return self.stripWidth-self.leftStencil+self.rightStencil end
--- this is how many bytes this linebuffer will consume
+-- this is the number of pixels in the linebuffer
 -- we round up to the nearest page size (for the circular buffer that must be page aligned). The double for the double mapping in VM space
-function LineBufferWrapperFunctions:size() return upToNearest(4*1024,self.lines*self:lineWidth()) end
+function LineBufferWrapperFunctions:entries() return self.lines*self:lineWidth() end
+-- this return the size of the allocated linebuffer in pixels for a given type. ie, how many pixels to subtract to wrap from the end of the buffer to the start
+function LineBufferWrapperFunctions:modularSize(terraType) return upToNearest(4*1024,self:entries()*terralib.sizeof(terraType))/terralib.sizeof(terraType) end
 -- debugging requires 3 extra buffers
-function LineBufferWrapperFunctions:allocateSize() if self.debug then return self:size()*3*4 else return self:size()*3 end end
-
+function LineBufferWrapperFunctions:allocateSize() 
+  local s = upToNearest(4*1024,self:entries()*self.orionType:sizeof())*3
+  if self.debug then  s = s + upToNearest(4*1024,self:entries()*terralib.sizeof(int))*3*3 end
+  return s
+end
 
 function LineBufferWrapperFunctions:set( loopid, value, V )
   assert(terralib.isquote(value))
@@ -184,18 +203,18 @@ function LineBufferWrapperFunctions:set( loopid, value, V )
                                      [self.dataDebugX[0][loopid]]+i)
                        ]=]
 
-                       @([self.dataDebugX[0][loopid]]+i) = [self.posX[loopid]]+i
-                       @([self.dataDebugY[0][loopid]]+i) = [self.posY[loopid]]
-                       @([self.dataDebugId[0][loopid]]+i) = [self.id]
+                       @([self.ivDebugX[loopid]]+i) = [self.posX[loopid]]+i
+                       @([self.ivDebugY[loopid]]+i) = [self.posY[loopid]]
+                       @([self.ivDebugId[loopid]]+i) = [self.id]
 
-                       orionAssert(uint64([self.data[0][loopid]]) % (V*sizeof([self.orionType:toTerraType()])) == 0,"lb set not aligned")
+                       orionAssert(uint64([self.iv[loopid]]) % (V*sizeof([self.orionType:toTerraType()])) == 0,"lb set not aligned")
         end)
       end
     end
 
-    table.insert(res,quote @[&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]]) = value end)
+  table.insert(res,quote @[&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]]) = value end)
 
-    return res
+  return quote res end
 end
 
 -- relX and relY should be integer constants relative to
@@ -209,8 +228,6 @@ function LineBufferWrapperFunctions:get(loopid, relX,relY, V)
   assert(relY<=0)
 
   if self.debug then
-      for i=0,V-1 do
-        table.insert(debugChecks,quote
 
 --[=[
                        cstdio.printf("GET id:%d i:%d did:%d dx:%d dy:%d ex:%d ey:%d px:%d relx:%d rely:%d\n",
@@ -226,11 +243,17 @@ function LineBufferWrapperFunctions:get(loopid, relX,relY, V)
                        cstdio.printf("RT self:%d c:%d origY:%d\n",self.retime,retime,origRelY)
                        cstdio.printf("LID %d\n",loopid)
                          ]=]
-                       orionAssert(@([self.dataDebugId[relY][loopid]]+i+relX) == [self.id], "incorrect LB Id")
-                       orionAssert(@([self.dataDebugX[relY][loopid]]+i+relX) == [self.posX[loopid]]+i+relX, "incorrect LB X")
-                       orionAssert(@([self.dataDebugY[relY][loopid]]+i+relX) == [self.posY[loopid]]+origRelY, "incorrect LB Y")
-        end)
-      end
+
+    local debugChecks = {}
+    for i=0,V-1 do
+      table.insert(debugChecks, 
+                   quote orionAssert(@([self.ivDebugId[loopid]]+relY*[self:lineWidth()]+i+relX) == [self.id], "incorrect LB Id")
+                     orionAssert(@([self.ivDebugX[loopid]]+relY*[self:lineWidth()]+i+relX) == [self.posX[loopid]]+i+relX, "incorrect LB X")
+                     orionAssert(@([self.ivDebugY[loopid]]+relY*[self:lineWidth()]+i+relX) == [self.posY[loopid]]+relY, "incorrect LB Y") end)
+    end
+
+    return quote debugChecks
+      in terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]] + relY*[self:lineWidth()]+ relX),{align=V}) end
   else
     return `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]] + relY*[self:lineWidth()]+ relX),{align=V})
   end
@@ -364,23 +387,28 @@ function LineBufferWrapperFunctions:nextLine(loopid,  sub)
 
   local res = {}
 
-  table.insert(res, 
-    quote 
-      [self.iv[loopid]] = [self.iv[loopid]] - sub + [self:lineWidth()] 
-      if [self.iv[loopid]] >= [self.base[loopid]]+[self:size()*2] then [self.iv[loopid]] = [self.iv[loopid]] - [self:size()] end
-    end)
+  local buf = {self.iv[loopid]}
+  local base = {self.base}
+  local bufType = {self.orionType:toTerraType()}
 
   if self.debug then
-    table.insert(res, quote [self.dataDebugX[line][loopid]] = [tempDebugX[i]] end)
-    table.insert(res, quote [self.dataDebugY[line][loopid]] = [tempDebugY[i]] end)
-    table.insert(res, quote [self.dataDebugId[line][loopid]] = [tempDebugId[i]] end)
+    buf = {self.iv[loopid], self.ivDebugX[loopid], self.ivDebugY[loopid], self.ivDebugId[loopid]}
+    base = {self.base, self.baseDebugX, self.baseDebugY, self.baseDebugId}
+    bufType = {self.orionType:toTerraType(),int,int,int}
     table.insert(res, quote [self.posY[loopid]] = [self.posY[loopid]] + 1 end)
     table.insert(res, quote [self.posX[loopid]] = [self.posX[loopid]] - sub end)
   end
 
+  for k,v in pairs(buf) do
+    table.insert(res, 
+      quote 
+        [buf[k]] = [buf[k]] - sub + [self:lineWidth()] 
+        if [buf[k]] >= [base[k]]+[self:modularSize(bufType[k])*2] then [buf[k]] = [buf[k]] - [self:modularSize(bufType[k])] end
+      end)
+  end
+
   return quote res end
 end
-
 
 ImageWrapperFunctions = {}
 ImageWrapperMT={__index=ImageWrapperFunctions}
@@ -427,7 +455,7 @@ function ImageWrapperFunctions:set( loopid, value, V )
 
   table.insert(res,quote terralib.attrstore([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]]),value,{nontemporal=true}) end)
 
-  return res
+  return quote res end
 end
 
 -- relX and relY should be integer constants relative to
@@ -453,6 +481,7 @@ function ImageWrapperFunctions:get(loopid, relX,relY, V)
                  orionAssert( (this-[self.basePtr])>=0,"read before start of array")
 --                 orionAssert( (this-[self.basePtr])<maxv,"read beyond end of array")
   end)
+    return `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]] + relY*[self.stride] + relX),{align=V})
   else
     return `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]] + relY*[self.stride] + relX),{align=V})
   end
