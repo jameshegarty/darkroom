@@ -747,6 +747,7 @@ function IRFunctions:linenumber()
 
   if type(orion.IR._linenumbers[getmetatable(self)][self])~="number" then
     print("Line number missing")
+    print(debug.traceback())
     self:printpretty()
   end
   

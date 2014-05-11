@@ -1,7 +1,5 @@
-package.path = package.path .. ";../src/?.lua;../src/?.t"
-
 terralib.require("test")
-import "orion"
+import "darkroom"
 
 local square = orion.tapLUT(orion.type.uint(8),256,"square")
 local st = {}

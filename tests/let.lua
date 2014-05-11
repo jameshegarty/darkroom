@@ -1,11 +1,9 @@
-package.path = package.path .. ";../src/?.lua;../src/?.t"
-
 terralib.require("test")
-import "orion"
+import "darkroom"
 
-test(im(x,y) : uint8
+test(im(x,y) orion.uint8(
      let
       a = testinput(x,y)/2
       b = testinput(x,y)-100+a
-     in a+b
+      in a+b)
      end)

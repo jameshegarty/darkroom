@@ -143,12 +143,9 @@ function typedASTFunctions:stencil(input)
     return Stencil.new()
   elseif self.kind=="tapLUTLookup" then
     return self.index:stencil(input):translate(self.translate1_index,self.translate2_index,0)
-  elseif self.kind=="input" then
-    --if input~=nil then assert(false) end
-    return Stencil.new():add(0,0,0)
   elseif self.kind=="load" then
     local s = Stencil.new()
-    if input==nil or input==self.from then s = s:add(0,0,0) end
+    if input==nil or input==self.from then s = s:add(self.relX,self.relY,0) end
     return s
   elseif self.kind=="gather" then
     --if input~=nil then assert(false) end
@@ -296,7 +293,6 @@ function orion.typedAST._toTypedAST(inast)
         ast.lhs = lhs
         ast.rhs = rhs
         
-      elseif ast.kind=="input" then
       elseif ast.kind=="position" then
         -- if position is still in the tree at this point, it means it's being used in an expression somewhere
         -- choose a reasonable type...
@@ -559,7 +555,8 @@ function orion.typedAST._toTypedAST(inast)
         if orion.type.isInt(ast.y.type)==false then
           orion.error("Error, y argument to gather must be int but is "..ast.y.type:str(), origast:linenumber(), origast:offset())
         end
-
+      elseif ast.kind=="load" then
+        -- already has a type
       else
         orion.error("Internal error, typechecking for "..ast.kind.." isn't implemented!",ast.line,ast.char)
         return nil

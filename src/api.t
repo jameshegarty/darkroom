@@ -3,9 +3,7 @@ orion._inputCount = 0
 function orion.input( imtype )
   assert(orion.type.isType(imtype))
 
-  -- channel == -1 indicates to use all the channels
-  -- channel == 1,2, etc indicates to only use that one channel
-  local res  = orion.ast.new({kind="input", channel = -1, type = imtype, baseType = imtype, id=orion._inputCount} ):setLinenumber(0):setOffset(0):setFilename("null_special")
+  local res  = orion.ast.new({kind="load", type = imtype, relX=0, relY=0, from=orion._inputCount} ):setLinenumber(0):setOffset(0):setFilename("null_special")
   res:setName("cropSpecial"..(orion._inputCount).."Node")
   orion._inputCount = orion._inputCount + 1
 
@@ -65,37 +63,32 @@ function orion.backEnd( kernelGraph, inputImages, options)
   assert(type(options)=="table")
   assert(type(inputImages)=="table")
 
-  if options.platform=="cpu" or options.platform == nil then
-    
-    if options.verbose then print("start compile") end
-    
-    local res = orion.terracompiler.compile( 
-      kernelGraph, 
-      inputImages, 
-      options)
-    
-    if options.printstage or options.verbose then 
-      print("Start terra compile") 
-      print("mem",collectgarbage("count"))
-    end
-    
-    local start = orion.currentTimeInSeconds()
-    res:compile() -- we may want to do this later (out of this scope), so that more stuff can be GCed?
-    local endt = orion.currentTimeInSeconds()
-    
-    if options.printstage or options.verbose then
-      print("Terra compile done, compile time",(endt-start))
-    end
-
-return res
-
-  elseif options.platform=="convolution" then
-    local convIR = orion.convIR.convert(scheduledIR)
-return orion.convolution.synth(convIR, base1, base2, options)
-  else
-    assert(false)
+  local shifts = schedule(kernelGraph)
+  kernelGraph = shift(kernelGraph, shifts)
+  
+  if options.callbackScheduledKernelGraph~=nil then options.callbackScheduledKernelGraph(kernelGraph) end
+  
+  if options.verbose then print("start compile") end
+  
+  local res = orion.terracompiler.compile( 
+    kernelGraph, 
+    inputImages, 
+    options)
+  
+  if options.printstage or options.verbose then 
+    print("Start terra compile") 
+    print("mem",collectgarbage("count"))
   end
-
+  
+  local start = orion.currentTimeInSeconds()
+  res:compile() -- we may want to do this later (out of this scope), so that more stuff can be GCed?
+  local endt = orion.currentTimeInSeconds()
+  
+  if options.printstage or options.verbose then
+    print("Terra compile done, compile time",(endt-start))
+  end
+  
+  return res
 end
 
 function orion.compile(inputImageFunctions, outputImageFunctions, tapInputs, inputWidth, inputHeight, options)
@@ -125,8 +118,6 @@ function orion.compile(inputImageFunctions, outputImageFunctions, tapInputs, inp
 
   local function checkoptions(options)
     if options==nil then options={} end
-    if options.platform==nil then options.platform="cpu" end
-    assert(options.platform=="cpu" or options.platform=="convolution")
     if options.verbose ~= nil then assert(type(options.verbose)=="boolean"); orion.verbose = options.verbose; end
     if options.printruntime ~= nil then assert(type(options.printruntime)=="boolean") else options.printruntime = false; end
     if options.looptimes ~= nil then assert(type(options.looptimes)=="number") else options.looptimes = 1; end

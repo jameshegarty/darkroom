@@ -43,7 +43,7 @@ end
 function kernelGraphFunctions:bufferSize(root)
   local bufferSize = 1
   for v,_ in self:parents(root) do
-    local b = v:minUse(self)+1
+    local b = -v:minUse(self)+1
     if b>bufferSize then bufferSize=b end
   end
   return bufferSize
@@ -62,11 +62,19 @@ function orion.kernelGraph.typedASTToKernelGraph(typedAST, options)
 
   local function parentIsOutputs(node) for v,k in node:parents(typedAST) do if v.kind=="outputs" then return true end return false end end
 
+  -- note that this is not strictly speaking correct: it's possible the multiple transforms end up resolving to the same (x,y) offset
+  -- but figuring that out would be hard, so just do this the simple conservative way
+  local function multipleTransforms(node) 
+    local transformCount = 0
+    for v,k in node:parents(typedAST) do if v.kind=="transformBaked" then transformCount = transformCount+1 end end
+    return transformCount > 1
+  end
+
   -- We do this with a traverse instead of a process b/c we're converting
   -- from one type of AST to another
   local kernelGraph = typedAST:S(
     function(node) 
-      return node.kind=="crop" or parentIsOutputs(node) or node:parentCount(typedAST)==0
+      return node.kind=="crop" or parentIsOutputs(node) or node==typedAST or multipleTransforms(node)
     end)
   :traverse(
     function(node,args)
@@ -88,18 +96,13 @@ function orion.kernelGraph.typedASTToKernelGraph(typedAST, options)
         function(n,origNode)
           local child
           
-          for _,pchild in pairs(args) do
-            if origNode==origKernel[pchild.kernel] or
-              (pchild.kind=="toSOA" and origNode==origKernel[pchild]) then 
-              child = pchild 
-            end
-          end
+          for _,pchild in pairs(args) do if origNode==origKernel[pchild.kernel] then  child = pchild  end end
           assert(child~=nil)
           
           newnode["child"..childCount] = child
           childCount = childCount+1
           
-          local res = orion.typedAST.new({kind="load",from=child,type=n.type}):copyMetadataFrom(n)
+          local res = orion.typedAST.new({kind="load",from=child,type=n.type,relX=0,relY=0}):copyMetadataFrom(n)
           return res
         end)
       

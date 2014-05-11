@@ -719,13 +719,8 @@ function orion.terracompiler.codegen(
       end
       
       if node.kind=="load" then
-        assert(orion.kernelGraph.isKernelGraph(node.from))
-
-        print("node",kernelNode)
-        print("image/lb wrapper:",inputImages[node.from],"node.from",node.from,node.from:name(),"outputs",outputs,"inputs",inputImages)
-        out = inputImages[kernelNode][node.from]:get(loopid, 0,0,  V);
-      elseif node.kind=="input" then
-        out = inputImages[kernelNode][node.id]:get(loopid,0,0,V)
+        assert(orion.kernelGraph.isKernelGraph(node.from) or type(node.from)=="number")
+        out = inputImages[kernelNode][node.from]:get(loopid, node.relX, node.relY,  V);
       elseif node.kind=="binop" then
         local lhs = inputs["lhs"]
         local rhs = inputs["rhs"]
@@ -941,8 +936,6 @@ function orion.terracompiler.codegen(
           retime);
       elseif node.kind=="crop" then
         -- just pass through, crop only affects loop iteration space
-        out = inputs["expr"]
-      elseif node.kind=="transformBaked" then
         out = inputs["expr"]
       else
 --        node:printpretty()
@@ -1169,8 +1162,8 @@ function orion.terracompiler.codegenThread(kernelGraph, inputs, options)
   local declareInputImages = {}
   local demarshalCount = 0
   for k,v in pairs(inputs) do
-    inputImageSymbolMap[v.expr.id] = symbol(&(v.expr.type:toTerraType()))
-    table.insert(declareInputImages,quote var [inputImageSymbolMap[v.expr.id]] = [&(v.expr.type:toTerraType())](inputArgs[demarshalCount]) end)
+    inputImageSymbolMap[v.expr.from] = symbol(&(v.expr.type:toTerraType()))
+    table.insert(declareInputImages,quote var [inputImageSymbolMap[v.expr.from]] = [&(v.expr.type:toTerraType())](inputArgs[demarshalCount]) end)
     demarshalCount = demarshalCount + 1
   end
 
@@ -1271,10 +1264,12 @@ function orion.terracompiler.allocateImageWrappers(kernelGraph, inputImageSymbol
       -- if this uses any input files, we need to add those too
       if n~=kernelGraph then -- root is just a list of outputs
 
-        n.kernel:S("input"):traverse(
+        n.kernel:S("load"):traverse(
           function(node)
-            print("inputs","kernelNode",n,"from",node.id)
-            inputs[n][node.id] = getInputWrapper(node.id,node.type)
+            if type(node.from)=="number" then
+              print("inputs","kernelNode",n,"from",node.from)
+              inputs[n][node.from] = getInputWrapper(node.from, node.type)
+            end
           end)
 
         -- make the output
@@ -1324,8 +1319,8 @@ function orion.terracompiler.compile(
   local stripStorePtr = symbol(&&opaque)
   for _,v in ipairs(inputImages) do
     assert(v.kind=="crop")
-    assert(v.expr.kind=="input")
-    assert(type(v.expr.id)=="number")
+    assert(v.expr.kind=="load")
+    assert(type(v.expr.from)=="number")
     table.insert(inputImageSymbolTable, symbol(&opaque))
     table.insert(marshalInputs, quote @stripStorePtr = [inputImageSymbolTable[#inputImageSymbolTable]]; stripStorePtr = stripStorePtr + 1 end)
     marshalBytes = marshalBytes + terralib.sizeof(&opaque)

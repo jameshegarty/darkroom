@@ -310,8 +310,8 @@ function astPrintPrettys(self)
     out=self.op.."("..astPrintPrettys(self.expr)..")"
   elseif self.kind=="value" then
     out=tostring(self.value)
-  elseif self.kind=="input" then
-    out="_input_"..self.id
+  elseif self.kind=="load" then
+    out="_load_"..self.from.."("..self.relX..","..self.relY..")"
   elseif self.kind=="mapreduce" then
     local vars,i = "",1
     while self["varname"..i] do
@@ -629,7 +629,9 @@ function typedASTPrintPrettys(self,root,assignments)
     out = out..self.y:printprettys(root,self,"y",assignments)..",\n"
     out = out..tostring(self.maxX)..", "..tostring(self.maxY)..", "..tostring(self.clamp)..")"
   elseif self.kind=="load" then
-    out = "load_from_"..self.from:name()
+    local n = self.from
+    if type(self.from)=="table" then n=self.from:name() end
+    out = "load_from_"..n.."("..self.relX..","..self.relY..")"
   else
     print(self.kind)  
     assert(false)
@@ -686,6 +688,8 @@ function IRFunctions:check()
 end
 
 function kernelGraphPrintPretty(root)
+  print("KGPP")
+  assert(orion.kernelGraph.isKernelGraph(root))
   root:visitEach(function(node)
                    print(node:name().." -------------")
                    if node.kernel==nil then
@@ -704,7 +708,12 @@ function orion.compile(inputImageFunctions, outputImageFunctions, tapInputs, inp
   options.callbackTypedAST = function(node) typedASTPrintPretty(node) end
   local ocallbackKernelGraph = options.callbackKernelGraph
   options.callbackKernelGraph = function(node) kernelGraphPrintPretty(node); if ocallbackKernelGraph~=nil then ocallbackKernelGraph(node) end end
-  options.callbackKernelGraph = ocallbackKernelGraph
+  options.callbackScheduledKernelGraph = function(node) kernelGraphPrintPretty(node) end
   options.terradebug = true
-  return origCompile(inputImageFunctions, outputImageFunctions, tapInputs, inputWidth, inputHeight, options)
+  local res =  origCompile(inputImageFunctions, outputImageFunctions, tapInputs, inputWidth, inputHeight, options)
+
+  -- reset the stuff we changed in options
+  options.callbackKernelGraph = ocallbackKernelGraph
+
+  return res
 end

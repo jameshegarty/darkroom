@@ -1,7 +1,5 @@
-package.path = package.path .. ";../src/?.lua;../src/?.t"
-
 terralib.require("test")
-import "orion"
+import "darkroom"
 
 im c1(x,y) : crop(0,0,100,100) testinput(x,y) end
 im c2(x,y) : crop(10,10,100,100) testinput(x,y) end
