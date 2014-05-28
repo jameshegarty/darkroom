@@ -869,10 +869,18 @@ function needed(kernelGraph, kernelNode, strip, shifts, options)
 end
 
 function valid(kernelGraph, kernelNode, strip, shifts, options)
-  return {left = `[stripLeft(strip,options)]+interiorSelectLeft(strip,0,[validStencil(kernelGraph, kernelNode, shifts):min(1)]),
-          right = `[stripRight(strip,options)]+interiorSelectRight(strip,[options.stripcount],0,[validStencil(kernelGraph, kernelNode, shifts):max(1)]),
+  local v = {left = `[stripLeft(strip,options)]+interiorSelectLeft(strip,[neededStencil( true, kernelGraph, kernelNode, shifts):min(1)],[validStencil(kernelGraph, kernelNode, shifts):min(1)]),
+          right = `[stripRight(strip,options)]+interiorSelectRight(strip,[options.stripcount], [neededStencil( true, kernelGraph, kernelNode, shifts):max(1)], [validStencil(kernelGraph, kernelNode, shifts):max(1)]),
           top = `options.height+[validStencil(kernelGraph, kernelNode, shifts):max(2)],
           bottom = `[validStencil(kernelGraph, kernelNode, shifts):min(2)]}
+
+  -- valid should never be larger than needed
+  local n = needed( kernelGraph, kernelNode, strip, shifts, options )
+
+  v.left = `terralib.select(v.left < n.left, n.left, v.left)
+  v.right = `terralib.select(v.right > n.right, n.right, v.right)
+  
+  return v
 end
 
 -- validVector is always >= vector. We expand out the valid region to 
@@ -1225,6 +1233,8 @@ function orion.terracompiler.compile(
   threadCode:printpretty()
 
   local fin = terra([inputImageSymbolTable], [outputImageSymbolTable])
+    cstdio.printf("START DR\n")
+
     var start = orion.currentTimeInSeconds()
     
     var threads : cpthread.pthread_t[options.cores]
@@ -1235,18 +1245,18 @@ function orion.terracompiler.compile(
       
       if options.cores==1 then
         -- don't launch a thread to save thread launch overhead
-        @([&int32](&stripStore)) = 0
+        @([&int32](&stripStore)) = 0 -- core ID
         var [stripStorePtr] = [&&opaque](&stripStore[4])
         marshalInputs
         marshalOutputs
         threadCode(&stripStore)
       else
         for i=0,options.cores do
-          @([&int32](stripStore[i*marshalBytes])) = 0
-          var [stripStorePtr] = [&&opaque](&stripStore[i*marshalBytes])
+          @([&int32](&stripStore[i*marshalBytes])) = i -- core ID
+          var [stripStorePtr] = [&&opaque](&stripStore[i*marshalBytes+4])
           marshalInputs
           marshalOutputs
-          cpthread.pthread_create(&threads[i],nil,threadCode, &stripStore);
+          cpthread.pthread_create(&threads[i],nil,threadCode, &stripStore[i*marshalBytes]);
         end
         for i=0,options.cores do
           cpthread.pthread_join(threads[i],nil)
