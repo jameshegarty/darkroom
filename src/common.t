@@ -140,7 +140,7 @@ end
 
 
 function explode(div,str) -- credit: http://richard.warburton.it
-  if (div=='') then return false end
+ if (div=='') then return false end
   local pos,arr = 0,{}
   -- for each divider found
   for st,sp in function() return string.find(str,div,pos,true) end do
@@ -185,6 +185,34 @@ function downToNearest(roundto,x)
   end
   
   assert(ox < x and ox % roundto == 0)
+  return ox
+end
+
+
+terra upToNearestTerra(roundto : int,x: int)
+  if x % roundto == 0 or roundto==0 then return x end
+  
+  var ox : int
+  if x < 0 then
+    ox = x - (x%roundto)
+  else
+    ox = x + (roundto-x%roundto)
+  end
+
+  return ox
+end
+
+
+terra downToNearestTerra(roundto:int,x:int)
+  if x % roundto == 0 or roundto == 0 then return x end
+
+  var ox :int
+  if x < 0 then
+    ox = x - (roundto+x%roundto)
+  else
+    ox = x - x%roundto
+  end
+
   return ox
 end
 
@@ -244,12 +272,3 @@ terra fixedModulus(a : int,b : int)
   return a % b
 end
 
-function upToNearest(roundto,x)
-  if x % roundto == 0 or roundto==0 then return x end
-
-  if x < 0 then
-    return x - (x%roundto)
-  end
-
-  return x + (roundto-x%roundto)
-end

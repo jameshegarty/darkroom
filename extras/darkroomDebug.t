@@ -47,16 +47,8 @@ function astFunctions:expectedKeycount()
   elseif self.kind=="reduce" then
     return baseSize+1+self:arraySize("expr")
   elseif self.kind=="crop" then
-    assert(orion.type.isCropMode(self.mode))
     -- shiftY means that instead of cropping outside of y=[0,height) we crop outside y=[shiftY, height+shiftY)
     assert(type(self.shiftY)=="number")
-
-    if self.mode==orion.cropExplicit then
-      return baseSize+2+4
-    else
-      return baseSize+2
-    end
-
   elseif self.kind=="let" then
     local cnt = self:arraySize("expr")
     return baseSize+cnt*2+1
@@ -223,18 +215,7 @@ function astFunctions:checkfn()
       i=i+1
     end
   elseif self.kind=="crop" then
-    assert(orion.type.isCropMode(self.mode))
-
-    if self.mode==orion.cropExplicit then
-      assert(type(self.x)=="number")
-      assert(type(self.y)=="number")
-      assert(type(self.w)=="number")
-      assert(self.w>0)
-      assert(type(self.h)=="number")
-      assert(self.h>0)
-    else
-    end
-
+    assert(type(self.shiftY)=="number")
     assert(getmetatable(self.expr)==getmetatable(self))
   elseif self.kind=="let" then
     local cnt = self:arraySize("expr")
@@ -350,13 +331,7 @@ function astPrintPrettys(self)
   elseif self.kind=="lua" then
     out = "luaexpr"
   elseif self.kind=="crop" then
-    out = "crop("..astPrintPrettys(self.expr)..","..self.mode.name
-
-    if self.mode==orion.cropExplicit then
-      out = out.."("..self.x..","..self.y..","..self.w..","..self.h..")"
-    end
-
-    out = out..")"
+    out = "crop("..astPrintPrettys(self.expr)..", shiftY=" .. self.shiftY .. ")"
   elseif self.kind=="cast" then
     out = "cast("..astPrintPrettys(self.expr)..","..astPrintPrettys(self.type)..")"
   elseif self.kind=="type" then
@@ -366,11 +341,11 @@ function astPrintPrettys(self)
     
     local cnt = 1
     while self["expr"..cnt] do
-      out = out .. self["exprname"..cnt] .. " = " .. self["expr"..cnt]:printprettys() .. "\n"
+      out = out .. self["exprname"..cnt] .. " = " .. astPrintPrettys(self["expr"..cnt]) .. "\n"
       cnt = cnt + 1
     end
 
-    out = out .. "in " .. self.res:printprettys()
+    out = out .. "in " .. astPrintPrettys(self.res)
   elseif self.kind=="array" then
     out = "{"
     local cnt = 1
@@ -596,7 +571,7 @@ function typedASTPrintPrettys(self,root,assignments)
   elseif self.kind=="vectorSelect" then
     out=out.."vectorSelect("..self.cond:printprettys(root,self,"cond",assignments)..","..self.a:printprettys(root,self,"a",assignments)..","..self.b:printprettys(root,self,"b",assignments)..")"
   elseif self.kind=="crop" then
-    out = out.."crop("..typedASTPrintPrettys(self.expr,root,assignments)..")"
+    out = out.."crop("..typedASTPrintPrettys(self.expr,root,assignments)..", shiftY=" .. self.shiftY .. ")"
   elseif self.kind=="array" or
     self.kind=="toAOS" then
 

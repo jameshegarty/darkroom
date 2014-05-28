@@ -5,21 +5,21 @@ import "darkroom"
 im a(x,y)   orion.float32(testinput(x,y)) end
 
 im b(x,y) 
-  (a(x-1,y-1)+a(x,y-1)+a(x+1,y-1)+
-  a(x-1,y)+a(x,y)+a(x+1,y)+
-   a(x-1,y+1)+a(x,y+1)+a(x+1,y+1))/9
+  orion.crop((a(x-1,y-1)+a(x,y-1)+a(x+1,y-1)+
+              a(x-1,y)+a(x,y)+a(x+1,y)+
+              a(x-1,y+1)+a(x,y+1)+a(x+1,y+1))/9)
 end
 
 
 im c(x,y) 
-  (b(x-1,y)+b(x,y)+b(x+1,y))/3
+orion.crop((b(x-1,y)+b(x,y)+b(x+1,y))/3)
 end
 
 
 im d(x,y) 
-  (c(x-1,y-1)+c(x,y-1)+c(x+1,y-1)+
-  c(x-1,y)+c(x,y)+c(x+1,y)+
-   c(x-1,y+1)+c(x,y+1)+c(x+1,y+1) )/9
+  orion.crop((c(x-1,y-1)+c(x,y-1)+c(x+1,y-1)+
+              c(x-1,y)+c(x,y)+c(x+1,y)+
+              c(x-1,y+1)+c(x,y+1)+c(x+1,y+1) )/9)
 end
 
 

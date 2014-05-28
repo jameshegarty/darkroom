@@ -8,7 +8,7 @@ function orion.input( imtype )
   orion._inputCount = orion._inputCount + 1
 
   -- this is kind of a trick: crop from special node will propagate
-  res = orion.ast.new({kind="crop", expr=res, mode=orion.cropSame}):setLinenumber(0):setOffset(0):setFilename("null_special")
+  res = orion.ast.new({kind="crop", shiftY = 0, expr=res}):setLinenumber(0):setOffset(0):setFilename("null_special")
 
   return res
 end
@@ -64,7 +64,7 @@ function orion.backEnd( kernelGraph, inputImages, options)
   assert(type(inputImages)=="table")
 
   local shifts = schedule(kernelGraph)
-  kernelGraph = shift(kernelGraph, shifts)
+  kernelGraph, shifts = shift(kernelGraph, shifts)
   
   if options.callbackScheduledKernelGraph~=nil then options.callbackScheduledKernelGraph(kernelGraph) end
   
@@ -73,6 +73,7 @@ function orion.backEnd( kernelGraph, inputImages, options)
   local res = orion.terracompiler.compile( 
     kernelGraph, 
     inputImages, 
+    shifts,
     options)
   
   if options.printstage or options.verbose then 
@@ -123,7 +124,7 @@ function orion.compile(inputImageFunctions, outputImageFunctions, tapInputs, inp
     if options.looptimes ~= nil then assert(type(options.looptimes)=="number") else options.looptimes = 1; end
     if options.printasm ~=nil then assert(type(options.printasm)=="boolean"); orion.printasm = options.printasm; end
     if options.V == nil then options.V=4 end
-    if options.cores == nil then options.cores=1 end
+    if options.cores == nil then options.cores=1 else assert(type(options.cores)=="number") end
     if options.stripcount == nil then options.stripcount=options.cores end
     if options.fastmath ~= nil then assert(type(options.fastmath)=="boolean") else options.fastmath = false end
     if options.terradebug ~= nil then assert(type(options.terradebug)=="boolean") else options.terradebug = false end

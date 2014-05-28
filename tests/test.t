@@ -66,14 +66,18 @@ function test(inast)
     img:save(filename)
   end
 
-  local tprog = darkroomSimple.compile(inast,{debug=true, verbose=true, printruntime=true})
+  local cores = tonumber(arg[2]) or 1
+  local corest = ""
+  if arg[2] then corest="."..arg[2] end
+
+  local tprog = darkroomSimple.compile(inast,{debug=true, verbose=true, printruntime=true, cores=cores})
 
   local res = pack(unpacktuple(tprog()))
   for k,v in ipairs(res) do
     print(v)
     local st = ""
     if k>1 then st = "."..k end
-      dosave(v,"out/"..arg[0]..st..".bmp")
+      dosave(v,"out/"..arg[0]..st..corest..".bmp")
     end
 
 end

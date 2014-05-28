@@ -11,13 +11,6 @@ appendSet(orion.binops,orion.cmpops)
 orion.keyremap = {r=0,g=1,b=2, x=0, y=1, z=2}
 orion.dimToCoord={[1]="x",[2]="y",[3]="z"}
 
-orion.cropSame = {name="same"}
-orion.cropGrow = {name="grow"}
-orion.cropShrink = {name="shrink"}
-orion.cropExplicit = {name="explicit"}
-orion.cropNone = {name="none"}
-orion.defaultCrop = orion.cropSame
-
 setmetatable(orion,{
   __index = function(tab,key)
 --    print("INDEX",key)
@@ -52,6 +45,11 @@ setmetatable(orion,{
 ----------------------
 -- these are macros, which will become ops in the orion langauge
 -- orion macros are passed the AST of the macro itself as the first argument
+
+function orion.crop( thisast, expr )
+  assert(orion.ast.isAST(expr))
+  return orion.ast.new({kind="crop",shiftY=0,expr=expr}):copyMetadataFrom(thisast)
+end
 
 function orion.pow( thisast, base, exp)
   assert(orion.ast.isAST(base))

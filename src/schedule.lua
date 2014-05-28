@@ -29,7 +29,9 @@ function shift(graph, shifts)
 
   local oldToNewRemap = {}
   local newToOldRemap = {}
-  return graph:S("*"):process(
+  local newShifts = {} -- other compile stages use the shifts later
+
+  local newGraph = graph:S("*"):process(
     function(kernelGraphNode, orig)
       if kernelGraphNode.kernel~=nil then
         local newKernelGraphNode = kernelGraphNode:shallowcopy()
@@ -49,13 +51,21 @@ function shift(graph, shifts)
           end)
 
         -- apply shift
-        newKernelGraphNode.kernel = newKernelGraphNode.kernel:S("load"):process(
+        newKernelGraphNode.kernel = newKernelGraphNode.kernel:S(function(n) return n.kind=="load" or n.kind=="crop" end):process(
           function(nn)
-            if type(nn.from)=="table" then
-            local r = nn:shallowcopy()
-            r.relY = r.relY - shifts[orig] + shifts[newToOldRemap[nn.from]]
-            if type(nn.from)=="table" then r.from = oldToNewRemap[nn.from]; assert(r.from~=nil) end
-            return orion.typedAST.new(r):copyMetadataFrom(nn)
+            if nn.kind=="load" then
+              if type(nn.from)=="table" then
+                local r = nn:shallowcopy()
+                r.relY = r.relY - shifts[orig] + shifts[newToOldRemap[nn.from]]
+                if type(nn.from)=="table" then r.from = oldToNewRemap[nn.from]; assert(r.from~=nil) end
+                return orion.typedAST.new(r):copyMetadataFrom(nn)
+              end
+            elseif nn.kind=="crop" then
+              local r = nn:shallowcopy()
+              r.shiftY = r.shiftY + shifts[orig]
+              return orion.typedAST.new(r):copyMetadataFrom(nn)
+            else
+              assert(false)
             end
           end)
 
@@ -64,7 +74,10 @@ function shift(graph, shifts)
         oldToNewRemap[res] = res -- remember, we might touch nodes multiple times
         newToOldRemap[res] = orig
         newToOldRemap[orig] = orig
+        newShifts[res] = shifts[orig]
         return res
       end
     end)
+
+  return newGraph, newShifts
 end

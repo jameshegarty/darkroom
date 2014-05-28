@@ -7,16 +7,16 @@ cpthread = terralib.includec("pthread.h")
 orion.terracompiler = {}
 
 
-function declareInputImages( inputs, kernelNode, loopid, x, y, core, stripId, linebufferBase )
+function declareInputImages( inputs, kernelNode, loopid, x, y, clock, core, stripId, linebufferBase )
   assert(type(loopid)=="number")
   local res = {}
-  for _,v in pairs(inputs[kernelNode]) do table.insert(res, v:declare(loopid,x,y,core,stripId,linebufferBase)) end
+  for _,v in pairs(inputs[kernelNode]) do table.insert(res, v:declare( loopid, x, y, clock, core, stripId, linebufferBase )) end
   return res
 end
 
 function inputImagesNext( inputs, kernelNode, loopid, inc )
   assert(type(loopid)=="number")
-  assert(type(inc)=="number")
+  assert(type(inc)=="number" or terralib.isquote(inc))
   local res = {}
   for _,v in pairs(inputs[kernelNode]) do table.insert( res, v:next(loopid,inc) ) end
   return res
@@ -86,6 +86,7 @@ void* allocateCircular( int bytes ){
 LineBufferWrapperFunctions = {}
 LineBufferWrapperMT={__index=LineBufferWrapperFunctions}
 linebufferCount = 0
+function isLineBufferWrapper(b) return getmetatable(b)==LineBufferWrapperMT end
 
 function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightStencil, debug )
   assert(type(lines)=="number")
@@ -115,10 +116,11 @@ function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightS
 end
 
 
-function LineBufferWrapperFunctions:declare( loopid, x, y, core, stripId, linebufferBase )
+function LineBufferWrapperFunctions:declare( loopid, x, y, clock, core, stripId, linebufferBase )
   assert(type(loopid)=="number")
   assert(terralib.isquote(x) or terralib.issymbol(x))
-  assert(terralib.isquote(y) or terralib.issymbol(y))
+  assert(terralib.isquote(y) or terralib.issymbol(y)) -- we don't actually use this - we don't care what the actual coord is
+  assert(terralib.isquote(clock) or terralib.issymbol(clock))
   assert(terralib.isquote(core) or terralib.issymbol(core))
   assert(terralib.issymbol(stripId))
 
@@ -134,9 +136,7 @@ function LineBufferWrapperFunctions:declare( loopid, x, y, core, stripId, linebu
     self.posY[loopid] = symbol(int)
   end
 
-  -- as a simplification, we make sure that everybody starts on the same line. Pipeline scheduling guarantees this will always work
-  if self.startPosY==nil then self.startPosY=symbol(int); table.insert(res, quote var [self.startPosY] = y end) end
-  table.insert(res,quote orionAssert(y==[self.startPosY], "every linebuffer must start on same line") end)
+  if self.startClock==nil then self.startClock=symbol(int); table.insert(res, quote var [self.startClock] = clock end) end
 
   if self.debug then table.insert(res, quote var [self.posX[loopid]] = x; var [self.posY[loopid]] = y; end) end
 
@@ -163,13 +163,19 @@ function LineBufferWrapperFunctions:declare( loopid, x, y, core, stripId, linebu
       quote 
         -- we always start in the second segment of the circular buffer b/c we always read from smaller addresses
         var leftBound = [self.stripWidth]*stripId + [self.leftStencil]
-        var [buf] = [self[baseKey[k]]]+(x-leftBound)+[self:modularSize(bufType[k])]
+        var [buf] = [self[baseKey[k]]]+(x-leftBound)+[self:modularSize(bufType[k])]+fixedModulus((clock-[self.startClock])*[self:lineWidth()],[self:modularSize(bufType[k])])
       end)
+
+--    if self.debug then
+--      table.insert(res, quote orionAssert(uint64(buf) % (4*sizeof([self.orionType:toTerraType()])) == 0, "initial IV not aligned") end)
+--    end
+
   end
 
   return quote res end
 end
 
+-- lineWidth in pixels
 function LineBufferWrapperFunctions:lineWidth() return self.stripWidth-self.leftStencil+self.rightStencil end
 -- this is the number of pixels in the linebuffer
 -- we round up to the nearest page size (for the circular buffer that must be page aligned). The double for the double mapping in VM space
@@ -259,112 +265,9 @@ function LineBufferWrapperFunctions:get(loopid, relX,relY, V)
   end
 end
 
-function LineBufferWrapperFunctions:gather(
-    loopid, 
-    clamp,
-    relX,relY, 
-    blX, blY, trX, trY,
-    V,
-    stripCount,
-    retime)
-
-  assert(type(loopid)=="number")
-  assert(type(clamp)=="boolean")
-  assert(terralib.isquote(relX))
-  assert(terralib.isquote(relY))
-  assert(type(blX)=="number")
-  assert(type(blY)=="number")
-  assert(type(trX)=="number")
-  assert(type(trY)=="number")
-  assert(type(V)=="number")
-  assert(type(stripCount)=="number")
-  assert(type(retime)=="number")
-
---  local origY = relY
---  if self.kind=="linebuffer" then
---    relY = `relY + [self.retime-retime]
---  end
-
-  local debugChecks = {}
-
-    if clamp then
-      relX = `terralib.select( relX<blX, blX, relX )
-      relX = `terralib.select( relX>trX, trX, relX )
-      
-      relY = `terralib.select( relY<blY, blY, relY )
-      relY = `terralib.select( relY>trY, trY, relY )
-    else
-      for i=0,V-1 do
-        table.insert(debugChecks, 
-          quote 
-            if relX[i] < blX or relX[i] >trX then
-              cstdio.printf("Error, gathered outside of valid area! x=%d (remember, it's %d to %d due to CSE)\n",relX[i],blX,trX)
-              cstdlib.exit(1)
-            end 
-            if relY[i] < blY or relY[i] > trY then
-              cstdio.printf("Error, gathered outside of valid area! y=%d (remember, it's %d to %d due to CSE)\n",relY[i],blY,trY)
-              cstdlib.exit(1)
-            end 
-          end)
-      end
-    end
-
-    local resTable = {}
-    local resTableDebugX = {}
-    local resTableDebugY = {}
-    local resTableDebugId = {}
-
-    self.gatherPointerUsed[loopid] = true
-
-    local res = {}
-    for i=0,V-1 do
-      local l = symbol(int)
-      table.insert(res,
-        quote
-          var [l] = (relY[i] - [self.gatherPointerY[loopid]]) % self.lines
-          if l<0 then l=l+self.lines end
-        end)
-
-      local addr = `[self.gatherPointer[loopid]] + l*[self:lineWidth(stripCount)]+ relX[i]+i
-      local addrDebugX = `[self.gatherPointerDebugX[loopid]] + l*[self:lineWidth(stripCount)]+ relX[i]+i
-      local addrDebugY = `[self.gatherPointerDebugY[loopid]] + l*[self:lineWidth(stripCount)]+ relX[i]+i
-      local addrDebugId = `[self.gatherPointerDebugId[loopid]] + l*[self:lineWidth(stripCount)]+ relX[i]+i
-
---      addrTable[i+1] = addr
-      resTable[i+1] = `@(addr)
-      resTableDebugX[i+1] = `@(addrDebugX)
-      resTableDebugY[i+1] = `@(addrDebugY)
-      resTableDebugId[i+1] = `@(addrDebugId)
-
-      if self.debug then
-        table.insert(debugChecks,
-          quote
-
-
---[=[
-                         cstdio.printf("addr  %d gpy %d gpdx %d rely %d lw %d lines %d correct %d %d\n",
-                                       addrDebugX, [self.gatherPointerY[loopid]], [self.gatherPointerDebugX[loopid]], 
-                                       relY[i], [self:lineWidth(stripCount)],
-                                      self.lines,
-                                      DaddrDebugX,
-                                      @DaddrDebugX)
-                         ]=]
-
-                       orionAssert([resTableDebugX[i+1]] == [self.posX[loopid]]+i+relX[i], "incorrect gather LB X")
-                       orionAssert([resTableDebugY[i+1]] == [self.posY[loopid]]+relY[i], "incorrect gather LB Y")
-                       orionAssert([resTableDebugId[i+1]] == [self.id], "incorrect gather LB Id")
-      end)
-      end
-    end
-
-    return quote [res];[debugChecks] in vectorof([self.orionType:toTerraType()],resTable) end
-
-
-end
-
 function LineBufferWrapperFunctions:next(loopid,v)
   assert(type(loopid)=="number")
-  assert(type(v)=="number")
+  assert(type(v)=="number" or terralib.isquote(v))
   
   local res = {}
 
@@ -412,6 +315,7 @@ end
 
 ImageWrapperFunctions = {}
 ImageWrapperMT={__index=ImageWrapperFunctions}
+function isImageWrapper(b) return getmetatable(b)==ImageWrapperMT end
 
 -- tab.terraType should be the base type of the data stored in this image
 -- ie, if it's a floating point image, tab.terraType should be float
@@ -425,10 +329,11 @@ function newImageWrapper( basePtr, orionType, stride, debug )
   return setmetatable(tab,ImageWrapperMT)
 end
 
-function ImageWrapperFunctions:declare( loopid, x, y, core, stripId )
+function ImageWrapperFunctions:declare( loopid, x, y, clock, core, stripId )
   assert(type(loopid)=="number")
   assert(terralib.isquote(x) or terralib.issymbol(x))
   assert(terralib.isquote(y) or terralib.issymbol(y))
+  assert(terralib.isquote(clock) or terralib.issymbol(clock)) -- not used
   assert(terralib.isquote(core) or terralib.issymbol(core))
   assert(terralib.isquote(stripId) or terralib.issymbol(stripId))
 
@@ -488,76 +393,9 @@ function ImageWrapperFunctions:get(loopid, relX,relY, V)
 
 end
 
-function ImageWrapperFunctions:gather(
-    loopid, 
-    clamp,
-    relX,relY, 
-    blX, blY, trX, trY,
-    V,
-    stripCount,
-    retime)
-
-  assert(type(loopid)=="number")
-  assert(type(clamp)=="boolean")
-  assert(terralib.isquote(relX))
-  assert(terralib.isquote(relY))
-  assert(type(blX)=="number")
-  assert(type(blY)=="number")
-  assert(type(trX)=="number")
-  assert(type(trY)=="number")
-  assert(type(V)=="number")
-  assert(type(stripCount)=="number")
-  assert(type(retime)=="number")
-
-
-
-  local debugChecks = {}
-
-
-  if self.debug then
-    local regionWidth = self.region:growToNearestX(orion.tune.V):getWidth()
-
-    table.insert(debugChecks,
-      quote
-        var start =  [&self.terraType](orion.runtime.getRegister(self.register))
-        var maxv = orion.runtime.registerSize
-        
-        for i=0,V do
-          var this = [self.data[loopid]] + relY[i]*regionWidth + relX[i]
-          
-          if (this-start)<0 then cstdio.printf("this:%d start:%d self.data:%d relY:%d regionWidth:%d relX%d\n",
-                                               this,start,[self.data[loopid]],relY[i],regionWidth,relX[i]) 
-            cstdio.printf("reg:%d\n",self.register)
-          end
-          orionAssert( (this-start)>=0,"gather before start of array")
-          orionAssert( (this-start)<maxv,"gather beyond end of array")
-        end
-      end)
-  end
-
-
-    local regionWidth
-
-    if self.kind=="buffer" then
-      regionWidth = self.region:growToNearestX(orion.tune.V):getWidth()
-    else
-      regionWidth = self.region:getWidth()
-    end
-
-    local resTable = {}
-
-    for i=1,V do
-      local im1=i-1
-      resTable[i] = `@([self.data[loopid]] + relY[im1]*regionWidth + relX[im1]+im1)
-    end
-
-    return quote [debugChecks] in vectorof(self.terraType,resTable) end
-
-end
-
 function ImageWrapperFunctions:next(loopid,v)
   assert(type(loopid)=="number")
-  assert(type(v)=="number")
+  assert(type(v)=="number" or terralib.isquote(v))
   return quote [self.data[loopid]] = [self.data[loopid]] + v end
 end
 
@@ -971,44 +809,39 @@ function stripWidth(options)
   return upToNearest(options.V*options.stripcount,options.width) / options.stripcount
 end
 
-_stencilInteriorCache = setmetatable({}, {__mode="k"})
-function neededInteriorStencil(kernelGraph, kernelNode)
-  if _stencilInteriorCache[kernelNode]==nil then
-    local s = Stencil.new():add(0,0,0)
-    for k,node in kernelNode:parents(kernelGraph) do
-      if node.kernel==nil then
-        
-      elseif node.kernel.kind=="crop" then
-        s = s:unionWith(node:stencil(kernelNode))
+
+_neededCache = {}
+_neededCache[true] = setmetatable({}, {__mode="k"})
+_neededCache[false] = setmetatable({}, {__mode="k"})
+
+function neededStencil( interior, kernelGraph, kernelNode, shifts)
+  assert(type(interior)=="boolean");assert(type(kernelGraph)=="table");assert(type(kernelNode)=="table");assert(type(shifts)=="table");
+
+  if _neededCache[interior][kernelNode]==nil then
+    local s = Stencil.new()
+      
+    for node,k in kernelNode:parents(kernelGraph) do
+      if node.kernel==nil then -- ie, kernelNode is an output
+        s = s:unionWith(Stencil.new():add(0,shifts[kernelNode],0))
+      elseif node.kernel.kind=="crop" and interior==false then -- on the interior of strips, crops have no effect
+        s = s:unionWith(node.kernel:stencil(kernelNode):product(Stencil.new():add(0,node.kernel.shiftY,0)))
       else
-        s = s:unionWith(node:stencil(kernelNode):product(neededInteriorStencil(kernelGraph,node)))
+        print("stencil of",node.kernel:name(),"onto",kernelNode.kernel:name(),node.kernel:stencil(kernelNode):min(2), "max",node.kernel:stencil(kernelNode):max(2))
+        s = s:unionWith(node.kernel:stencil(kernelNode):product(neededStencil( interior,kernelGraph,node, shifts)))
       end
     end
-    _stencilInteriorCache[kernelNode] = s
+    
+    _neededCache[interior][kernelNode] = s
   end
-
-  return _stencilInteriorCache[kernelNode]
-
+  
+  return _neededCache[interior][kernelNode]
 end
 
-_stencilExteriorCache = setmetatable({}, {__mode="k"})
-function neededExteriorStencil(kernelGraph, kernelNode)
-  if _stencilExteriorCache[kernelNode]==nil then
-    local s = Stencil.new():add(0,0,0)
-      for k,node in kernelNode:parents(kernelGraph) do
-        if node.kernel~=nil then s = s:unionWith(node.kernel:stencil(kernelNode):product(neededInteriorStencil(kernelGraph,node))) end
-    end
-    _stencilExteriorCache[kernelNode] = s
-  end
-
-  return _stencilExteriorCache[kernelNode]
-end
-
-function validStencil(kernelGraph, kernelNode)
+function validStencil(kernelGraph, kernelNode, shifts)
   if kernelNode.kernel.kind=="crop" then
-    return Stencil.new():add(0,0,0)
+    return Stencil.new():add(0,kernelNode.kernel.shiftY,0)
   else
-    return neededExteriorStencil(kernelGraph, kernelNode)
+    return neededStencil( false, kernelGraph, kernelNode, shifts)
   end
 end
 
@@ -1026,31 +859,27 @@ terra interiorSelectRight(strip : int, stripcount : int, interiorValue : int, ex
   return interiorValue
 end
 
-function needed(kernelGraph, kernelNode, strip, options)
-  local lInterior = upToNearest(options.V, neededInteriorStencil(kernelGraph, kernelNode):min(1))
-  local lExterior = upToNearest(options.V,neededExteriorStencil(kernelGraph, kernelNode):min(1))
-  return {left = `[stripLeft(strip,options)]+interiorSelectLeft(strip,lInterior,lExterior),
-          right = `[stripRight(strip,options)]+interiorSelectRight(strip,[options.stripcount],[upToNearest(options.V,neededInteriorStencil(kernelGraph, kernelNode):max(1))],[upToNearest(options.V,neededExteriorStencil(kernelGraph, kernelNode):max(1))]),
-          top = `options.height+[neededExteriorStencil(kernelGraph, kernelNode):max(2)],
-          bottom = `[neededExteriorStencil(kernelGraph, kernelNode):min(2)]}
+function needed(kernelGraph, kernelNode, strip, shifts, options)
+  assert(type(kernelGraph)=="table");assert(type(kernelNode)=="table");assert(type(shifts)=="table");assert(type(options)=="table");
+
+  return {left = `[stripLeft(strip,options)]+interiorSelectLeft(strip,[neededStencil( true, kernelGraph, kernelNode, shifts):min(1)], [neededStencil( false, kernelGraph, kernelNode, shifts):min(1)]),
+          right = `[stripRight(strip,options)]+interiorSelectRight(strip,[options.stripcount],[neededStencil( true, kernelGraph, kernelNode, shifts):max(1)],[neededStencil( false, kernelGraph, kernelNode, shifts):max(1)]),
+          top = `options.height+[neededStencil( false, kernelGraph, kernelNode, shifts):max(2)],
+          bottom = `[neededStencil( false, kernelGraph, kernelNode, shifts):min(2)]}
 end
 
-function valid(kernelGraph, kernelNode, strip, options)
-  return {left = `[stripLeft(strip,options)]+interiorSelectLeft(strip,0,[validStencil(kernelGraph, kernelNode):min(1)]),
-          right = `[stripRight(strip,options)]+interiorSelectRight(strip,[options.stripcount],0,[validStencil(kernelGraph, kernelNode):max(1)]),
-          top = `options.height+[validStencil(kernelGraph, kernelNode):max(2)],
-          bottom = `[validStencil(kernelGraph, kernelNode):min(2)]}
+function valid(kernelGraph, kernelNode, strip, shifts, options)
+  return {left = `[stripLeft(strip,options)]+interiorSelectLeft(strip,0,[validStencil(kernelGraph, kernelNode, shifts):min(1)]),
+          right = `[stripRight(strip,options)]+interiorSelectRight(strip,[options.stripcount],0,[validStencil(kernelGraph, kernelNode, shifts):max(1)]),
+          top = `options.height+[validStencil(kernelGraph, kernelNode, shifts):max(2)],
+          bottom = `[validStencil(kernelGraph, kernelNode, shifts):min(2)]}
 end
 
 -- validVector is always >= vector. We expand out the valid region to 
 -- be vector aligned (and also expand the needed regions so that this works).
 -- after overcomputing the valid region, we write of it with the boundary info
-function validVector(kernelGraph, kernelNode, strip, options)
-  return {left = `[stripLeft(strip,options)]+interiorSelectLeft(strip,0,[upToNearest(options.V,validStencil(kernelGraph, kernelNode):min(1))]),
-          right = `[stripRight(strip,options)]+interiorSelectRight(strip,[options.stripcount],0,[upToNearest(options.V,validStencil(kernelGraph, kernelNode):max(1))]),
-          top = `options.height+[validStencil(kernelGraph, kernelNode):max(2)],
-          bottom = `[validStencil(kernelGraph, kernelNode):min(2)]}
-end
+function vectorizeRegion(r, V) assert(type(V)=="number");return {left=`downToNearestTerra(V, r.left), right=`upToNearestTerra(V, r.right), top=r.top, bottom=r.bottom} end
+function shiftRegion(r, shift) return {left=r.left, right=r.right, top=`r.top+shift, bottom = `r.bottom+shift} end
 
 -- codegen all the stuff in the inner loop
 function orion.terracompiler.codegenInnerLoop(
@@ -1059,10 +888,12 @@ function orion.terracompiler.codegenInnerLoop(
     kernelGraph,
     inputs,
     outputs,
-    y,
+    clock,
     linebufferBase,
+    shifts,
     options)
 
+  assert(type(shifts)=="table")
   assert(type(options)=="table")
 
   local x = symbol(int)
@@ -1079,66 +910,96 @@ return
 
       loopid = loopid + 1
 
-      local needed = needed(kernelGraph,n,strip,options)
-      local valid = valid(kernelGraph,n,strip,options)
-      local validVectorized = validVector(kernelGraph,n,strip,options) -- always larger than valid to the nearest vector width
+      -- notice the subtle relationship that exists between the clock and the (x,y) coords that the user wants to render.
+      -- As implemented here, x is not affected by shifts, but y is. Also, this implementation of
+      -- line buffered pipelines has chosen to apply shifts to the kernel graph prior to 
+      -- the code generator. I found this more principled than having shifts applied to values all over 
+      -- the place in the code generator. As a result, the needed, valid, validVectorized regions
+      -- are in terms of clock space. eg needed tells us what clock cycles the user is interested in. If they
+      -- requested y=[0,n] of a function shifted by s, then neededY=[s,n+s]. As a result, this implementation
+      -- closely resembles hardware that produces 1 line per clock. 
+
+      local needed = vectorizeRegion(needed( kernelGraph, n, strip, shifts, options ), options.V) -- clock space
+      local neededImageSpace = shiftRegion( needed, -shifts[n] )
+      local valid = valid( kernelGraph, n, strip, shifts, options )
+      local validVectorized = vectorizeRegion(valid, options.V) -- always >= valid to the nearest vector width
 
       table.insert(loopStartCode,
         quote
-          [declareInputImages( inputs, n, loopid, needed.left, needed.bottom, core, strip, linebufferBase)];
-          [outputs[n]:declare(loopid, needed.left, needed.bottom, core, strip, linebufferBase )];
+          -- we use image space needed region here b/c These are the actual pixel coords we will write to
+          -- since all image accesses use relative coordinates, This doesn't cause problems
+          [declareInputImages( inputs, n, loopid, neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, linebufferBase)];
+          [outputs[n]:declare(loopid, neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, linebufferBase )];
           
           if orion.verbose then
-            cstdio.printf("V %d cores %d\n",options.V,options.cores)
+            cstdio.printf("%s V %d cores %d shift %d\n",[n.kernel:name()],options.V,options.cores, [shifts[n]])
             cstdio.printf("valid l %d r %d t %d b %d\n",[valid.left],[valid.right],[valid.top],[valid.bottom])
             cstdio.printf("validVectorized l %d r %d t %d b %d\n",[validVectorized.left],[validVectorized.right],[validVectorized.top],[validVectorized.bottom])
             cstdio.printf("needed l %d r %d t %d b %d\n",[needed.left],[needed.right],[needed.top],[needed.bottom])
+            cstdio.printf("needed image space l %d r %d t %d b %d\n",[neededImageSpace.left],[neededImageSpace.right],[neededImageSpace.top],[neededImageSpace.bottom])
           end
         end)
 
-      local expr,statements=orion.terracompiler.codegen( n.kernel,  options.V, x, y, loopid, options.stripcount, n, inputs, outputs)
+      local expr,statements=orion.terracompiler.codegen( n.kernel,  options.V, x, clock, loopid, options.stripcount, n, inputs, outputs)
 
       table.insert(loopCode,
         quote
           cstdio.printf("dokernel %s\n",[n:name()])
 
-          if (y >= [needed.bottom] and y < [valid.bottom]) or (y >= valid.top and y < needed.top) then
-                                                                 -- top/bottom row(s) (all boundary)
-          -- theoretically we could do some of this vectorized, but it shouldn't really matter
+          if clock >= [needed.bottom] and clock < [needed.top] then
+            if clock < [valid.bottom] or clock >= [valid.top]  then
+              -- top/bottom row(s) (all boundary)
+              -- theoretically we could do some of this vectorized, but it shouldn't really matter
 
-            for [x] = [needed.left], [needed.right] do
-              [outputs[n]:set( loopid, `0, 1 )];
-              [outputs[n]:next( loopid, 1 )];
-              [inputImagesNext( inputs, n, loopid, 1 )];
-            end
-            [outputs[n]:nextLine( loopid, `[needed.right]-[needed.left], stripCount)];
-            [nextInputImagesLine( inputs, n, loopid, `[needed.right]-[needed.left], stripCount)];
-          else
-            -- interior row(s), mixed boundary and calculated region
+              for [x] = [needed.left], [needed.right] do
+                [outputs[n]:set( loopid, `0, 1 )];
+                [outputs[n]:next( loopid, 1 )];
+                [inputImagesNext( inputs, n, loopid, 1 )];
+              end
+              [outputs[n]:nextLine( loopid, `[needed.right]-[needed.left], stripCount)];
+              [nextInputImagesLine( inputs, n, loopid, `[needed.right]-[needed.left], stripCount)];
+            else
+              -- interior row(s), mixed boundary and calculated region
 
-            for [x] = validVectorized.left, validVectorized.right, options.V do
-              statements;
-              [outputs[n]:set( loopid, expr, options.V )];
-              [outputs[n]:next( loopid, options.V )];
-              [inputImagesNext( inputs, n, loopid, options.V )];
-            end
+              cstdio.printf("vec region %d\n", validVectorized.left-needed.left)
+              [outputs[n]:next( loopid, `validVectorized.left-needed.left )];
+              [inputImagesNext( inputs, n, loopid, `validVectorized.left-needed.left )];
 
-            for [x] = needed.left, valid.left do
-              [outputs[n]:set( loopid, `0, 1 )];
-              [outputs[n]:next( loopid, 1 )];
-              [inputImagesNext( inputs, n, loopid, 1 )];
-            end
+              for [x] = validVectorized.left, validVectorized.right, options.V do
+                statements;
+                [outputs[n]:set( loopid, expr, options.V )];
+                [outputs[n]:next( loopid, options.V )];
+                [inputImagesNext( inputs, n, loopid, options.V )];
+              end
 
-            for [x] = valid.right, needed.right do
-              [outputs[n]:set( loopid, `0, 1 )];
-              [outputs[n]:next( loopid, 1 )];
-              [inputImagesNext( inputs, n, loopid, 1 )];
-            end
+              [outputs[n]:next( loopid, `-(validVectorized.right-needed.left) )];
+              [inputImagesNext( inputs, n, loopid, `-(validVectorized.right-needed.left) )];
+              
+              cstdio.printf("lb region %d %d\n",needed.left,valid.left)
+              -- these need to happen out of order b/c we may _overwrite_ sections of the array that were written by the loop above
+              for [x] = needed.left, valid.left do
+                [outputs[n]:set( loopid, `0, 1 )];
+                [outputs[n]:next( loopid, 1 )];
+                [inputImagesNext( inputs, n, loopid, 1 )];
+              end
+
+              [outputs[n]:next( loopid, `valid.right-valid.left )];
+              [inputImagesNext( inputs, n, loopid, `valid.right-valid.left )];
+              
+              cstdio.printf("lr region %d %d\n", valid.right, needed.right)
+              for [x] = valid.right, needed.right do
+                [outputs[n]:set( loopid, `0, 1 )];
+                [outputs[n]:next( loopid, 1 )];
+                [inputImagesNext( inputs, n, loopid, 1 )];
+              end
           
-            [outputs[n]:nextLine( loopid, `needed.right-needed.left)];
-            [nextInputImagesLine( inputs, n, loopid, `needed.right-needed.left)];
+              [outputs[n]:nextLine( loopid, `needed.right-needed.left)];
+              [nextInputImagesLine( inputs, n, loopid, `needed.right-needed.left)];
+            end
+          else
+            cstdio.printf("Skip\n")
           end
-
+          
           cstdio.printf("kernel done %s\n",[n:name()])
       end)
   end)
@@ -1147,13 +1008,14 @@ return
 end
 
 -- codegen all the code that runs per thread (and preamble)
-function orion.terracompiler.codegenThread(kernelGraph, inputs, options)
+function orion.terracompiler.codegenThread(kernelGraph, inputs, shifts, options)
   assert(orion.kernelGraph.isKernelGraph(kernelGraph))
   assert(type(inputs)=="table")
+  assert(type(shifts)=="table")
   assert(type(options)=="table")
 
   local core = symbol(int)
-  local y = symbol(int)
+  local clock = symbol(int)
   local input = symbol(&opaque)
   local inputArgs = `[&&opaque](&([&int8](input)[4]))
 
@@ -1176,7 +1038,7 @@ function orion.terracompiler.codegenThread(kernelGraph, inputs, options)
   end
 
   -- add the input lists and output to the kernelGraph
-  local inputs, outputs, linebufferSize = orion.terracompiler.allocateImageWrappers(kernelGraph, inputImageSymbolMap, outputImageSymbolMap, options)
+  local inputs, outputs, linebufferSize = orion.terracompiler.allocateImageWrappers(kernelGraph, inputImageSymbolMap, outputImageSymbolMap, shifts, options)
 
   local loopCode = {}
   assert(options.stripcount % options.cores == 0)
@@ -1192,13 +1054,28 @@ function orion.terracompiler.codegenThread(kernelGraph, inputs, options)
     kernelGraph,
     inputs,
     outputs,
-    y, 
+    clock, 
     linebufferBase,
+    shifts,
     options)
 
   if options.printstage then
     print("strip list count",#stripList)
   end
+
+  -- The multiple outputs might be shifted relative to each other.
+  -- make sure we run enough clock cycles that we compute the whole image for the user
+  local startClock=10000000
+  local endClock=-100000
+  kernelGraph:S("*"):traverse(
+    function(n)
+      if n.kernel~=nil then
+        local a = neededStencil(false, kernelGraph,n, shifts):max(2)
+        local b = neededStencil(false, kernelGraph,n, shifts):min(2)
+        if a > endClock then endClock=a end
+        if b<startClock then startClock=b end
+      end
+    end)
 
   return terra( [input] ) : &opaque
     var [core] = @([&int](input))
@@ -1218,8 +1095,8 @@ function orion.terracompiler.codegenThread(kernelGraph, inputs, options)
       var [linebufferBase] = linebuffers -- the image wrappers will mutate linebufferBase each time they allocate a buffer in the start code
       thisLoopStartCode
 
-      for [y] = 0, options.height do
-        cstdio.printf("doline %d\n",y)
+      for [clock] = startClock, options.height+endClock do
+        cstdio.printf("doclock %d\n",clock)
         thisLoopCode
       end
 
@@ -1230,8 +1107,15 @@ function orion.terracompiler.codegenThread(kernelGraph, inputs, options)
 end
 
 
-function orion.terracompiler.allocateImageWrappers(kernelGraph, inputImageSymbolMap, outputImageSymbolMap, options)
+function orion.terracompiler.allocateImageWrappers(
+    kernelGraph, 
+    inputImageSymbolMap, 
+    outputImageSymbolMap, 
+    shifts,
+    options)
+
   assert(orion.IR.isIR(kernelGraph))
+  assert(type(shifts)=="table")
   assert(type(options)=="table")
 
   local inputs = {} -- kernelGraphNode->{input wrappers}
@@ -1261,9 +1145,10 @@ function orion.terracompiler.allocateImageWrappers(kernelGraph, inputImageSymbol
               inputs[n][child] = outputs[child]
                      end)
 
-      -- if this uses any input files, we need to add those too
+
       if n~=kernelGraph then -- root is just a list of outputs
 
+        -- if this uses any input files, we need to add those too
         n.kernel:S("load"):traverse(
           function(node)
             if type(node.from)=="number" then
@@ -1281,9 +1166,9 @@ function orion.terracompiler.allocateImageWrappers(kernelGraph, inputImageSymbol
           outputs[n] = newLineBufferWrapper(
             n:bufferSize(kernelGraph), 
             n.kernel.type,
-            neededInteriorStencil(kernelGraph,n):min(1),
+            downToNearest(options.V, neededStencil(true,kernelGraph,n, shifts):min(1)), -- use the more conservative stencil
             stripWidth(options),
-            neededInteriorStencil(kernelGraph,n):max(1),
+            upToNearest(options.V, neededStencil(true,kernelGraph,n, shifts):max(1)),
             options.terradebug)
 
           linebufferSize = linebufferSize + outputs[n]:allocateSize()
@@ -1305,6 +1190,7 @@ end
 function orion.terracompiler.compile(
     kernelGraph, 
     inputImages,
+    shifts,
     options)
 
   if orion.verbose then print("compile") end
@@ -1334,10 +1220,7 @@ function orion.terracompiler.compile(
     marshalBytes = marshalBytes + terralib.sizeof(&opaque)
   end
 
-  -- schedule nodes to determine linebuffer size
-  local schedule = schedule(kernelGraph)
-
-  local threadCode = orion.terracompiler.codegenThread( kernelGraph, inputImages, options )
+  local threadCode = orion.terracompiler.codegenThread( kernelGraph, inputImages, shifts, options )
 
   threadCode:printpretty()
 
