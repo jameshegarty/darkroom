@@ -75,6 +75,7 @@ void * makeCircular (void* address, int bytes) {
                                                   }
 
 void* allocateCircular( int bytes ){
+  if(bytes==0){ return 0; } // its possible we have no linebuffers
   void * address = mmap (NULL, bytes << 1, PROT_NONE,
                          MAP_ANON | MAP_PRIVATE, -1, 0);
  

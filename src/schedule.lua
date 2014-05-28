@@ -37,16 +37,33 @@ function shift(graph, shifts)
         local newKernelGraphNode = kernelGraphNode:shallowcopy()
         
         -- eliminate transforms
-        -- this is wildly inefficient in general. But its only slow in corner cases
+        -- this is wildly inefficient in general. But its only slow in corner cases b/c it is uncommon to have transforms within kernel graph nodes
         newKernelGraphNode.kernel = kernelGraphNode.kernel:S("transformBaked"):process(
           function(n)
-            return n.expr:S("load"):process(
+            return n.expr:S(function(n) return n.kind=="load" or n.kind=="position" end):process(
               function(nn)
-                local r = nn:shallowcopy()
-                r.relX = r.relX + n.translate1
-                r.relY = r.relY + n.translate2
-                if type(nn.from)=="table" then r.from = oldToNewRemap[nn.from]; assert(r.from~=nil) end
-                return orion.typedAST.new(r):copyMetadataFrom(nn)
+                if nn.kind=="load" then
+                  local r = nn:shallowcopy()
+                  r.relX = r.relX + n.translate1
+                  r.relY = r.relY + n.translate2
+                  if type(nn.from)=="table" then r.from = oldToNewRemap[nn.from]; assert(r.from~=nil) end
+                  return orion.typedAST.new(r):copyMetadataFrom(nn)
+                elseif nn.kind=="position" then
+
+                  local res = {kind="binop", lhs=nn, type = nn.type, op="+"}
+
+                  if nn.coord=="x" then
+                    res.rhs = orion.typedAST.new({kind="value",value=n.translate1,type=nn.type}):copyMetadataFrom(nn)
+                  elseif nn.coord=="y" then
+                    res.rhs = orion.typedAST.new({kind="value",value=n.translate2,type=nn.type}):copyMetadataFrom(nn)
+                  else
+                    assert(false)
+                  end
+
+                  return orion.typedAST.new(res):copyMetadataFrom(nn)
+                else
+                  assert(false)
+                end
               end)
           end)
 
