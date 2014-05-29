@@ -309,7 +309,7 @@ function astPrintPrettys(self)
   elseif self.kind=="position" then
     out="_pos"..self.coord
   elseif self.kind=="tap" then
-    out="_tap_"..self.tapname
+    out="_tap_"..self.id
   elseif self.kind=="tapLUT" then
     out="_tapLUT_"..self.tapname
   elseif self.kind=="tapLUTLookup" then
@@ -374,9 +374,9 @@ function astPrintPrettys(self)
     out = out.."default => "..self.default:printprettys().."\n"
     out = out.."end"
   elseif self.kind=="gather" then
-    out = "gather(\n"..self.input:printprettys()..",\n"
-    out = out..self.x:printprettys()..",\n"
-    out = out..self.y:printprettys()..",\n"
+    out = "gather(\n"..astPrintPrettys(self.input)..",\n"
+    out = out..astPrintPrettys(self.x)..",\n"
+    out = out..astPrintPrettys(self.y)..",\n"
     out = out..tostring(self.maxX)..", "..tostring(self.maxY)..", "..tostring(self.clamp)..")"
   elseif self.kind=="index" then
     out = self.expr:printprettys().."["..self.index:printprettys().."]"
@@ -541,7 +541,7 @@ function typedASTPrintPrettys(self,root,assignments)
   elseif self.kind=="cast" then
     out = out..typedASTPrintPrettys(self.expr,root,assignments)
   elseif self.kind=="tap" then
-    out=out.."_tap_"..self.tapname
+    out=out.."_tap_"..self.id
   elseif self.kind=="tapLUTLookup" then
     out=out.."_tapLUT_"..self.tapname.."["..self.index:printprettys(root,self,"index",assignments).."]"
   elseif self.kind=="transformBaked" then
@@ -599,9 +599,9 @@ function typedASTPrintPrettys(self,root,assignments)
   elseif self.kind=="index" then
     out = out.."("..self.expr:printprettys(root,self,"expr",assignments)..")["..self.index.."]"
   elseif self.kind=="gather" then
-    out = "gather(\n"..self.input:printprettys(root,self,"input",assignments)..",\n"
-    out = out..self.x:printprettys(root,self,"x",assignments)..",\n"
-    out = out..self.y:printprettys(root,self,"y",assignments)..",\n"
+    out = "gather(\n"..typedASTPrintPrettys(self.input, root, assignments)..",\n"
+    out = out..typedASTPrintPrettys(self.x,root, assignments)..",\n"
+    out = out..typedASTPrintPrettys(self.y,root, assignments)..",\n"
     out = out..tostring(self.maxX)..", "..tostring(self.maxY)..", "..tostring(self.clamp)..")"
   elseif self.kind=="load" then
     local n = self.from

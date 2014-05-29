@@ -228,11 +228,13 @@ end
 -- the current location
 function LineBufferWrapperFunctions:get(loopid, relX,relY, V)
   assert(type(loopid)=="number")
-  assert(type(relX)=="number")
-  assert(type(relY)=="number")
+  assert(type(relX)=="number" or terralib.isquote(relX))
+  assert(type(relY)=="number" or terralib.isquote(relY))
   assert(type(V)=="number")
 
-  assert(relY<=0)
+--  assert(relY<=0)
+
+  local debugChecks = {}
 
   if self.debug then
 
@@ -251,18 +253,30 @@ function LineBufferWrapperFunctions:get(loopid, relX,relY, V)
                        cstdio.printf("LID %d\n",loopid)
                          ]=]
 
-    local debugChecks = {}
+
     for i=0,V-1 do
+      local lrelX = relX
+      local lrelY = relY
+
+      if terralib.isquote(relX) then
+        lrelX = `relX[i]
+        lrelY = `relY[i]
+      end
+
       table.insert(debugChecks, 
-                   quote orionAssert(@([self.ivDebugId[loopid]]+relY*[self:lineWidth()]+i+relX) == [self.id], "incorrect LB Id")
-                     orionAssert(@([self.ivDebugX[loopid]]+relY*[self:lineWidth()]+i+relX) == [self.posX[loopid]]+i+relX, "incorrect LB X")
-                     orionAssert(@([self.ivDebugY[loopid]]+relY*[self:lineWidth()]+i+relX) == [self.posY[loopid]]+relY, "incorrect LB Y") end)
+                   quote orionAssert(@([self.ivDebugId[loopid]]+lrelY*[self:lineWidth()]+i+lrelX) == [self.id], "incorrect LB Id")
+                     orionAssert(@([self.ivDebugX[loopid]]+lrelY*[self:lineWidth()]+i+lrelX) == [self.posX[loopid]]+i+lrelX, "incorrect LB X")
+                     orionAssert(@([self.ivDebugY[loopid]]+lrelY*[self:lineWidth()]+i+lrelX) == [self.posY[loopid]]+lrelY, "incorrect LB Y") end)
     end
 
-    return quote debugChecks
-      in terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]] + relY*[self:lineWidth()]+ relX),{align=V}) end
+  end
+
+  if terralib.isquote(relX) then -- gather
+    local res = {}
+    for i=0,V-1 do table.insert(res, `@([self.iv[loopid]] + relY[i]*[self:lineWidth()] + relX[i] + i) ) end
+    return quote debugChecks in vectorof([self.orionType:toTerraType()], res) end
   else
-    return `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]] + relY*[self:lineWidth()]+ relX),{align=V})
+    return quote debugChecks in terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]] + relY*[self:lineWidth()]+ relX),{align=V}) end
   end
 end
 
@@ -539,10 +553,11 @@ orion.terracompiler.boolBinops={
 }
 
 function orion.terracompiler.codegen(
-  inkernel, V, xsymb, ysymb, loopid, stripCount, kernelNode, inputImages, outputs)
+  inkernel, V, xsymb, ysymb, loopid, stripCount, kernelNode, inputImages, outputs, taps, TapStruct)
 
   assert(type(loopid)=="number")
   assert(type(stripCount)=="number")
+  assert(type(TapStruct)=="table")
 
   local stat = {}
 
@@ -632,7 +647,10 @@ function orion.terracompiler.codegen(
       elseif node.kind=="value" then
         out = `[orion.type.toTerraType(node.type,false,V)](node.value)
       elseif node.kind=="tap" then
-        out = `@[&orion.type.toTerraType(node.type)](orion.runtime.getTap(node.id))
+        -- kind of a cheap hack to save threading around some state
+        local entry
+        for k,v in pairs(TapStruct:getentries()) do print(k,v,v.field);if v.field==tostring(node.id) then entry=v.field end end
+        out = `taps.[entry]
       elseif node.kind=="tapLUTLookup" then
         local index = inputs["index"]
 
@@ -756,23 +774,14 @@ function orion.terracompiler.codegen(
         end
 
         out = foldt(list,1,#list)
-      elseif node.kind=="gatherConcrete" then
+      elseif node.kind=="gather" then
         local inpX = inputs["x"]
         local inpY = inputs["y"]
 
-        -- remember: the CSE algorithm transforms everything to be from hackBL to hackTR
-        local blX = node.translate1_hackBL
-        local blY = node.translate2_hackBL
-        local trX = node.translate1_hackTR
-        local trY = node.translate2_hackTR
+        assert(node.input.kind=="load")
+        assert(orion.kernelGraph.isKernelGraph(node.input.from) or type(node.input.from)=="number")
 
-        out = node.from:gather( 
-          loopid,  node.clamp, 
-          inpX, inpY, 
-          blX, blY, trX, trY,
-          V,
-          stripCount,
-          retime);
+        out = inputImages[kernelNode][node.input.from]:get(loopid, inpX, inpY,  V);
       elseif node.kind=="crop" then
         -- just pass through, crop only affects loop iteration space
         out = inputs["expr"]
@@ -897,6 +906,8 @@ function orion.terracompiler.codegenInnerLoop(
     kernelGraph,
     inputs,
     outputs,
+    taps,
+    TapStruct,
     clock,
     linebufferBase,
     shifts,
@@ -949,7 +960,7 @@ return
           end
         end)
 
-      local expr,statements=orion.terracompiler.codegen( n.kernel,  options.V, x, clock, loopid, options.stripcount, n, inputs, outputs)
+      local expr,statements=orion.terracompiler.codegen( n.kernel,  options.V, x, clock, loopid, options.stripcount, n, inputs, outputs, taps, TapStruct)
 
       table.insert(loopCode,
         quote
@@ -1017,7 +1028,7 @@ return
 end
 
 -- codegen all the code that runs per thread (and preamble)
-function orion.terracompiler.codegenThread(kernelGraph, inputs, shifts, options)
+function orion.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, shifts, options)
   assert(orion.kernelGraph.isKernelGraph(kernelGraph))
   assert(type(inputs)=="table")
   assert(type(shifts)=="table")
@@ -1055,6 +1066,7 @@ function orion.terracompiler.codegenThread(kernelGraph, inputs, shifts, options)
 
   ------
   local strip = symbol(int)
+  local taps = symbol(&TapStruct)
 
   local linebufferBase = symbol(&opaque,"linebufferBase")
   local thisLoopStartCode, thisLoopCode = orion.terracompiler.codegenInnerLoop(
@@ -1063,6 +1075,8 @@ function orion.terracompiler.codegenThread(kernelGraph, inputs, shifts, options)
     kernelGraph,
     inputs,
     outputs,
+    taps,
+    TapStruct,
     clock, 
     linebufferBase,
     shifts,
@@ -1090,6 +1104,8 @@ function orion.terracompiler.codegenThread(kernelGraph, inputs, shifts, options)
     var [core] = @([&int](input))
     declareInputImages
     declareOutputImages
+
+    var [taps] : TapStruct
 
     if options.verbose then cstdio.printf("Run Thread %d\n",core) end
 
@@ -1199,12 +1215,14 @@ end
 function orion.terracompiler.compile(
     kernelGraph, 
     inputImages,
+    taps,
     shifts,
     options)
 
   if orion.verbose then print("compile") end
   assert(orion.kernelGraph.isKernelGraph(kernelGraph))
   assert(type(inputImages)=="table")
+  assert(type(taps)=="table")
   assert(type(options)=="table")
 
   -- make symbols for the input images
@@ -1229,15 +1247,27 @@ function orion.terracompiler.compile(
     marshalBytes = marshalBytes + terralib.sizeof(&opaque)
   end
 
-  local threadCode = orion.terracompiler.codegenThread( kernelGraph, inputImages, shifts, options )
+  local TapStruct = terralib.types.newstruct("tapstruct")
+  TapStruct.metamethods.__getentries = function()
+    local r = {}
+    for k,v in pairs(taps) do 
+      local t = v.type:toTerraType()
+      table.insert(r, {field=tostring(v.id), type=t}) 
+    end
+    return r
+  end
+  marshalBytes = marshalBytes + terralib.sizeof(TapStruct)
+
+  local threadCode = orion.terracompiler.codegenThread( kernelGraph, inputImages, TapStruct, shifts, options )
 
   threadCode:printpretty()
 
-  local fin = terra([inputImageSymbolTable], [outputImageSymbolTable])
+  local fin = terra([inputImageSymbolTable], [outputImageSymbolTable], tapsIn : &opaque)
     cstdio.printf("START DR\n")
 
     var start = orion.currentTimeInSeconds()
     
+    var taps : &TapStruct = [&TapStruct](tapsIn)
     var threads : cpthread.pthread_t[options.cores]
     var stripStore : int8[options.cores*marshalBytes]
     
@@ -1250,6 +1280,7 @@ function orion.terracompiler.compile(
         var [stripStorePtr] = [&&opaque](&stripStore[4])
         marshalInputs
         marshalOutputs
+        @[&TapStruct](stripStorePtr) = @taps
         threadCode(&stripStore)
       else
         for i=0,options.cores do

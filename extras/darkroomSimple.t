@@ -1,7 +1,11 @@
 orionSimple = {}
 
 orionSimple.images = {}
-orionSimple.imageInputs = {}
+orionSimple.imageInputs = {} -- this is the image data we pass in
+-- with taps, we pass them in the same order they're created. We just track what ID was last seen to make sure the user always uses this interface
+orionSimple.taps = {}
+orionSimple.tapInputs = {} -- tap values we pass in
+-- track W/H to make sure user always passes the same w/h
 orionSimple.width = nil
 orionSimple.height = nil
 
@@ -23,8 +27,13 @@ function orionSimple.load(filename, boundaryCond)
   
   local im = makeIm(filename)
 
-  orionSimple.width = im.width
-  orionSimple.height = im.height
+  if orionSimple.width==nil then
+    orionSimple.width = im.width
+    orionSimple.height = im.height
+  else
+    assert(orionSimple.width==im.width)
+    assert(orionSimple.height==im.height)
+  end
 
   local _type = orion.type.uint(8)
   if im.bits==8 then
@@ -162,7 +171,15 @@ function orionSimple.constant(ty, width, height, constantValue)
   assert(type(width)=="number")
   assert(type(height)=="number")
   assert(type(constantValue)=="number")
-  
+
+  if orionSimple.width==nil then
+    orionSimple.width = width
+    orionSimple.height = height
+  else
+    assert(orionSimple.width==width)
+    assert(orionSimple.height==height)
+  end
+
   local idast = orion.image(ty,width,height)
   
   local tty = orion.type.toTerraType(ty)
@@ -196,19 +213,19 @@ end
 
 orionSimple._usedTapNames={}
 
-
-function orionSimple.setTap(ast,value)
-  assert(orion.ast.isAST(ast))
-
-  local terraType = orion.type.toTerraType(ast.type)
-
-  local terra setit(value : terraType)
-    var tptr : &terraType = [&terraType]( cstdlib.malloc(sizeof(terraType)) )
-    @tptr = value
-    orion.runtime.setTap(ast.id, [&int8](tptr))
+function orionSimple.tap(ty)
+  local r = orion.tap(ty)
+  if #orionSimple.taps ~= r.id then 
+    orion.error("If you use the simple interface, you must use to for _all_ taps "..#orionSimple.taps.." "..r.id)
   end
 
-  setit(value)
+  orionSimple.taps[r.id+1] = r
+  return r
+end
+
+function orionSimple.setTap( ast, value )
+  assert(orion.ast.isAST(ast))
+  orionSimple.tapInputs[ast.id+1] = value
 end
 
 function orionSimple.getTap(ast)
@@ -279,8 +296,8 @@ end
 
 
 function astFunctions:_cparam(key)
-  if self.kind~="crop" or self.expr.kind~="special" then
-    orion.error("could not determine "..key.." - not an input fn")
+  if self.kind~="crop" and self.expr.kind~="special" then
+    orion.error("could not determine "..key.." - not an input fn, kind "..self.kind)
   end
 
   local id = self.expr.id
@@ -293,11 +310,11 @@ function astFunctions:_cparam(key)
 end
 
 function astFunctions:width()
-  return self:_cparam("width")
+  return orionSimple.width
 end
 
 function astFunctions:height()
-  return self:_cparam("height")
+  return orionSimple.height
 end
 
 
@@ -333,14 +350,24 @@ function orionSimple.compile(outList, options)
     if ocallbackKernelGraph ~= nil then ocallbackKernelGraph(kernelGraph) end
   end
   
-  local fn = orion.compile(orionSimple.images,outList,{},orionSimple.width, orionSimple.height, options)
+  local fn = orion.compile(orionSimple.images,outList,orionSimple.taps,orionSimple.width, orionSimple.height, options)
 
   options.callbackKernelGraph = ocallbackKernelGraph
 
+  local TapStruct = terralib.types.newstruct("tapstruct")
+  TapStruct.metamethods.__getentries = function()
+    local r = {}
+    for k,v in pairs(orionSimple.taps) do 
+      local t = v.type:toTerraType()
+      table.insert(r, {field=tostring(v.id), type=t}) 
+    end
+    return r
+  end
 
   local fin = terra()
     [outDecl]
-    fn([orionSimple.imageInputs],[outArgs])
+    var tapArgs : TapStruct = TapStruct {[orionSimple.tapInputs]}
+    fn([orionSimple.imageInputs],[outArgs],&tapArgs)
     return [outRes]
   end
 

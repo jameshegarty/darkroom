@@ -17,16 +17,9 @@ orion._tapcount = 0
 function orion.tap(ty)
   assert(orion.type.isType(ty))
   assert(orion.type.isArray(ty)==false)
-  assert(type(name)=="string")
-
-  if orion._usedTapNames[name]~=nil then
-    print("Error, tap name ",name," was used twice, which isn't allowed!")
-    assert(false)
-  end
-  orion._usedTapNames[name] = 1
 
   orion._tapcount = orion._tapcount+1
-  return orion.ast.new({kind="tap",type=ty,tapname=name,id=orion._tapcount-1}):setLinenumber(0):setOffset(0):setFilename("null_tap")
+  return orion.ast.new({kind="tap",type=ty, id=orion._tapcount-1}):setLinenumber(0):setOffset(0):setFilename("null_tap")
 end
 
 orion._tapLUTcount = 0
@@ -58,7 +51,7 @@ function orion.frontEnd(ast, options)
   return kernelGraph
 end
 
-function orion.backEnd( kernelGraph, inputImages, options)
+function orion.backEnd( kernelGraph, inputImages, taps, options )
 
   assert(type(options)=="table")
   assert(type(inputImages)=="table")
@@ -73,6 +66,7 @@ function orion.backEnd( kernelGraph, inputImages, options)
   local res = orion.terracompiler.compile( 
     kernelGraph, 
     inputImages, 
+    taps,
     shifts,
     options)
   
@@ -148,5 +142,5 @@ function orion.compile(inputImageFunctions, outputImageFunctions, tapInputs, inp
   local ast = orion.ast.new(newnode):setLinenumber(0):setOffset(0):setFilename("null_outputs")
 
   local kernelGraph = orion.frontEnd( ast, options )
-  return orion.backEnd( kernelGraph, inputImageFunctions, options)
+  return orion.backEnd( kernelGraph, inputImageFunctions, tapInputs, options)
 end

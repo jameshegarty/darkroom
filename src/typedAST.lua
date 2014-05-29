@@ -150,15 +150,11 @@ function typedASTFunctions:stencil(input)
   elseif self.kind=="gather" then
     --if input~=nil then assert(false) end
     assert(self.input.kind=="load")
-    assert(orion.scheduledIR.isScheduledIR(self.input.from))
 
     if input~=nil and self.input.from~=input then
       return Stencil.new()
     else
-      local g = self.input:stencil(input)
-      g = g:unionWith(self.hackBL:stencil(input):translate(self.translate1_hackBL, self.translate2_hackBL,0))
-      g = g:unionWith(self.hackTR:stencil(input):translate(self.translate1_hackTR, self.translate2_hackTR,0))
-      return g:unionWith(self.x:stencil(input)):unionWith(self.y:stencil(input))
+      return Stencil.new():add(-self.maxX,-self.maxY,0):add(self.maxX,self.maxY,0)
     end
   elseif self.kind=="array" then
     local exprsize = self:arraySize("expr")
@@ -399,7 +395,11 @@ function orion.typedAST._toTypedAST(inast)
         -- the parser was supposed to guarantee this.
         assert(i>2)
 
-        ast=newtrans
+        if noTransform then -- eliminate unnecessary transforms early
+          ast=ast.expr:shallowcopy()
+        else
+          ast=newtrans
+        end
 
       elseif ast.kind=="array" then
         
@@ -545,8 +545,6 @@ function orion.typedAST._toTypedAST(inast)
         ast.input = inputs.input[1]
         ast.x = inputs.x[1]
         ast.y = inputs.y[1]
-        ast.hackBL = inputs.hackBL[1]
-        ast.hackTR = inputs.hackTR[1]
 
         if orion.type.isInt(ast.x.type)==false then
           orion.error("Error, x argument to gather must be int but is "..ast.x.type:str(), origast:linenumber(), origast:offset())

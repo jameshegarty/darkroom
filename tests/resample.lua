@@ -1,11 +1,8 @@
-package.path = package.path..";../src/?.lua;../examples/?.lua;../examples/?.t"
---terralib.path = package.path..";./?.t;../src/?.t;../examples/?.t"
-
 ffi = require "ffi"
 
 terralib.require("test")
 terralib.require("common")
-import "orion"
+import "darkroom"
 
 maxVelocity = 1
 
@@ -25,7 +22,7 @@ end
 local terra makeIm(data : &float)
   var img : Image
   cstdio.printf("make Im %d %d\n",[testinput:width()],[testinput:height()])
-  img:initSimple([testinput:width()],[testinput:height()],1,32,true,false,data)
+  img:initSimple([testinput:width()],[testinput:height()],1,32,true,false,true,data)
   return img
 end
 
@@ -38,13 +35,13 @@ local v = orion.image(orion.type.float(32),testinput:width(),testinput:height())
 orion.bindImage( v:id(), v_im )
 
 
-test({im(x,y):cropSame [resampleBilinear(
+test({im(x,y) [resampleBilinear(
     false,
     testinput, 
     maxVelocity, 
     maxVelocity, 
     u,v)] end,
-im(x,y):cropSame [resampleBilinearSlow(
+im(x,y) [resampleBilinearSlow(
     false,
     testinput, 
     maxVelocity, 
