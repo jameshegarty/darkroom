@@ -1085,7 +1085,7 @@ function orion.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, shift
     declareInputImages
     declareOutputImages
 
-    var [taps] : TapStruct
+    var [taps] : &TapStruct = [&TapStruct](inputArgs[demarshalCount])
 
     if options.verbose then cstdio.printf("Run Thread %d\n",core) end
 
