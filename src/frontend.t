@@ -176,9 +176,6 @@ function orion.gather( thisast, input,x,y,maxXV,maxYV,clamp)
   clamp = clamp.value
   assert(type(clamp)=="boolean")
 
-  local px = orion.ast.new({kind="position",coord="x"}):copyMetadataFrom(thisast)
-  local py = orion.ast.new({kind="position",coord="y"}):copyMetadataFrom(thisast)
-
   return orion.ast.new({kind="gather",
                         input=input, 
                         x=x,

@@ -152,9 +152,11 @@ function typedASTFunctions:stencil(input)
     assert(self.input.kind=="load")
 
     if input~=nil and self.input.from~=input then
-      return Stencil.new()
+      return Stencil.new() -- not the input we're interested in
     else
-      return Stencil.new():add(-self.maxX,-self.maxY,0):add(self.maxX,self.maxY,0)
+      -- note the kind of nasty hack we're doing here: gathers read from loads, and loads can be shifted.
+      -- so we need to shift this the same as the load
+      return Stencil.new():add(-self.maxX+self.input.relX, -self.maxY+self.input.relY,0):add(self.maxX+self.input.relX, self.maxY+self.input.relY,0)
     end
   elseif self.kind=="array" then
     local exprsize = self:arraySize("expr")

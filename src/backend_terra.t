@@ -769,7 +769,7 @@ function orion.terracompiler.codegen(
             end
           end
 
-          in [inputImages[kernelNode][node.input.from]:get(loopid, inpX, inpY,  V, validLeft, validRight)]
+          in [inputImages[kernelNode][node.input.from]:get(loopid, `inpX+node.input.relX, `inpY+node.input.relY,  V, validLeft, validRight)]
           end
       elseif node.kind=="crop" then
         -- just pass through, crop only affects loop iteration space
@@ -1277,6 +1277,7 @@ function orion.terracompiler.compile(
           var [stripStorePtr] = [&&opaque](&stripStore[i*marshalBytes+4])
           marshalInputs
           marshalOutputs
+          @[&TapStruct](stripStorePtr) = @taps
           cpthread.pthread_create(&threads[i],nil,threadCode, &stripStore[i*marshalBytes]);
         end
         for i=0,options.cores do

@@ -66,7 +66,7 @@ function orion.kernelGraph.typedASTToKernelGraph(typedAST, options)
   -- but figuring that out would be hard, so just do this the simple conservative way
   local function multipleTransforms(node) 
     local transformCount = 0
-    for v,k in node:parents(typedAST) do if v.kind=="transformBaked" then transformCount = transformCount+1 end end
+    for v,k in node:parents(typedAST) do if v.kind=="transformBaked" then transformCount = transformCount+1 end; if v.kind=="gather" and k=="input" then return true end end
     return transformCount > 1
   end
 
