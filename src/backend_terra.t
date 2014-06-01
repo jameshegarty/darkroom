@@ -166,12 +166,7 @@ function LineBufferWrapperFunctions:declare( loopid, x, y, clock, core, stripId,
         -- we always start in the second segment of the circular buffer b/c we always read from smaller addresses
         var leftBound = [self.stripWidth]*stripId + [self.leftStencil]
         var [buf] = [self[baseKey[k]]]+(x-leftBound)+[self:modularSize(bufType[k])]+fixedModulus((clock-[self.startClock])*[self:lineWidth()],[self:modularSize(bufType[k])])
-        cstdio.printf("init iv %s loopid %d addr %d\n", [baseKey[k]], loopid, buf)
       end)
-
---    if self.debug then
---      table.insert(res, quote orionAssert(uint64(buf) % (4*sizeof([self.orionType:toTerraType()])) == 0, "initial IV not aligned") end)
---    end
 
   end
 
@@ -761,7 +756,21 @@ function orion.terracompiler.codegen(
         assert(node.input.kind=="load")
         assert(orion.kernelGraph.isKernelGraph(node.input.from) or type(node.input.from)=="number")
 
-        out = inputImages[kernelNode][node.input.from]:get(loopid, inpX, inpY,  V, validLeft, validRight);
+        out = quote
+          for i = 0,V do
+            if inpX[i] > node.maxX or inpX[i] < -node.maxX then
+              cstdio.printf("error, gathered outside of stencil X %d (max %d)\n",inpX[i], node.maxX)
+              orionAssert(false,"gathered outside of stencil")
+            end
+
+            if inpY[i] > node.maxY or inpY[i] < -node.maxY then
+              cstdio.printf("error, gathered outside of stencil Y %d (max %d)\n",inpY[i], node.maxY)
+              orionAssert(false,"gathered outside of stencil")
+            end
+          end
+
+          in [inputImages[kernelNode][node.input.from]:get(loopid, inpX, inpY,  V, validLeft, validRight)]
+          end
       elseif node.kind=="crop" then
         -- just pass through, crop only affects loop iteration space
         out = inputs["expr"]
@@ -1046,7 +1055,7 @@ function orion.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, shift
 
   ------
   local strip = symbol(int,"strip")
-  local taps = symbol(&TapStruct)
+  local taps = symbol(&TapStruct,"taps")
 
   local linebufferBase = symbol(&opaque,"linebufferBase")
   local thisLoopStartCode, thisLoopCode = orion.terracompiler.codegenInnerLoop(
@@ -1085,7 +1094,7 @@ function orion.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, shift
     declareInputImages
     declareOutputImages
 
-    var [taps] : &TapStruct = [&TapStruct](inputArgs[demarshalCount])
+    var [taps] = [&TapStruct](inputArgs+demarshalCount)
 
     if options.verbose then cstdio.printf("Run Thread %d\n",core) end
 
