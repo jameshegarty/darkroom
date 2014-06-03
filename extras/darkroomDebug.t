@@ -350,7 +350,7 @@ function astPrintPrettys(self)
     out = "{"
     local cnt = 1
     while self["expr"..cnt] do
-      out = out .. self["expr"..cnt]:printprettys() .. ","
+      out = out .. astPrintPrettys(self["expr"..cnt]) .. ","
       cnt = cnt + 1
     end
     out = out .. "}"
@@ -580,7 +580,7 @@ function typedASTPrintPrettys(self,root,assignments)
     self:map("expr", 
              function(n,index)
                
-               out = out..n:printprettys(root,self,"expr"..index,assignments)..", "
+               out = out .. typedASTPrintPrettys(self["expr"..index],root,assignments)..", "
              end)
 
     out = out..")"

@@ -335,6 +335,8 @@ function orionSimple.compile(outList, options)
 
   local ocallbackKernelGraph = options.callbackKernelGraph
   options.callbackKernelGraph = function(kernelGraph)
+    -- codegen the allocation for the outputs.
+    -- we have to do this here, because it has to follow typechecking (we don't know the types until compile has happened)
     for k,v in kernelGraph:inputs() do
       local s = symbol(Image)
       table.insert(outDecl,

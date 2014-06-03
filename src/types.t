@@ -611,6 +611,20 @@ function TypeFunctions:isInt()
   return orion.type.isInt(self)
 end
 
+function TypeFunctions:isNumber()
+  return orion.type.isNumber(self)
+end
+
+function TypeFunctions:channels()
+  if self.type~="array" then return 1 end
+  return self.size
+end
+
+function TypeFunctions:baseType()
+  if self.type~="array" then return self end
+  return self.over
+end
+
 -- this calculates the precision of the result of a reduction tree.
 -- op is the reduction op
 -- typeTable is a list of the types we're reducing over
