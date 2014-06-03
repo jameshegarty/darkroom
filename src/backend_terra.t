@@ -13,11 +13,11 @@ pointwiseDispatchMT = {
   __index = function(self, method) 
     print("PDMT",method, keycount(self)==#self)
     for k,v in pairs(self) do print(k,v) end
-    if keycount(self)==#self then
+
       return function(self, ...)
         print("DO POINTWISE", method)
         local res = {}
-        for i, element in ipairs(self) do
+        for i, element in pairs(self) do
           local varargs = {...}
           for k,v in ipairs(varargs) do 
             --            if type(v)=="table" and keycount(v)==#v then varargs[k] = v[i]; print("split",k) end
@@ -35,23 +35,12 @@ pointwiseDispatchMT = {
             end
           end
           print("call",method,isLineBufferWrapper(element),isImageWrapper(element))
-          res[i] = element[method](element,unpack(varargs))
+          table.insert(res, element[method](element,unpack(varargs)))
           print("calldone")
         end
         return quote res end
       end
-    else
-      return function(self, ...)
-        print("DO POINTWISE on inputs", method)
-        local res = {}
-        for i, element in pairs(self) do
-          print("call",i,method,isLineBufferWrapper(element),isImageWrapper(element))
-          assert(type(element)=="table")
-          table.insert(res, element[method](element,...))
-        end
-        return quote res end
-      end
-    end
+
   end
 }
 
@@ -732,8 +721,8 @@ function orion.terracompiler.codegen(
 
         out = expr
       elseif node.kind=="gather" then
-        local inpX = inputs["x"][0] -- should be scalar
-        local inpY = inputs["y"][0] -- should be scalar
+        local inpX = inputs["x"][1] -- should be scalar
+        local inpY = inputs["y"][1] -- should be scalar
 
         assert(node.input.kind=="load")
         assert(orion.kernelGraph.isKernelGraph(node.input.from) or type(node.input.from)=="number")
