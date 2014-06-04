@@ -1,17 +1,7 @@
-cstdio = terralib.includec("stdio.h")
+import "darkroom"
+darkroomSimple = terralib.require("darkroomSimple")
 
-import "orion"
-
-makeConv = false
-
-if arg[1]=="conv" then
-  makeConv = true
-end
-
--- totally fixed function camera pipeline
--- I have no idea why you'd ever actually build something like this,
--- but it's available for testing...
-
+-- simple, totally fixed function camera pipeline
 
 -- input = uint8 nxm
 -- output = RGB8 nxm
@@ -122,38 +112,7 @@ function campipe(in1)
   return im(x,y) : uint8[3] out(x,y) end
 end
 
-sensor = orion.load("300d.bmp")
+sensor = darkroomSimple.load("300d.bmp")
 campipeline = campipe(sensor)
 
-if makeConv then
-  local yfile,yrfile = orion.compile({campipeline},{verbose=false,debug=false,platform="convolution"})
-
-  local file = io.open("out/fixedcampipe.yml","w")
-  file:write(yfile)
-  file:close()
-  
-  local rfile = io.open("out/fixedcampipe_run.yml","w")
-  rfile:write(yrfile)
-  rfile:close()
-else
-
-  local sched = arg[1]
-
-  local r, model = orion.compile({campipeline},{verbose=false,debug=false,schedule=arg[1],calcPerfModel=false})
-
-  local terra runit()
-    var start = orion.currentTimeInSeconds()
-    var res = r()
-    for i=0,19 do
-      res = r()
-    end
-    var endt = orion.currentTimeInSeconds()
-
-    res:save("out/fixedcampipe.bmp")
---    C.printf("runtime %f model %f fmodel %f\n",(endt-start)/double(20),model.total,model.fast.total)
-    cstdio.printf("runtime %f\n",(endt-start)/double(20))
-  end
-
-  runit()
---  campipeline:save("out/fixedcampipe.bmp")
-end
+campipeline:save("out/fixedcampipe.bmp")
