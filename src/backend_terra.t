@@ -680,7 +680,14 @@ function orion.terracompiler.codegen(
           out = `ttype(expr)
 
         elseif node.kind=="select" or node.kind=="vectorSelect" then
-          local cond = inputs["cond"][c]
+          local cond
+
+          if node.kind=="vectorSelect" then
+            cond = inputs["cond"][c]
+          else
+            cond = inputs["cond"][1]
+          end
+
           local a = inputs["a"][c]
           local b = inputs["b"][c]
 
@@ -755,6 +762,8 @@ function orion.terracompiler.codegen(
         out = inputs["expr"][c]
       elseif node.kind=="array" then
         out = inputs["expr"..c][1]
+      elseif node.kind=="index" then
+        out = inputs["expr"][node.index+1]
       else
         orion.error("Internal error, unknown ast kind "..node.kind)
       end

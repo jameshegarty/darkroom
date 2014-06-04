@@ -160,14 +160,9 @@ function typedASTFunctions:stencil(input)
     end
   elseif self.kind=="array" then
     local exprsize = self:arraySize("expr")
-
     local s = Stencil.new()
-    s = s:unionWith(Stencil.new())
     for i=1,exprsize do
-      s = s:unionWith(self["expr"..i]:stencil(input):translate(
-                        self["translate1_expr"..i],
-                        self["translate2_expr"..i],
-                        0))
+      s = s:unionWith(self["expr"..i]:stencil(input))
     end
 
     return s

@@ -367,11 +367,11 @@ function astPrintPrettys(self)
 
     out = out .. ")"
   elseif self.kind=="switch" then
-    out = "switch "..self.controlExpr:printprettys().."\n"
+    out = "switch "..astPrintPrettys(self.controlExpr).."\n"
     self:map("expr",function(n,idx)
-               out = out .. self["val"..idx]:printprettys() .. " => "..n:printprettys().."\n"
+               out = out .. astPrintPrettys(self["val"..idx]) .. " => "..astPrintPrettys(n).."\n"
                     end)
-    out = out.."default => "..self.default:printprettys().."\n"
+    out = out.."default => "..astPrintPrettys(self.default).."\n"
     out = out.."end"
   elseif self.kind=="gather" then
     out = "gather(\n"..astPrintPrettys(self.input)..",\n"
@@ -379,7 +379,7 @@ function astPrintPrettys(self)
     out = out..astPrintPrettys(self.y)..",\n"
     out = out..tostring(self.maxX)..", "..tostring(self.maxY)..", "..tostring(self.clamp)..")"
   elseif self.kind=="index" then
-    out = self.expr:printprettys().."["..self.index:printprettys().."]"
+    out = astPrintPrettys(self.expr).."["..astPrintPrettys(self.index).."]"
   else
     print(self.kind)
     assert(false)
@@ -597,7 +597,7 @@ function typedASTPrintPrettys(self,root,assignments)
 
     out = out..")"
   elseif self.kind=="index" then
-    out = out.."("..self.expr:printprettys(root,self,"expr",assignments)..")["..self.index.."]"
+    out = out.."("..typedASTPrintPrettys(self.expr, root, assignments)..")["..self.index.."]"
   elseif self.kind=="gather" then
     out = "gather(\n"..typedASTPrintPrettys(self.input, root, assignments)..",\n"
     out = out..typedASTPrintPrettys(self.x,root, assignments)..",\n"
