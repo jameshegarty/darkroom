@@ -344,9 +344,9 @@ function orionSimple.compile(outList, options)
           var [s] 
           var data : &opaque
           cstdlib.posix_memalign( [&&opaque](&data), 4*1024, [orionSimple.width*orionSimple.height*v.kernel.type:sizeof()])
-          s:initSimple([orionSimple.width],[orionSimple.height],1,[v.kernel.type:sizeof()]*8,[v.kernel.type:isFloat()],[v.kernel.type:isInt()],true,data)
+          s:initSimple([orionSimple.width],[orionSimple.height],[v.kernel.type:channels()],[v.kernel.type:baseType():sizeof()]*8,[v.kernel.type:isFloat()],[v.kernel.type:isInt()],true,data)
         end)
-      table.insert(outRes,s)
+      table.insert(outRes, quote s:toAOS() in s end)
       table.insert(outArgs, `s.data)
     end
     if ocallbackKernelGraph ~= nil then ocallbackKernelGraph(kernelGraph) end

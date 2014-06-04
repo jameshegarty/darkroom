@@ -595,6 +595,10 @@ function TypeFunctions:str()
  return orion.type.typeToString(self)
 end
 
+function TypeFunctions:isArray()
+  return self.type=="array"
+end
+
 function TypeFunctions:toTerraType()
   return orion.type.toTerraType(self)
 end
@@ -641,7 +645,6 @@ end
 -- if pointer is true, generate a pointer instead of a value
 -- vectorN = width of the vector [optional]
 function orion.type.toTerraType(_type,pointer,vectorN)
-
   assert(orion.type.isType(_type))
 
   local ttype

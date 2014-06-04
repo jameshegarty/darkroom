@@ -569,7 +569,7 @@ function typedASTPrintPrettys(self,root,assignments)
   elseif self.kind=="select" then
     out=out.."if "..typedASTPrintPrettys(self.cond,root,assignments).." then "..typedASTPrintPrettys(self.a,root,assignments).." else "..typedASTPrintPrettys(self.b,root,assignments).." end"
   elseif self.kind=="vectorSelect" then
-    out=out.."vectorSelect("..self.cond:printprettys(root,self,"cond",assignments)..","..self.a:printprettys(root,self,"a",assignments)..","..self.b:printprettys(root,self,"b",assignments)..")"
+    out=out.."vectorSelect("..typedASTPrintPrettys(self.cond,root,assignments)..","..typedASTPrintPrettys(self.a,root,assignments)..","..typedASTPrintPrettys(self.b,root,assignments)..")"
   elseif self.kind=="crop" then
     out = out.."crop("..typedASTPrintPrettys(self.expr,root,assignments)..", shiftY=" .. self.shiftY .. ")"
   elseif self.kind=="array" or

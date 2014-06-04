@@ -1160,7 +1160,7 @@ terra Image:save(filename : &int8)
   var ext = filename + cstring.strlen(filename) - 3
   cstdio.printf("EXT %s\n",ext)
 
-  if self.bits==8 and (self.channels==1 or self.channels==3) and self.floating==false and self.isSigned==false then
+  if self.bits==8 and (self.channels==1 or self.channels==3) and self.floating==false and self.isSigned==false and self.SOA==false then
     if verbose then cstdio.printf("Assuming uint8\n") end
     if cstring.strcmp(ext,"jjm")==0 then
        var us = self:deepcopyUnstride()
@@ -1176,15 +1176,15 @@ terra Image:save(filename : &int8)
 	  [&uint8](self.data))
     end 
     return true
-  elseif self.bits==32 and self.channels==1 and self.floating then
+  elseif self.bits==32 and self.channels==1 and self.floating and self.SOA==false then
     if verbose then cstdio.printf("saving a 32 bit 1 channel float\n") end
     orion.util.saveImageAutoLevels( filename, self.width, self.height, self.stride, 1, [&float](self.data) )
     return true
-  elseif self.bits==32 and self.channels==1 and self.floating==false and cstring.strcmp(ext,"jjm")>0 then
+  elseif self.bits==32 and self.channels==1 and self.floating==false and cstring.strcmp(ext,"jjm")>0 and self.SOA==false then
     if verbose then cstdio.printf("saving a 32 bit 1 channel float\n") end
     orion.util.saveImageI( filename, self.width, self.height, self.stride, 1, [&int](self.data) )
     return true
-  elseif self.bits==32 and (self.channels==2 or self.channels==3) and self.floating then
+  elseif self.bits==32 and (self.channels==2 or self.channels==3) and self.floating and self.SOA==false then
     --cstdio.printf("Assuming that a 32 bit 3 channel image is float!!!!!!!!!\n")
     orion.util.saveImageF( filename, self.width, self.height, self.stride, self.channels, [&float](self.data) )
     return true
@@ -1198,7 +1198,7 @@ terra Image:save(filename : &int8)
      orion.util.saveImageJJM( filename, self.width, self.height, self.width, self.channels, self.bits, self.floating, self.isSigned, us.data ) -- self.data )
      us:free()
   else
-    cstdio.printf("Error saving, unimplemented type float:%d signed:%d bits:%d channels:%d\n",self.floating,self.isSigned,self.bits,self.channels)
+    cstdio.printf("Error saving, unimplemented type float:%d signed:%d bits:%d channels:%d SOA:%d\n",self.floating,self.isSigned,self.bits,self.channels,self.SOA)
   end
 
 
@@ -1411,53 +1411,31 @@ terra Image:toUint8()
   end
 end
 
--- convert a separate R,G,B image into a single RGB image
-function makeToAOS(channels, ty)
-  assert(type(channels)=="number")
-  assert(terralib.types.istype(ty))
+terra Image:toAOS()
+  if self.SOA then
+    var bytes = self.bits/8
 
-  local symbs = {}
---  local strideSymbs = {}
-  -- first C symbols are the pointers to the inputs,
-  -- second C symbols are the strides of the inputs
-  -- C is the number of channels
-  for i=1,channels do table.insert(symbs,symbol(&ty)) end
-  for i=1,channels do table.insert(symbs,symbol(int)) end
+    var dst : &uint8
+    var size = self.stride*self.height*self.channels*bytes
 
-  local res = symbol(&ty)
-  local c = symbol(int)
-  local strideSymb = symbol(int)
+    cstdlib.posix_memalign( [&&opaque](&dst), pageSize, size)
 
-  local kernel = {}
-  local nextLine = {}
-  
-  for i=1,channels do
-    table.insert(kernel, quote if c==(i-1) then @[res] = @[symbs[i]]; [symbs[i]] = [symbs[i]]+1; end end)
-    table.insert(nextLine, quote [symbs[i]] = [symbs[i]] - strideSymb + [symbs[channels+i]]; end)
-  end
-
-  return 
-    terra([strideSymb], height:int, [symbs])
-    if orion.verbose then cstdio.printf("TO AOS\n") end
-    var [res] = [&ty](cstdlib.malloc(channels*strideSymb*height*sizeof(ty)))
-    var ores = res
-
-    for y=0,height do
-      for x=0,strideSymb do
-        for [c]=0,channels do
-          kernel
-          res = res + 1
+    for y=0,self.height do
+      for x=0,self.width do
+        for c=0,self.channels do
+          var targetBase = [&uint8](dst)+(y*self.stride+x)*bytes*self.channels+bytes*c
+          var sourceBase = [&uint8](self.data)+(self.stride*self.height*c*bytes)+(y*self.stride+x)*bytes
+          for b=0,bytes do
+            @(targetBase+b)=@(sourceBase+b)
+          end
         end
       end
-      nextLine
     end
-
-
-    return ores
-    end
-end
-
-terra Image:toAOS()
+    self:free()
+    self.data = dst
+    self.dataPtr = dst
+    self.SOA = false
+  end
 
 end
 

@@ -560,9 +560,11 @@ function orion.terracompiler.codegen(
         local out
         local resultSymbol = orion.terracompiler.symbol(node.type:baseType(), false, V)
 
-        for k,v in node:inputs() do
-          assert(terralib.isquote(inputs[k][c]))
-        end
+--        print(node.kind,node.type:channels())
+--        for k,v in node:inputs() do
+--          print("k",k)
+--          assert(terralib.isquote(inputs[k][c]))
+--        end
       
         if node.kind=="load" then
           assert(orion.kernelGraph.isKernelGraph(node.from) or type(node.from)=="number")
@@ -661,14 +663,20 @@ function orion.terracompiler.codegen(
           out = `vector(q)
         elseif node.kind=="cast" then
 
-          if node.type:toTerraType()==nil then
-            orion.error("Cast to "..orion.type.typeToString(node.type).." not implemented!")
+          if node.type:baseType():toTerraType()==nil then
+            orion.error("Cast to "..orion.type.typeToString(node.type:baseType()).." not implemented!")
             assert(false)
           end
 
-          local ttype = orion.type.toTerraType(node.type,false, V)
+          local ttype = orion.type.toTerraType(node.type:baseType(),false, V)
 
-          local expr = inputs["expr"][c]
+          local expr
+          if node.type:isArray() and node.expr.type:isArray()==false then
+            expr = inputs["expr"][1] -- broadcast
+          else
+            expr = inputs["expr"][c]
+          end
+
           out = `ttype(expr)
 
         elseif node.kind=="select" or node.kind=="vectorSelect" then
@@ -745,24 +753,25 @@ function orion.terracompiler.codegen(
       elseif node.kind=="crop" then
         -- just pass through, crop only affects loop iteration space
         out = inputs["expr"][c]
+      elseif node.kind=="array" then
+        out = inputs["expr"..c][1]
       else
---        node:printpretty()
         orion.error("Internal error, unknown ast kind "..node.kind)
       end
 
-      --print(node.kind)
-      assert(terralib.isquote(out))
+        --print(node.kind)
+        assert(terralib.isquote(out))
 
-      -- make absolutely sure that we end up with the type we expect
-      out = `[orion.type.toTerraType(node.type:baseType(),false,V)](out)
+        -- make absolutely sure that we end up with the type we expect
+        out = `[orion.type.toTerraType(node.type:baseType(),false,V)](out)
 
-      -- only make a statement if necessary
-      if node:parentCount(inkernel)==1 then
-        finalOut[c] = out
-      else
-        table.insert(stat,quote var [resultSymbol] = out end)
-        finalOut[c] = `[resultSymbol]
-      end
+        -- only make a statement if necessary
+        if node:parentCount(inkernel)==1 then
+          finalOut[c] = out
+        else
+          table.insert(stat,quote var [resultSymbol] = out end)
+          finalOut[c] = `[resultSymbol]
+        end
 
       end
 
@@ -1115,7 +1124,7 @@ function orion.terracompiler.allocateImageWrappers(
   local function getInputWrapper(id,type)
     if inputWrappers[id]==nil then
       inputWrappers[id] = {}
-      for c = 1,type:channels() do inputWrappers[id][c] = newImageWrapper( inputImageSymbolMap[id],type,options.width, options.terradebug ) end
+      for c = 1,type:channels() do inputWrappers[id][c] = newImageWrapper( inputImageSymbolMap[id], type:baseType(), options.width, options.terradebug ) end
       setmetatable(inputWrappers[id],pointwiseDispatchMT)
     end
     return inputWrappers[id]
@@ -1124,6 +1133,10 @@ function orion.terracompiler.allocateImageWrappers(
   local function parentIsOutput(node)
     for v,k in node:parents(kernelGraph) do if v==kernelGraph then return k end end
     return nil
+  end
+
+  local function channelPointer(c,ptr,ty)
+    return `[&ty](ptr)+[options.width*options.height]*c
   end
 
   kernelGraph:S("*"):traverse(
@@ -1152,7 +1165,7 @@ function orion.terracompiler.allocateImageWrappers(
         -- make the output
         if parentIsOutput(n)~=nil then
           outputs[n] = {}
-          for c=1,n.kernel.type:channels() do outputs[n][c] = newImageWrapper( outputImageSymbolMap[parentIsOutput(n)], n.kernel.type, options.width, options.terradebug) end
+          for c=1,n.kernel.type:channels() do outputs[n][c] = newImageWrapper( channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType()), n.kernel.type:baseType(), options.width, options.terradebug) end
           setmetatable(outputs[n],pointwiseDispatchMT)
 
           print("OUT imageWrapper","kernelNode:",n,n:name(),"wrapper",outputs[n])
