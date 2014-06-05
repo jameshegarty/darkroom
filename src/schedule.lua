@@ -24,6 +24,20 @@ function schedule(graph)
   return shifts
 end
 
+local function synthRel(rel,t)
+  if type(t)=="number" and type(rel)=="number" then
+    return rel+t
+  elseif type(rel)=="number" and type(t)=="table" and t.kind=="mapreducevar" then
+    local v = orion.typedAST.new({kind="value",value=rel,type=t.type}):copyMetadataFrom(t)
+    return orion.typedAST.new({kind="binop", lhs=t, rhs=v, type = t.type, op="+"}):copyMetadataFrom(t)
+  elseif type(rel)~="number" and type(t)=="number" then
+    local v = orion.typedAST.new({kind="value",value=t,type=rel.type}):copyMetadataFrom(rel)
+    return orion.typedAST.new({kind="binop", lhs=rel, rhs=v, type = rel.type, op="+"}):copyMetadataFrom(rel)
+  else
+    assert(false)
+  end
+end
+
 function shift(graph, shifts)
   assert(orion.kernelGraph.isKernelGraph(graph))
 
@@ -43,9 +57,11 @@ function shift(graph, shifts)
             return n.expr:S(function(n) return n.kind=="load" or n.kind=="position" end):process(
               function(nn)
                 if nn.kind=="load" then
-                  local r = nn:shallowcopy()
-                  r.relX = r.relX + n.translate1
-                  r.relY = r.relY + n.translate2
+                  local r = nn:shallowcopy()                  
+
+                  r.relX = synthRel(r.relX, n.translate1)
+                  r.relY = synthRel(r.relY, n.translate2)
+
                   if type(nn.from)=="table" then r.from = oldToNewRemap[nn.from]; assert(r.from~=nil) end
                   return orion.typedAST.new(r):copyMetadataFrom(nn)
                 elseif nn.kind=="position" then
@@ -73,7 +89,8 @@ function shift(graph, shifts)
             if nn.kind=="load" then
               if type(nn.from)=="table" then
                 local r = nn:shallowcopy()
-                r.relY = r.relY - shifts[orig] + shifts[newToOldRemap[nn.from]]
+--                r.relY = r.relY - shifts[orig] + shifts[newToOldRemap[nn.from]]
+                r.relY = synthRel(r.relY,shifts[newToOldRemap[nn.from]]-shifts[orig])
                 if type(nn.from)=="table" then r.from = oldToNewRemap[nn.from]; assert(r.from~=nil) end
                 return orion.typedAST.new(r):copyMetadataFrom(nn)
               end

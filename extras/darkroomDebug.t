@@ -491,6 +491,8 @@ end
 -- assignments is used to store variables we've assigned to
 -- assignments: varname -> string
 function typedASTPrintPrettys(self,root,assignments)
+  if type(self)=="number" then return tostring(self) end
+
   assert(orion.typedAST.isTypedAST(self))
   assert(orion.typedAST.isTypedAST(root))
   assert(type(assignments)=="table")
@@ -549,7 +551,8 @@ function typedASTPrintPrettys(self,root,assignments)
 
     local i=1
     while self["translate"..i] do
-      out = out..orion.dimToCoord[i].."*"..self["scale"..i].."+"..self["translate"..i]
+      -- translate is either a number or an AST
+      out = out..orion.dimToCoord[i].."*"..self["scale"..i].."+"..typedASTPrintPrettys(self["translate"..i], root, assignments)
       if self["translate"..(i+1)] then out = out.."," end
       i=i+1
     end
@@ -606,7 +609,16 @@ function typedASTPrintPrettys(self,root,assignments)
   elseif self.kind=="load" then
     local n = self.from
     if type(self.from)=="table" then n=self.from:name() end
-    out = "load_from_"..n.."("..self.relX..","..self.relY..")"
+    out = "load_from_"..n.."("..typedASTPrintPrettys(self.relX,root,assignments)..","..typedASTPrintPrettys(self.relY,root,assignments)..")"
+  elseif self.kind=="mapreduce" then
+    local vars,i = "",1
+    while self["varname"..i] do
+      vars = vars.."_mr_"..self["varname"..i].."="..self["varlow"..i]..","..self["varhigh"..i].." "
+      i=i+1
+    end
+    out="map "..vars.." reduce("..self.reduceop..") "..typedASTPrintPrettys(self.expr, root, assignments).." end"
+  elseif self.kind=="mapreducevar" then
+    out="_mr_"..self.variable.."["..self.low.." to "..self.high.."]"
   else
     print(self.kind)  
     assert(false)

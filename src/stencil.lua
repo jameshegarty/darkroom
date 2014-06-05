@@ -112,6 +112,7 @@ end
 
 -- dim is 1,2, or 3
 function Stencil:max(dim)
+  assert(type(dim)=="number")
   local m = -100000
   for k,_ in pairs(self) do if k[dim]>m then m=k[dim] end end
 
@@ -121,6 +122,7 @@ function Stencil:max(dim)
 end
 
 function Stencil:min(dim)
+  assert(type(dim)=="number")
   local m = 100000
   for k,_ in pairs(self) do if k[dim]<m then m=k[dim] end end
 

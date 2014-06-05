@@ -32,6 +32,8 @@ function orion.typedAST.checkOffsetExpr(expr, coord)
     end
   elseif expr.kind=="cast" then
     return orion.typedAST.checkOffsetExpr(expr.expr,coord)
+  elseif expr.kind=="mapreducevar" then
+    return true
   else
     orion.error(expr.kind.." is not supported in offset expr")    
   end
@@ -52,16 +54,24 @@ function orion.typedAST.convertOffset(ast,coord)
 
   elseif ast.kind=="binop" then
     if ast.lhs.kind=="position" then
-      assert(ast.rhs.kind=="value")
-	
-      if ast.op=="+" then
-        translate = ast.rhs.value
-      elseif ast.op=="-" then
-        translate = -ast.rhs.value
-      elseif ast.op=="*" then
-        scale = ast.rhs.value
+      if ast.rhs.kind=="value" then
+        if ast.op=="+" then
+          translate = ast.rhs.value
+        elseif ast.op=="-" then
+          translate = -ast.rhs.value
+        elseif ast.op=="*" then
+          scale = ast.rhs.value
+        else
+          assert(false)
+        end
+      elseif ast.rhs.kind=="mapreducevar" then
+        if ast.op=="+" then
+          translate = ast.rhs
+        else
+          assert(false)
+        end
       else
-        assert(false)
+
       end
     elseif ast.rhs.kind=="position" then
         assert(ast.lhs.kind=="value")
@@ -179,7 +189,30 @@ function typedASTFunctions:stencil(input)
   elseif self.kind=="crop" then
     return self.expr:stencil(input)
   elseif self.kind=="transformBaked" then
-    return self.expr:stencil(input):translate(self.translate1,self.translate2,0)
+    local xs, ys
+
+    if type(self.translate1)=="number" then
+      xs = Stencil.new():add(self.translate1,0,0)
+    elseif self.translate1.kind=="mapreducevar" then
+      xs = Stencil.new():add(self.translate1.low,0,0):add(self.translate1.high,0,0)
+    else
+      assert(false)
+    end
+
+    if type(self.translate2)=="number" then
+      ys = Stencil.new():add(0,self.translate2,0)
+    elseif self.translate2.kind=="mapreducevar" then
+      ys = Stencil.new():add(0,self.translate2.low,0):add(0,self.translate2.high,0)
+    else
+      assert(false)
+    end
+
+    local s = xs:product(ys)
+    return self.expr:stencil(input):product(s)
+  elseif self.kind=="mapreduce" then
+    return self.expr:stencil(input)
+  elseif self.kind=="mapreducevar" then
+    return Stencil.new()
   end
 
   print(self.kind)
@@ -200,7 +233,7 @@ function typedASTFunctions:eval()
       assert(false)
     end
   else
-    print(self.kind)
+    print("could not convert to a constant"..self.kind)
     assert(false)
   end
 
@@ -487,14 +520,11 @@ function orion.typedAST._toTypedAST(inast)
         ast.type = ast.expr.type
 
       elseif ast.kind=="mapreducevar" then
-        local low = inputs["low"][1]
-        local high = inputs["high"][1]
+        ast.low = inputs["low"][1]:eval()
+        ast.high = inputs["high"][1]:eval()
+        ast.type = orion.type.int(32)
 
-        -- we don't need this anymore. Only needed this to calculate the type.
-        ast.low=nil
-        ast.high=nil
-        
-        ast.type = orion.type.meet(low.type,high.type,"mapreducevar", origast)
+--        ast.type = orion.type.meet(ast.low.type,ast.high.type,"mapreducevar", origast)
       elseif ast.kind=="tap" then
         -- taps should be tagged with type already
       elseif ast.kind=="tapLUTLookup" then
@@ -552,6 +582,17 @@ function orion.typedAST._toTypedAST(inast)
         end
       elseif ast.kind=="load" then
         -- already has a type
+      elseif ast.kind=="mapreduce" then
+        ast.type = inputs.expr[1].type
+        ast.expr = inputs.expr[1]
+
+        local i = 1
+        while ast["varname"..i] do
+          ast["varlow"..i] = inputs["varlow"..i][1]:eval()
+          ast["varhigh"..i] = inputs["varhigh"..i][1]:eval()
+          i = i + 1
+        end
+
       else
         orion.error("Internal error, typechecking for "..ast.kind.." isn't implemented!",ast.line,ast.char)
         return nil
@@ -639,7 +680,7 @@ function orion.typedAST.astToTypedAST(ast, options)
   end
 
   -- should have been eliminated
-  if orion.debug then assert(ast:S(function(n) return n.kind=="mapreducevar" or n.kind=="letvar" or n.kind=="switch" end):count()==0) end
+  if orion.debug then assert(ast:S(function(n) return n.kind=="letvar" or n.kind=="switch" end):count()==0) end
 
   if options.printstage then
     print("_toTypedAST",collectgarbage("count"))
