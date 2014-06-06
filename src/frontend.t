@@ -758,23 +758,25 @@ function orion.compileTimeProcess(imfunc, envfn)
     function(inp)
       local newNode = inp:shallowcopy()
       
-      local i,vars,low,high = 1,{},{},{}
+      local i,vars,low,high,id = 1,{},{},{},{}
       while inp["varname"..i] do 
         vars[inp["varname"..i]]=1;
         low[inp["varname"..i]]=inp["varlow"..i];
         high[inp["varname"..i]]=inp["varhigh"..i];
+        newNode["varid"..i] = {}
+        id[inp["varname"..i]] = newNode["varid"..i]
+
         i=i+1 
       end
       
       newNode.expr = inp.expr:S("func"):process(
         function(fin)
           if fin.identifier1~=nil and fin.identifier2==nil and vars[fin.identifier1]~=nil then
-            return orion.ast.new({kind="mapreducevar",variable=fin.identifier1, low=low[fin.identifier1], high=high[fin.identifier1]}):copyMetadataFrom(fin)
+            return orion.ast.new({kind="mapreducevar", id = id[fin.identifier1], variable=fin.identifier1, low=low[fin.identifier1], high=high[fin.identifier1]}):copyMetadataFrom(fin)
           end
           return fin
         end)
       newNode = orion.ast.new(newNode):copyMetadataFrom(inp)
-      newNode:check()
       
       return newNode
     end)

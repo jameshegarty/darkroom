@@ -113,7 +113,7 @@ function orion.compile(inputImageFunctions, outputImageFunctions, tapInputs, inp
 
   local function checkoptions(options)
     if options==nil then options={} end
-    if options.verbose ~= nil then assert(type(options.verbose)=="boolean"); orion.verbose = options.verbose; end
+    if options.verbose ~= nil then assert(type(options.verbose)=="boolean") else options.verbose = false; end
     if options.printruntime ~= nil then assert(type(options.printruntime)=="boolean") else options.printruntime = false; end
     if options.looptimes ~= nil then assert(type(options.looptimes)=="number") else options.looptimes = 1; end
     if options.printasm ~=nil then assert(type(options.printasm)=="boolean"); orion.printasm = options.printasm; end

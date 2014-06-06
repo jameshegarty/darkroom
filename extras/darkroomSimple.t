@@ -21,6 +21,7 @@ function orionSimple.load(filename, boundaryCond)
   local terra makeIm( filename : &int8)
     var im : &Image = [&Image](cstdlib.malloc(sizeof(Image)))
     im:initWithFile(filename)
+    im:toDarkroomFormat()
 
     return im
   end
@@ -271,7 +272,7 @@ function orionSimple.setTapLUT(ast,value)
 end
 
 function astFunctions:save(filename,compilerOptions)
-  local func = orion.compile({self},compilerOptions)
+  local func = orionSimple.compile({self},compilerOptions)
   print("Call",compilerOptions)
   local out = func()
   local terra dosave(im: &Image, filename : &int8)
@@ -328,7 +329,7 @@ function astFunctions:id()
 end
 
 function orionSimple.compile(outList, options)
-
+  options = options or {}
   local outDecl = {}
   local outArgs = {}
   local outRes = {}

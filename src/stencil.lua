@@ -104,6 +104,10 @@ end
 
 Stencil._key={}
 function Stencil.key(x,y,z)
+  assert(type(x)=="number")
+  assert(type(y)=="number")
+  assert(type(z)=="number")
+
   Stencil._key[x]=Stencil._key[x] or {}
   Stencil._key[x][y]=Stencil._key[x][y] or {}
   Stencil._key[x][y][z]=Stencil._key[x][y][z] or {x,y,z}

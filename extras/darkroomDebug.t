@@ -31,9 +31,9 @@ function astFunctions:expectedKeycount()
   elseif self.kind=="position" then
     return baseSize+1
   elseif self.kind=="mapreduce" then
-    return baseSize+self:arraySize("varname")*3+2
+    return baseSize+self:arraySize("varname")*4+2 -- name, high, low, id
   elseif self.kind=="mapreducevar" then
-    return baseSize+3
+    return baseSize+4 -- name, high, low, id
   elseif self.kind=="letvar" then
     return baseSize+1 -- kind,variable
   elseif self.kind=="tap" then
@@ -296,12 +296,12 @@ function astPrintPrettys(self)
   elseif self.kind=="mapreduce" then
     local vars,i = "",1
     while self["varname"..i] do
-      vars = vars.."_mr_"..self["varname"..i].."="..astPrintPrettys(self["varlow"..i])..","..astPrintPrettys(self["varhigh"..i]).." "
+      vars = vars.."_mr_"..self["varname"..i]..tostring(self["varid"..i]).."="..astPrintPrettys(self["varlow"..i])..","..astPrintPrettys(self["varhigh"..i]).." "
       i=i+1
     end
     out="map "..vars.." reduce("..self.reduceop..") "..astPrintPrettys(self.expr).." end"
   elseif self.kind=="mapreducevar" then
-    out="_mr_"..self.variable.."["..astPrintPrettys(self.low).." to "..astPrintPrettys(self.high).."]"
+    out="_mr_"..self.variable..tostring(self.id).."["..astPrintPrettys(self.low).." to "..astPrintPrettys(self.high).."]"
   elseif self.kind=="letvar" then
     out="_letvar_"..self.variable
   elseif self.kind=="reduce" then
@@ -613,12 +613,12 @@ function typedASTPrintPrettys(self,root,assignments)
   elseif self.kind=="mapreduce" then
     local vars,i = "",1
     while self["varname"..i] do
-      vars = vars.."_mr_"..self["varname"..i].."="..self["varlow"..i]..","..self["varhigh"..i].." "
+      vars = vars.."_mr_"..self["varname"..i]..tostring(self["varid"..i]).."="..self["varlow"..i]..","..self["varhigh"..i].." "
       i=i+1
     end
     out="map "..vars.." reduce("..self.reduceop..") "..typedASTPrintPrettys(self.expr, root, assignments).." end"
   elseif self.kind=="mapreducevar" then
-    out="_mr_"..self.variable.."["..self.low.." to "..self.high.."]"
+    out="_mr_"..self.variable..tostring(self.id).."["..self.low.." to "..self.high.."]"
   else
     print(self.kind)  
     assert(false)

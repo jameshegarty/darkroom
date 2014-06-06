@@ -611,6 +611,10 @@ function TypeFunctions:isFloat()
   return orion.type.isFloat(self)
 end
 
+function TypeFunctions:isBool()
+  return orion.type.isBool(self)
+end
+
 function TypeFunctions:isInt()
   return orion.type.isInt(self)
 end

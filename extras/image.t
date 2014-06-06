@@ -1411,8 +1411,8 @@ terra Image:toUint8()
   end
 end
 
-terra Image:toAOS()
-  if self.SOA then
+terra Image:SOAAOS(toAOS : bool)
+  if (self.SOA and toAOS) or (self.SOA==false and toAOS==false)then
     var bytes = self.bits/8
 
     var dst : &uint8
@@ -1423,10 +1423,11 @@ terra Image:toAOS()
     for y=0,self.height do
       for x=0,self.width do
         for c=0,self.channels do
-          var targetBase = [&uint8](dst)+(y*self.stride+x)*bytes*self.channels+bytes*c
-          var sourceBase = [&uint8](self.data)+(self.stride*self.height*c*bytes)+(y*self.stride+x)*bytes
+          var targetOffset = (y*self.stride+x)*bytes*self.channels+bytes*c
+          var sourceOffset = (self.stride*self.height*c*bytes)+(y*self.stride+x)*bytes
+          if toAOS==false then var t = targetOffset; targetOffset = sourceOffset; sourceOffset = t; end
           for b=0,bytes do
-            @(targetBase+b)=@(sourceBase+b)
+            @([&uint8](dst)+targetOffset+b)=@([&uint8](self.data)+sourceOffset+b)
           end
         end
       end
@@ -1434,39 +1435,20 @@ terra Image:toAOS()
     self:free()
     self.data = dst
     self.dataPtr = dst
-    self.SOA = false
+    self.SOA = (toAOS==false)
   end
 
 end
 
--- convert from AoS to SoA
-function makeToSOA(channels, ty)
-  assert(type(channels)=="number")
-  assert(channels>0)
-  assert(terralib.types.istype(ty))
-
-  local ptr = &ty
-  return 
-    terra(width:int,
-          height:int,
-          index:int,
-      from : ptr,
-      to : ptr)
-
-      if orion.verbose then cstdio.printf("TO SOA\n") end
-      orionAssert(index < channels, "index must be < channels")
-
-      for y=0,height do
-        for x=0,width do
-          for c=0,channels do
-            if c==index then @to=@from; to=to+1; end
-            from = from + 1
-          end
-        end
-      end
-    end
+terra Image:toAOS()
+  self:SOAAOS(true)
 end
 
 terra Image:toSOA()
+  self:SOAAOS(false)
+end
 
+-- convert to the format the darkroom expects for its imputs
+terra Image:toDarkroomFormat()
+  self:toSOA()
 end

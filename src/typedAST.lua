@@ -116,6 +116,39 @@ end
 -- if input isn't null, only calculate stencil for this input (a kernelGraph node)
 function typedASTFunctions:stencil(input)
 
+  local function translateArea(t1,t2)
+    local xs, ys
+
+    local function accShift(t, shift)
+      if type(t)=="table" and t.kind=="binop" then
+        assert(t.rhs.kind=="value")
+        return t.lhs, t.rhs.value+shift
+      end
+      return t,shift
+    end
+
+    t1 = accShift(accShift(t1,0))
+    t2 = accShift(accShift(t2,0))
+
+    if type(t1)=="number" then
+      xs = Stencil.new():add(t1,0,0)
+    elseif t1.kind=="mapreducevar" then
+      xs = Stencil.new():add(t1.low,0,0):add(t1.high,0,0)
+    else
+      assert(false)
+    end
+
+    if type(t2)=="number" then
+      ys = Stencil.new():add(0,t2,0)
+    elseif t2.kind=="mapreducevar" then
+      ys = Stencil.new():add(0,t2.low,0):add(0,t2.high,0)
+    else
+      assert(false)
+    end
+
+    return xs:product(ys)
+  end
+
   if self.kind=="binop" then
     return self.lhs:stencil(input):unionWith(self.rhs:stencil(input))
   elseif self.kind=="multibinop" then
@@ -155,7 +188,7 @@ function typedASTFunctions:stencil(input)
     return self.index:stencil(input):translate(self.translate1_index,self.translate2_index,0)
   elseif self.kind=="load" then
     local s = Stencil.new()
-    if input==nil or input==self.from then s = s:add(self.relX,self.relY,0) end
+    if input==nil or input==self.from then s = translateArea(self.relX,self.relY) end
     return s
   elseif self.kind=="gather" then
     --if input~=nil then assert(false) end
@@ -189,26 +222,7 @@ function typedASTFunctions:stencil(input)
   elseif self.kind=="crop" then
     return self.expr:stencil(input)
   elseif self.kind=="transformBaked" then
-    local xs, ys
-
-    if type(self.translate1)=="number" then
-      xs = Stencil.new():add(self.translate1,0,0)
-    elseif self.translate1.kind=="mapreducevar" then
-      xs = Stencil.new():add(self.translate1.low,0,0):add(self.translate1.high,0,0)
-    else
-      assert(false)
-    end
-
-    if type(self.translate2)=="number" then
-      ys = Stencil.new():add(0,self.translate2,0)
-    elseif self.translate2.kind=="mapreducevar" then
-      ys = Stencil.new():add(0,self.translate2.low,0):add(0,self.translate2.high,0)
-    else
-      assert(false)
-    end
-
-    local s = xs:product(ys)
-    return self.expr:stencil(input):product(s)
+    return self.expr:stencil(input):product(translateArea(self.translate1,self.translate2))
   elseif self.kind=="mapreduce" then
     return self.expr:stencil(input)
   elseif self.kind=="mapreducevar" then

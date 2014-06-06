@@ -11,36 +11,19 @@ orion.terracompiler = {}
 -- same key as the table. This is used to support multichannel input/output
 pointwiseDispatchMT = {
   __index = function(self, method) 
-    print("PDMT",method, keycount(self)==#self)
-    for k,v in pairs(self) do print(k,v) end
-
-      return function(self, ...)
-        print("DO POINTWISE", method)
-        local res = {}
-        for i, element in pairs(self) do
-          local varargs = {...}
-          for k,v in ipairs(varargs) do 
-            --            if type(v)=="table" and keycount(v)==#v then varargs[k] = v[i]; print("split",k) end
-            if type(v)=="table" then
-              print("VA",k,v, keycount(v)==#v)
-              for k,v in pairs(v) do print("VAK",k,v) end
-            end
-
-            if type(v)=="table" and keycount(v)==#v then
-              varargs[k] = v[i]; 
-              print("split",k,i)
-              for k,v in pairs(v[i]) do print("splitK",k,v) end
-            else
-
-            end
+    return function(self, ...)
+      local res = {}
+      for i, element in pairs(self) do
+        local varargs = {...}
+        for k,v in ipairs(varargs) do 
+          if type(v)=="table" and keycount(v)==#v then
+            varargs[k] = v[i]; 
           end
-          print("call",method,isLineBufferWrapper(element),isImageWrapper(element))
-          table.insert(res, element[method](element,unpack(varargs)))
-          print("calldone")
         end
-        return quote res end
+        table.insert(res, element[method](element,unpack(varargs)))
       end
-
+      return quote res end
+  end
   end
 }
 
@@ -227,8 +210,9 @@ end
 
 -- relX and relY should be integer constants relative to
 -- the current location
-function LineBufferWrapperFunctions:get(loopid, relX,relY, V, validLeft, validRight)
+function LineBufferWrapperFunctions:get(loopid, gather, relX,relY, V, validLeft, validRight)
   assert(type(loopid)=="number")
+  assert(type(gather)=="boolean")
   assert(type(relX)=="number" or terralib.isquote(relX))
   assert(type(relY)=="number" or terralib.isquote(relY))
   assert(type(V)=="number")
@@ -240,7 +224,7 @@ function LineBufferWrapperFunctions:get(loopid, relX,relY, V, validLeft, validRi
       local lrelX = relX
       local lrelY = relY
 
-      if terralib.isquote(relX) then
+      if gather then
         lrelX = `relX[i]
         lrelY = `relY[i]
       end
@@ -258,7 +242,7 @@ function LineBufferWrapperFunctions:get(loopid, relX,relY, V, validLeft, validRi
     end
   end
 
-  if terralib.isquote(relX) then -- gather
+  if gather then 
     local res = {}
     for i=0,V-1 do table.insert(res, `@([self.iv[loopid]] + relY[i]*[self:lineWidth()] + relX[i] + i) ) end
     return quote debugChecks in vectorof([self.orionType:toTerraType()], res) end
@@ -345,9 +329,6 @@ function ImageWrapperFunctions:declare( loopid, x, y, clock, core, stripId )
 end
 
 function ImageWrapperFunctions:set( loopid, value, V )
-  print("VALl",value,terralib.isquote(value))
-  print(debug.traceback())
-  for k,v in pairs(value) do print(k,v) end
   assert(terralib.isquote(value))
   assert(type(loopid)=="number")
   assert(type(V)=="number")
@@ -371,31 +352,35 @@ end
 
 -- relX and relY should be integer constants relative to
 -- the current location
-function ImageWrapperFunctions:get(loopid, relX,relY, V)
+function ImageWrapperFunctions:get(loopid, gather, relX, relY, V)
   assert(type(loopid)=="number")
+  assert(type(gather)=="boolean")
   assert(type(relX)=="number")
   assert(type(relY)=="number")
   assert(type(V)=="number")
 
-  local debugChecks = {}
+  local expr
 
-  if self.debug then
---    local regionWidth = self.region:growToNearestX(orion.tune.V):getWidth()
-    table.insert(debugChecks,
-                 quote
-                 var this = [self.data[loopid]] + relY*[self.stride] + relX
-
-                 if (this-[self.basePtr])<0 then cstdio.printf("this:%d start:%d self.data:%d relY:%d stride:%d relX%d\n",
-                                                               this,[self.basePtr],[self.data[loopid]],relY,[self.stride],relX) 
-                 end
-                 orionAssert( (this-[self.basePtr])>=0,"read before start of array")
---                 orionAssert( (this-[self.basePtr])<maxv,"read beyond end of array")
-  end)
-    return `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]] + relY*[self.stride] + relX),{align=V})
+  if gather then
+    local res = {}
+    for i=0,V-1 do table.insert(res, `@([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]] + relY[i]*[self.stride] + relX[i])) ) end
+    expr = `vectorof([self.orionType:toTerraType()], res)
   else
-    return `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]] + relY*[self.stride] + relX),{align=V})
+    expr = `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]] + relY*[self.stride] + relX),{align=V})
   end
 
+  if self.debug then
+    return quote
+      var this = [self.data[loopid]] + relY*[self.stride] + relX
+      
+      if (this-[self.basePtr])<0 then cstdio.printf("this:%d start:%d self.data:%d relY:%d stride:%d relX%d\n",
+                                                    this,[self.basePtr],[self.data[loopid]],relY,[self.stride],relX) 
+      end
+      orionAssert( (this-[self.basePtr])>=0,"read before start of array")
+      in expr end
+  end
+
+  return expr
 end
 
 function ImageWrapperFunctions:next(loopid,v)
@@ -542,6 +527,7 @@ orion.terracompiler.boolBinops={
   ["or"]=function(lhs,rhs) return `lhs or rhs end
 }
 
+local mapreducevarSymbols = {}
 function orion.terracompiler.codegen(
   inkernel, V, xsymb, ysymb, loopid, stripCount, kernelNode, inputImages, outputs, taps, TapStruct, validLeft, validRight)
 
@@ -560,15 +546,22 @@ function orion.terracompiler.codegen(
         local out
         local resultSymbol = orion.terracompiler.symbol(node.type:baseType(), false, V)
 
---        print(node.kind,node.type:channels())
---        for k,v in node:inputs() do
---          print("k",k)
---          assert(terralib.isquote(inputs[k][c]))
---        end
-      
         if node.kind=="load" then
+          local relX, relY
+          if type(node.relX)=="number" then 
+            relX = node.relX 
+          else
+            relX = `[inputs.relX[1]][0]
+          end
+
+          if type(node.relY)=="number" then 
+            relY = node.relY 
+          else
+            relY = `[inputs.relY[1]][0]
+          end
+
           assert(orion.kernelGraph.isKernelGraph(node.from) or type(node.from)=="number")
-          out = inputImages[kernelNode][node.from][c]:get(loopid, node.relX, node.relY,  V, validLeft, validRight);
+          out = inputImages[kernelNode][node.from][c]:get(loopid, false, relX, relY,  V, validLeft, validRight);
         elseif node.kind=="binop" then
           local lhs = inputs["lhs"][c]
           local rhs = inputs["rhs"][c]
@@ -580,7 +573,7 @@ function orion.terracompiler.codegen(
             end
           
             out = orion.terracompiler.numberBinops[node.op](lhs,rhs,V)
-          elseif node.lhs.type:baseType():isBoolean() and node.rhs.type:baseType():isBoolean() then
+          elseif node.lhs.type:baseType():isBool() and node.rhs.type:baseType():isBool() then
             
             if orion.terracompiler.boolBinops[node.op]==nil then
               orion.error("Unknown scalar bool op "..node.op)
@@ -755,7 +748,7 @@ function orion.terracompiler.codegen(
             end
           end
 
-          in [inputImages[kernelNode][node.input.from][c]:get(loopid, `inpX+node.input.relX, `inpY+node.input.relY,  V, validLeft, validRight)]
+          in [inputImages[kernelNode][node.input.from][c]:get(loopid, true, `inpX+node.input.relX, `inpY+node.input.relY,  V, validLeft, validRight)]
           end
       elseif node.kind=="crop" then
         -- just pass through, crop only affects loop iteration space
@@ -764,6 +757,26 @@ function orion.terracompiler.codegen(
         out = inputs["expr"..c][1]
       elseif node.kind=="index" then
         out = inputs["expr"][node.index+1]
+      elseif node.kind=="mapreducevar" then
+        if mapreducevarSymbols[node.id]==nil then
+          mapreducevarSymbols[node.id] = symbol(int,node.variable)
+        end
+        out = `[mapreducevarSymbols[node.id]]
+      elseif node.kind=="mapreduce" then
+        out = quote stat in [inputs["expr"][c]] end
+        for k,v in pairs(stat) do stat[k] = nil end
+
+        local i = 1
+        while node["varid"..i] do
+          out = quote 
+            var sum : orion.type.toTerraType(node.type:baseType(),false,V) = 0
+            for [mapreducevarSymbols[node["varid"..i]]]=[node["varlow"..i]],[node["varhigh"..i]]+1 do 
+              sum = sum +out 
+            end
+                                                         in sum end
+          i = i + 1
+        end
+        
       else
         orion.error("Internal error, unknown ast kind "..node.kind)
       end
@@ -881,6 +894,17 @@ end
 function vectorizeRegion(r, V) assert(type(V)=="number");return {left=`downToNearestTerra(V, r.left), right=`upToNearestTerra(V, r.right), top=r.top, bottom=r.bottom} end
 function shiftRegion(r, shift) return {left=r.left, right=r.right, top=`r.top+shift, bottom = `r.bottom+shift} end
 
+-- wrap the regions in symbols, to make code easier to read
+function memo(name, t)
+  local symbs ={}
+  local stats ={}
+  for k,v in pairs(t) do
+    symbs[k] = symbol(int32,name..k)
+    table.insert(stats, quote var [symbs[k]] = v end)
+  end
+  return symbs, stats
+end
+
 -- codegen all the stuff in the inner loop
 function orion.terracompiler.codegenInnerLoop(
     core, 
@@ -898,7 +922,7 @@ function orion.terracompiler.codegenInnerLoop(
   assert(type(shifts)=="table")
   assert(type(options)=="table")
 
-  local x = symbol(int)
+  local x = symbol(int,"x")
 
   local loopStartCode = {}
   local loopCode = {}
@@ -921,19 +945,20 @@ return
       -- requested y=[0,n] of a function shifted by s, then neededY=[s,n+s]. As a result, this implementation
       -- closely resembles hardware that produces 1 line per clock. 
 
-      local needed = needed( kernelGraph, n, strip, shifts, options ) -- clock space
-      local neededImageSpace = shiftRegion( needed, -shifts[n] )
-      local valid = valid( kernelGraph, n, strip, shifts, options )
-      local validVectorized = vectorizeRegion(valid, options.V) -- always >= valid to the nearest vector width
+      local needed, neededStat = memo("needed",needed( kernelGraph, n, strip, shifts, options )) -- clock space
+      local neededImageSpace, neededImageSpaceStat = memo("neededImageSpace",shiftRegion( needed, -shifts[n] ))
+      local valid, validStat = memo("valid",valid( kernelGraph, n, strip, shifts, options ))
+      local validVectorized, validVectorizedStat = memo("validVectorized",vectorizeRegion(valid, options.V)) -- always >= valid to the nearest vector width
 
       table.insert(loopStartCode,
         quote
+          neededStat; neededImageSpaceStat; validStat; validVectorizedStat;
           -- we use image space needed region here b/c These are the actual pixel coords we will write to
           -- since all image accesses use relative coordinates, This doesn't cause problems
           [inputs[n]:declare( loopid, neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, linebufferBase ) ];
           [outputs[n]:declare( loopid, neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, linebufferBase ) ];
           
-          if orion.verbose then
+          if options.verbose then
             cstdio.printf("--- %s V %d cores %d core %d shift %d\n",[n.kernel:name()],options.V, options.cores, strip, [shifts[n]])
             cstdio.printf("valid l %d r %d t %d b %d\n",[valid.left],[valid.right],[valid.top],[valid.bottom])
             cstdio.printf("validVectorized l %d r %d t %d b %d\n",[validVectorized.left],[validVectorized.right],[validVectorized.top],[validVectorized.bottom])
@@ -963,7 +988,6 @@ return
             else
               -- interior row(s), mixed boundary and calculated region
 
-              cstdio.printf("vec region %d\n", validVectorized.left-needed.left)
               [outputs[n]:next( loopid, `validVectorized.left-needed.left )];
               [inputs[n]:next( loopid, `validVectorized.left-needed.left )];
 
@@ -977,7 +1001,6 @@ return
               [outputs[n]:next( loopid, `-(validVectorized.right-needed.left) )];
               [inputs[n]:next( loopid, `-(validVectorized.right-needed.left) )];
               
-              cstdio.printf("lb region %d %d\n",needed.left,valid.left)
               -- these need to happen out of order b/c we may _overwrite_ sections of the array that were written by the loop above
               for [x] = needed.left, valid.left do
                 [outputs[n]:set( loopid, `0, 1 )];
@@ -988,7 +1011,6 @@ return
               [outputs[n]:next( loopid, `valid.right-valid.left )];
               [inputs[n]:next( loopid, `valid.right-valid.left )];
               
-              cstdio.printf("lr region %d %d\n", valid.right, needed.right)
               for [x] = valid.right, needed.right do
                 [outputs[n]:set( loopid, `0, 1 )];
                 [outputs[n]:next( loopid, 1 )];
@@ -1129,11 +1151,15 @@ function orion.terracompiler.allocateImageWrappers(
   local outputs = {} -- kernelGraphNode->output wrapper
   local linebufferSize = 0
 
+  local function channelPointer(c,ptr,ty)
+    return `[&ty](ptr)+[options.width*options.height]*c
+  end
+
   local inputWrappers = {}
   local function getInputWrapper(id,type)
     if inputWrappers[id]==nil then
       inputWrappers[id] = {}
-      for c = 1,type:channels() do inputWrappers[id][c] = newImageWrapper( inputImageSymbolMap[id], type:baseType(), options.width, options.terradebug ) end
+      for c = 1,type:channels() do inputWrappers[id][c] = newImageWrapper( channelPointer(c-1,inputImageSymbolMap[id], type:baseType():toTerraType()), type:baseType(), options.width, options.terradebug ) end
       setmetatable(inputWrappers[id],pointwiseDispatchMT)
     end
     return inputWrappers[id]
@@ -1142,10 +1168,6 @@ function orion.terracompiler.allocateImageWrappers(
   local function parentIsOutput(node)
     for v,k in node:parents(kernelGraph) do if v==kernelGraph then return k end end
     return nil
-  end
-
-  local function channelPointer(c,ptr,ty)
-    return `[&ty](ptr)+[options.width*options.height]*c
   end
 
   kernelGraph:S("*"):traverse(
@@ -1197,12 +1219,6 @@ function orion.terracompiler.allocateImageWrappers(
         end
       end
     end)
-
-  for k,v in pairs(inputs) do
-    for kk,vv in pairs(v) do
-      print(inputs,k,kk,vv)
-    end
-  end
 
   return inputs, outputs, linebufferSize
 end
@@ -1256,11 +1272,9 @@ function orion.terracompiler.compile(
 
   local threadCode = orion.terracompiler.codegenThread( kernelGraph, inputImages, TapStruct, shifts, options )
 
-  threadCode:printpretty()
+  threadCode:printpretty(false)
 
   local fin = terra([inputImageSymbolTable], [outputImageSymbolTable], tapsIn : &opaque)
-    cstdio.printf("START DR\n")
-
     var start = orion.currentTimeInSeconds()
     
     var taps : &TapStruct = [&TapStruct](tapsIn)
