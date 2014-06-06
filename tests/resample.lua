@@ -1,7 +1,7 @@
 ffi = require "ffi"
 
 terralib.require("test")
-terralib.require("common")
+terralib.require("bilinear")
 import "darkroom"
 
 maxVelocity = 1
@@ -27,24 +27,15 @@ local terra makeIm(data : &float)
 end
 
 u_im = makeIm(u_data)
-local u = darkroomSimple.image(orion.type.float(32),testinput:width(),testinput:height())
-orion.bindImage( u:id(), u_im )
+local u = darkroomSimple.image(u_im)
 
 v_im = makeIm(v_data)
-local v = darkroomSimple.image(orion.type.float(32),testinput:width(),testinput:height())
-orion.bindImage( v:id(), v_im )
+local v = darkroomSimple.image(v_im)
 
-
-test({im(x,y) [resampleBilinear(
+test(im(x,y) [resampleBilinear(
     false,
     testinput, 
     maxVelocity, 
     maxVelocity, 
-    u,v)] end,
-im(x,y) [resampleBilinearSlow(
-    false,
-    testinput, 
-    maxVelocity, 
-    maxVelocity, 
-    u,v)] end})
+    u,v)] end)
 

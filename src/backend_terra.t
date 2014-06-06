@@ -565,8 +565,19 @@ function orion.terracompiler.codegen(
         elseif node.kind=="binop" then
           local lhs = inputs["lhs"][c]
           local rhs = inputs["rhs"][c]
-        
-          if node.lhs.type:baseType():isNumber() and node.rhs.type:baseType():isNumber() then
+
+          if node.op=="dot" then
+            local i = 1
+            while inputs["lhs"][i] do
+              if out==nil then 
+                out = `[inputs["lhs"][i]] * [inputs["rhs"][i]]
+              else
+                out = `out + [inputs["lhs"][i]] * [inputs["rhs"][i]]
+              end
+              i = i + 1
+            end
+
+          elseif node.lhs.type:baseType():isNumber() and node.rhs.type:baseType():isNumber() then
           
             if orion.terracompiler.numberBinops[node.op]==nil then
               orion.error("Unknown scalar op "..node.op)
@@ -584,51 +595,26 @@ function orion.terracompiler.codegen(
             print("Unknown/bad type to binop", node.lhs.type:toString(), node.rhs.type:toString() )
             os.exit()
           end
-        elseif node.kind=="multibinop" then
-          
-          if node.op=="dot" then
-            local dotresult
-            
-            node:map("lhs",
-                     function(n,i)
-                       if dotresult==nil then
-                         dotresult = `([inputs["lhs"..i]]*[inputs["rhs"..i]])
-                       else
-                         dotresult = `dotresult + ([inputs["lhs"..i]]*[inputs["rhs"..i]])
-                       end
-                     end)
-            
-            out = dotresult
-          else
-            assert(false)
-          end
-        elseif node.kind=="multiunary" then
-          
-          if node.op=="arrayAnd" then
-            
-            local cmpresult
-            
-            node:map("expr",
-                     function(n,i)
-                       if cmpresult==nil then
-                         cmpresult = inputs["expr"..i]
-                       else
-                         cmpresult = `cmpresult and [inputs["expr"..i]]
-                       end
-                     end)
-            
-            out = cmpresult
-          else
-            assert(false)
-          end
         elseif node.kind=="unary" then
           local expr = inputs["expr"][c]
-        
-          if orion.terracompiler.numberUnary[node.op]==nil then
+          
+          if node.op=="arrayAnd" then
+            local i = 1
+            while inputs["expr"][i] do
+              if out==nil then 
+                out = inputs["expr"][i]
+              else
+                out = `out and [inputs["expr"][i]]
+              end
+              i = i + 1
+            end
+
+          elseif orion.terracompiler.numberUnary[node.op]==nil then
             orion.error("Unknown unary op "..node.op)
+          else
+            out = orion.terracompiler.numberUnary[node.op](expr,node.expr,V)
           end
 
-          out = orion.terracompiler.numberUnary[node.op](expr,node.expr,V)
         elseif node.kind=="value" then
           out = `[orion.type.toTerraType(node.type:baseType(),false,V)](node.value)
         elseif node.kind=="tap" then

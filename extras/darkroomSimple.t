@@ -11,6 +11,57 @@ orionSimple.height = nil
 
 terralib.require("image")
 
+function imageToOrionType(im)
+  local _type = orion.type.uint(8)
+
+  
+  assert(im.isSigned==false)
+
+  if im.floating then
+    if im.bits == 32 then
+      _type = orion.type.float(32)
+    else
+      assert(false)
+    end
+
+  else
+    if im.bits==8 then
+      --print("Bits should be 8, they are " .. im.bits ) 
+    elseif im.bits==16 then
+      _type = orion.type.uint(16)
+    elseif im.bits==32 then
+      _type = orion.type.uint(32)
+    else 
+      print("Bits should be 8, 16, or 32, they are " .. im.bits ) 
+      assert(false)
+    end
+  end
+
+  if im.channels>1 then _type = orion.type.array(_type,im.channels) end
+  if orion.verbose then print("channels", im.channels) end
+
+  return _type
+end
+
+function orionSimple.image(img)
+  if orionSimple.width==nil then
+    orionSimple.width = img.width
+    orionSimple.height = img.height
+  else
+    assert(orionSimple.width==img.width)
+    assert(orionSimple.height==img.height)
+  end
+
+  local _type = imageToOrionType(img)
+
+  local inp = orion.input(_type)
+  table.insert(orionSimple.images,inp)
+  table.insert(orionSimple.imageInputs,quote img:toDarkroomFormat() in img.data end)
+
+  return inp
+
+end
+
 -- convenience function. Loads an image and returns it as an orion function
 -- it only makes sense to call this guy at compile time
 function orionSimple.load(filename, boundaryCond)
@@ -36,20 +87,7 @@ function orionSimple.load(filename, boundaryCond)
     assert(orionSimple.height==im.height)
   end
 
-  local _type = orion.type.uint(8)
-  if im.bits==8 then
-     --print("Bits should be 8, they are " .. im.bits ) 
-  elseif im.bits==16 then
-    _type = orion.type.uint(16)
-  elseif im.bits==32 then
-    _type = orion.type.uint(32)
-  else 
-     print("Bits should be 8, 16, or 32, they are " .. im.bits ) 
-     assert(false)
-  end
-
-  if im.channels>1 then _type = orion.type.array(_type,im.channels) end
-  if orion.verbose then print("channels", im.channels) end
+  local _type = imageToOrionType(im)
 
   local inp = orion.input(_type)
   table.insert(orionSimple.images,inp)

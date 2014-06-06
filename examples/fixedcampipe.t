@@ -14,7 +14,7 @@ function bilinearDemosaic(in1)
 
   return im dem(x,y)
     let
-    out : rgb8 = 0
+    out = orion.array3uint8(0)
     
     -- build the red channel
     r_tr_a = in1(x,y+1)
@@ -104,12 +104,12 @@ end
 
 function campipe(in1)
   -- do the campipe using floats
-  local im out(x,y) : float32, cropNone in1(x,y) end
+  local im out(x,y) orion.float32(in1(x,y)) end
 
   local out = bilinearDemosaic(out)
   out = doccm(out) 
   out = tonemap(out)
-  return im(x,y) : uint8[3] out(x,y) end
+  return im(x,y) orion.array3uint8( out(x,y) ) end
 end
 
 sensor = darkroomSimple.load("300d.bmp")

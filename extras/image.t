@@ -1452,3 +1452,4 @@ end
 terra Image:toDarkroomFormat()
   self:toSOA()
 end
+
