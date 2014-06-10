@@ -333,7 +333,7 @@ function astPrintPrettys(self)
   elseif self.kind=="crop" then
     out = "crop("..astPrintPrettys(self.expr)..", shiftY=" .. self.shiftY .. ")"
   elseif self.kind=="cast" then
-    out = "cast("..astPrintPrettys(self.expr)..","..astPrintPrettys(self.type)..")"
+    out = "cast("..astPrintPrettys(self.expr)..","..self.type:str()..")"
   elseif self.kind=="type" then
     out = self.type:str()
   elseif self.kind=="let" then
@@ -380,6 +380,9 @@ function astPrintPrettys(self)
     out = out..tostring(self.maxX)..", "..tostring(self.maxY)..", "..tostring(self.clamp)..")"
   elseif self.kind=="index" then
     out = astPrintPrettys(self.expr).."["..astPrintPrettys(self.index).."]"
+  elseif self.kind=="var" then
+--    out = self.name
+    out = "VAR"..self.name
   else
     print(self.kind)
     assert(false)

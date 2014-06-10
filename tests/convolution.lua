@@ -13,7 +13,7 @@ function convolution(N,K,in1)
     end
   end
 
-  return im(x,y) orion.uint8( out(x,y) ) end
+  return im(x,y) [uint8]( out(x,y) ) end
 end
 
 

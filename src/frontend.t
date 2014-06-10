@@ -11,37 +11,6 @@ appendSet(orion.binops,orion.cmpops)
 orion.keyremap = {r=0,g=1,b=2, x=0, y=1, z=2}
 orion.dimToCoord={[1]="x",[2]="y",[3]="z"}
 
-setmetatable(orion,{
-  __index = function(tab,key)
---    print("INDEX",key)
-    local stype = orion.type.stringToType(key)
-
-    -- autogenerate the cast macros
-    if stype then
-    elseif key:sub(1,5)=="array" then
-      local subkey = key:sub(6)
-      local arrLen = subkey:match("%d+")
-      local s, e = subkey:find("%d+")
-      stype = orion.type.stringToType(subkey:sub(e+1))
-
-      if stype then
-        stype = orion.type.array(stype,tonumber(arrLen))
-      else
-        return nil
-      end
-    end
-
-    tab[key] = function( thisast, expr )
-      assert(orion.ast.isAST(expr))
-      local typeNode = orion.ast.new({kind="type",type=stype}):copyMetadataFrom(thisast)
-      return orion.ast.new({kind="cast",expr=expr,type=typeNode}):copyMetadataFrom(thisast)
-    end
-    return tab[key]
-
-  end})
-
-
-
 ----------------------
 -- these are macros, which will become ops in the orion langauge
 -- orion macros are passed the AST of the macro itself as the first argument
@@ -216,32 +185,12 @@ function orion.warning(str, line, offset,filename)
   print("Warning: "..str,"line",line,"offset",offset,"filename",filename)
 end
 
-function orion.remapSubkey(subkey)
-  if type(subkey)=="string" then
-    if orion.keyremap[subkey]==nil then
-      print("Error, subkey "..subkey.." doesn't map to an array index")
-      os.exit()
-    end
-
-    return orion.keyremap[subkey]
-
-  elseif type(subkey)=="number" then
-    return subkey
-  end
-
-  orion.error("Error, subkey has bad type "..type(subkey))
-
-  return nil
-end
-
-
 -- convert the luavalue to an orion type
 -- implements behavior of dropping a unquoted lua value in Orion
 -- ast is either a func node or a lua node that yielded this value
-function orion.quoteToOrion(luavalue, ast)
+function orion.evalEscape(luavalue, ast)
   assert(orion.ast.isAST(ast))
-  assert(ast.kind=="func" or ast.kind=="lua")
-
+  assert(ast.kind=="escape")
 
   if orion.ast.isAST(luavalue) then
     return luavalue
@@ -251,8 +200,8 @@ function orion.quoteToOrion(luavalue, ast)
     end
 
     return orion.ast.new({kind="value",value=luavalue}):copyMetadataFrom(ast)
-  elseif type(luavalue)=="table" and orion.type.isType(luavalue) then
-    return orion.ast.new({kind="type",type=luavalue}):copyMetadataFrom(ast)
+  elseif type(luavalue)=="table" and terralib.types.istype(luavalue) then
+    return orion.ast.new({kind="type",type=orion.type.fromTerraType(luavalue)}):copyMetadataFrom(ast)
   elseif type(luavalue)=="table" then
     for k,v in pairs(luavalue) do
       if type(k)~="number" then 
@@ -283,222 +232,90 @@ function orion.quoteToOrion(luavalue, ast)
   return nil
 end
 
--- takes in a func and returns targetTable, key for the identifier
--- if this ends up indexing into a nil table, return (nil, id of nil table in ident list)
-function orion.identifierToVariable(root, ident)
-  assert(type(ident)=="table")
-  for k,v in pairs(ident) do 
-    if type(v)~="string" and type(v)~="number" then 
-      print("ERROR")
-      for a,b in pairs(ident) do
-        print(to_string(b))
-	print("BREAK")
-      end      
-    end
-
-    assert(type(v)=="string" or type(v)=="number") 
-  end
-
-  if #ident == 0 then
-    return root, nil
-  end
-
-  if #ident == 1 then
-    return root, ident[1]
-  end
-
-  local target = root[ident[1]]
-        
-  for i=2,(#ident-1) do
-    if target==nil then
-      return nil,i
-    else
-      target = target[ident[i]]
-    end
-  end
-
-  return target, ident[#ident]
-end
-
--- take a 'func' ast node, resolve its identifier, and plop in
--- the ast node for its value. This is either:
--- (a) a lua variable, which becomes a const
--- (b) a lua variable, which contains an ast (and generate translate/scale as needed)
-function orion.resolveIdentifiers(ast,xvar,yvar,zvar,env)
-  assert(ast.kind=="func")
-  assert(type(env)=="table")
-  
-  local i=1
-  local identifier={}
-  while ast["identifier"..i] do
-    local v = ast["identifier"..i]
-    if orion.ast.isAST(v) then
-      if v.kind=="value" then
-        assert(type(v.value)=="string" or type(v.value)=="number")
-        identifier[k] = v.value
-      else
-        orion.error("key into lua variable or array must be constant")
-      end
-    else
-      assert(type(v)=="string" or type(v)=="number")
-      identifier[i]=ast["identifier"..i]
-    end
-    i=i+1
-  end
-
-  local targetTable,key = orion.identifierToVariable(env,identifier)
-  
-  if #identifier==1 and (identifier[1]==xvar) then
-    -- check if this is the position argument first
-    if ast.arg1~=nil then orion.error("You can't offset a position var!",ast.line,ast.char);os.exit() end
-    return orion.ast.new({kind="position",coord="x"}):copyMetadataFrom(ast)
-  elseif #identifier==1 and (identifier[1]==yvar) then
-    if ast.arg1~=nil then orion.error("You can't offset a position var!",ast.line,ast.char);os.exit() end
-    return orion.ast.new({kind="position",coord="y"}):copyMetadataFrom(ast)
-  elseif #identifier==1 and (identifier[1]==zvar) then
-    if ast.arg1~=nil then orion.error("You can't offset a position var!",ast.line,ast.char);os.exit() end
-    return orion.ast.new({kind="position",coord="z"}):copyMetadataFrom(ast)
-  elseif targetTable==nil then
-    orion.error("Fatal error, variable ".. table.concat(identifier,".") .." is undefined!",ast.line,ast.char)
-    os.exit()
-  elseif (Strict~=nil and targetTable==_G and Strict.isDeclared(key)==false) or  -- have to do this to make Strict.lua not trigger
-         targetTable[key]==nil then
-
-    -- note that, unlike when we're finding a variable to write to, when
-    -- we're resolving an existing variable targetTable[key] must be defined
-
-    -- check if we're dealing with the case where we're looking up whatever.whatever.r or whatever.whatever[3]
-    -- ie we have an array type we're indexing into
-
-    if #identifier>1 then
-      local subident = {}
-      for i=1,#identifier-1 do subident[i]=identifier[i] end
-      local targetTable,key = orion.util.identifierToVariable(env,subident)
-      
-      -- this shouldn't be possible if we got this far
-      assert(targetTable~=nil)
-      assert(targetTable[key]~=nil)
-
-      if orion.ast.isAST(targetTable[key]) then
-        local subkey = identifier[#identifier]
-        return orion.ast.index(targetTable[key], orion.remapSubkey(subkey) )
-      end
-    end
-
-    orion.error("Fatal error, variable ".. table.concat(identifier,".") .." is nil!",ast:linenumber(),ast.char)
-    os.exit()
-  end
-
-  if orion.ast.isAST(targetTable[key]) then
-    return targetTable[key]
-  end
-  
-  -- it's a lua value. convert it to an ast
-  return orion.quoteToOrion(targetTable[key], ast)
-
-end
-
-
-
 ---------------------------------------------------------
 orion.Parser = terralib.require("parsing")
 orion.lang = {}
 
-orion.lang.value = function(p)
-
-    if p:nextif("true") then
-      return orion.ast.new({kind="value",value=true}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
-    elseif p:nextif("false") then
-      return orion.ast.new({kind="value",value=false}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
-    elseif p:matches(p.number) then
-      return orion.ast.new({kind="value",value=p:next().value}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
-    elseif p:matches(p.name) then
-      return p:func()
-    else
-      p:errorexpected("value")
-    end
-
-    return nil
+local function literal(p, v)
+  p:next()
+  return orion.ast.new({kind="value",value=v}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
 end
 
+local function unary(p)
+  local op = p:next().type
+  local expr = p:expr(5)
+  return orion.ast.new({kind="unary",op=op,expr = expr}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
+end
+
+local function binary(p,lhs,fixity)
+  local op = p:next().type
+  local rhs = p:expr(op,fixity)
+  return orion.ast.new({kind="binop", op=op, lhs=lhs, rhs=rhs}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
+end
+local leftbinary = binary
 ----------------------------------------------------------
-orion.lang.expr = orion.Parser.Pratt():prefix(orion.Parser.default,function(p)
-    return p:value()
-  end)
+orion.lang.expr = orion.Parser.Pratt()
+:prefix("-", unary)
+:prefix("not", unary)
+:infix("or", 0, leftbinary)
+:infix("and", 1, leftbinary)
 
-  -- prescedence for binary operators. based on c++ precedence
-  local precedence = {}
-  precedence["or"] = 10
-  precedence["and"] = 11
-  precedence["|"] = 12
-  precedence["^"] = 13
-  precedence["&"] = 14
-  precedence["=="] = 20
-  precedence["~="] = 20
-  precedence["<"] = 21
-  precedence[">"] = 21
-  precedence[">="] = 21
-  precedence["<="] = 21
-  precedence["<<"] = 30
-  precedence[">>"] = 30
-  precedence["+"] = 40
-  precedence["-"] = 40
-  precedence["%"] = 50
-  precedence["*"] = 50
-  precedence["/"] = 50
+:infix("<", 2, leftbinary)
+:infix(">", 2, leftbinary)
+:infix("<=", 2, leftbinary)
+:infix(">=", 2, leftbinary)
+:infix("==", 2, leftbinary)
+:infix("~=", 2, leftbinary)
 
+:infix("<<", 2, leftbinary)
+:infix(">>", 2, leftbinary)
 
-  for op,_ in pairs(orion.binops) do
-    orion.lang.expr = orion.lang.expr:infix(op,precedence[op],function(p,lhs)
-      local op = p:next().type
-      local rhs = p:expr(precedence[op])
-      return orion.ast.new({kind="binop", op=op, lhs=lhs, rhs=rhs}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
+:infix("+", 3, leftbinary)
+:infix("-", 3, leftbinary)
+:infix("*", 4, leftbinary)
+:infix('/', 4, leftbinary)
+:infix('%', 4, leftbinary)
+:infix('.', 7, function(p,lhs)
+         p:next()
+         return orion.ast.new({kind="fieldselect", expr = lhs, field = p:expect(p.name).value}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
+               end)
+:infix("[", 8, function(p,lhs)
+         local begin = p:next().linenumber
+         local idx = p:expr()
+         p:expectmatch(']', '[', begin )
+         return orion.ast.new({kind="index",index=idx,expr = lhs}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
     end)
-  end
+:infix("(", 8, function(p,lhs)
+         local begin = p:next().linenumber
 
-  for op,_ in pairs(orion.unops) do
-    orion.lang.expr = orion.lang.expr:prefix(op,
-      function(p)
-        local op = p:next().type
-        local expr = p:expr(90)
-        return orion.ast.new({kind="unary",op=op,expr = expr}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
-      end)
-  end
-
-  -- postfix
-  orion.lang.expr = orion.lang.expr:infix("[", 100, 
-    function(p,lhs)
-      p:expect("[")
-      local idx = p:expr()
-      p:expect("]")
-      return orion.ast.new({kind="index",index=idx,expr = lhs}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
-    end)
-
-  orion.lang.expr = orion.lang.expr:infix("(", 100, 
-    function(p,lhs)
-      p:expect("(")
-
-      local args = {}
-      table.insert(args,p:expr())
+         local args = {}
+         table.insert(args,p:expr())
       
-      while p:nextif(",") do
-        table.insert(args,p:expr())
-      end
+         while p:nextif(",") do
+           table.insert(args,p:expr())
+         end
 
-      p:expect(")")
+         p:expectmatch(')','(', begin)
 
-      local newnode = {kind="apply",expr=lhs}
-      for k,v in pairs(args) do newnode["arg"..k]=v end
-      return orion.ast.new(newnode):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
+         local newnode = {kind="apply",expr=lhs}
+         for k,v in pairs(args) do newnode["arg"..k]=v end
+         return orion.ast.new(newnode):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
     end)
-
-  orion.lang.expr = orion.lang.expr:prefix("(",function(p)
+:prefix(orion.Parser.name,function(p)
+          local name = p:next().value
+          p:ref(name) --make sure var appears in the envfn passed to constructor
+          return orion.ast.new({kind="var",name=name}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
+                   end)
+:prefix(orion.Parser.number, function(P) return literal(P,P:cur().value) end)
+:prefix('true', function(P) return literal(P,true) end)
+:prefix('false', function(P) return literal(P,false) end)
+:prefix("(",function(p)
     p:expect("(")
     local expr = p:expr()
     p:expect(")")
     return expr
   end)
-  :prefix("{",function(p)
+:prefix("{",function(p)
     local ar = {kind="array"}
     local exprcnt = 1
 
@@ -513,13 +330,13 @@ orion.lang.expr = orion.Parser.Pratt():prefix(orion.Parser.default,function(p)
 
     return orion.ast.new(ar):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
   end)
-  :prefix("[",function(p)
+:prefix("[",function(p)
     p:expect("[")
     local expr = p:luaexpr()
     p:expect("]")
-    return orion.ast.new({kind="lua",expr = expr}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
+    return orion.ast.new({kind="escape",expr = expr}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
   end)
-  :prefix("if",function(p)
+:prefix("if",function(p)
     p:expect("if")
     local condexpr = p:expr()
     p:expect("then")
@@ -529,7 +346,7 @@ orion.lang.expr = orion.Parser.Pratt():prefix(orion.Parser.default,function(p)
     p:expect("end")
     return orion.ast.new({kind="select",cond=condexpr,a=a,b=b}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
   end)
-  :prefix("switch",function(p)
+:prefix("switch",function(p)
     local switchexpr = {kind="switch"}
 
     p:expect("switch")
@@ -555,7 +372,7 @@ orion.lang.expr = orion.Parser.Pratt():prefix(orion.Parser.default,function(p)
 
     return orion.ast.new(switchexpr):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
   end)
-  :prefix("let",function(p)
+:prefix("let",function(p)
     local letast = {kind="let"}
     local exprcnt = 1
 
@@ -587,7 +404,7 @@ orion.lang.expr = orion.Parser.Pratt():prefix(orion.Parser.default,function(p)
 
     return orion.ast.new(letast):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
   end)
-  :prefix("map",function(p)
+:prefix("map",function(p)
     p:expect("map")
 
     local vars={}
@@ -615,85 +432,24 @@ orion.lang.expr = orion.Parser.Pratt():prefix(orion.Parser.default,function(p)
     return orion.ast.new(newnode):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
   end)
 
-------------------------------------------------------------
-orion.lang.identifier = function(p)
-
-  local ident = {}
-  table.insert(ident,p:expect(p.name).value)
-  p:ref(ident[1])
-  
-  -- parse a chain: lol.wtf.bbq    
-  -- if people want to use the [] index operator, force them to
-  -- use an explicit escape
-  while p:nextif(".") do
-    table.insert(ident,p:expect(p.name).value)
-  end
-  
-  return ident
-end
-
-------------------------------------------------------------
-orion.lang.type = function(p)
-
-  local ty
-
-  if p:matches(p.name) then
-    -- this is kind of messed up
-    -- we special case stuff like 'float32' etc
-    -- so if you use a name (for ex a local variable)
-    -- instead, it will think it's not a valid type.
-    -- if you want to do this, use an escape
-    local name = p:expect(p.name).value
-    local arrs
-    if p:nextif("[") then
-      arrs = p:expect(p.number).value
-      p:expect("]")
-    end
-    
-    ty = orion.type.stringToType(name)
-    
-    if ty==nil then
-      p:error("Unknown type "..name)
-    else
-      if arrs~=nil then
-        ty = orion.type.array(ty,arrs)
-      end
-    end
-
-    assert(orion.type.isType(ty))
-
-    -- wrap the type in a type ast node. This is stupid.
-    -- the reason we need to do this is b/c the IR library
-    -- won't let us patch tables into the AST. So the
-    -- result of an escape AST node is a type AST node,
-    -- not a type itself
-
-    return orion.ast.new({kind="type",type=ty}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
-  end
-
-  -- escapes and other expr that evaluate to a type
-  return p:expr()
-end
-
-------------------------------------------------------------
-orion.lang.func = function(p)
-  local ident = p:identifier()
-  
-  local newnode = {kind="func"}
-  for k,v in ipairs(ident) do newnode["identifier"..k]=v end
-  return orion.ast.new(newnode):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
-end
-
-  -----------------------------------------------------------
+-----------------------------------------------------------
 orion.lang.imageFunction = function(p)
 
     p:expect("im")
 
-    local ident
+    local ident = {}
 
     -- functions can be anonymous
     if p:matches(p.name) then
-      ident = p:identifier()
+      table.insert(ident,p:expect(p.name).value)
+      p:ref(ident[1])
+  
+      -- parse a chain: lol.wtf.bbq    
+      -- if people want to use the [] index operator, force them to
+      -- use an explicit escape
+      while p:nextif(".") do
+        table.insert(ident,p:expect(p.name).value)
+      end
     end
 
     local xvar = nil
@@ -710,8 +466,6 @@ orion.lang.imageFunction = function(p)
     local rvalue = p:expr()
 
     p:expect("end")
-
-    -- insert the crop
 
     local chosenName
     if ident==nil then
@@ -769,10 +523,10 @@ function orion.compileTimeProcess(imfunc, envfn)
         i=i+1 
       end
       
-      newNode.expr = inp.expr:S("func"):process(
+      newNode.expr = inp.expr:S("var"):process(
         function(fin)
-          if fin.identifier1~=nil and fin.identifier2==nil and vars[fin.identifier1]~=nil then
-            return orion.ast.new({kind="mapreducevar", id = id[fin.identifier1], variable=fin.identifier1, low=low[fin.identifier1], high=high[fin.identifier1]}):copyMetadataFrom(fin)
+          if vars[fin.name]~=nil then
+            return orion.ast.new({kind="mapreducevar", id = id[fin.name], variable=fin.name, low=low[fin.name], high=high[fin.name]}):copyMetadataFrom(fin)
           end
           return fin
         end)
@@ -817,31 +571,42 @@ function orion.compileTimeProcess(imfunc, envfn)
   end
 
   rvalue = rvalue:S(
-    function(n) 
-      return n.kind=="apply" or 
-        n.kind=="func" or 
-        n.kind=="lua" or 
-        n.kind=="index" end):process(
+    function(n)  return n.kind=="apply" or  n.kind=="escape" or n.kind=="var" or n.kind=="fieldselect" end):process(
     function(inp)
-      if inp.kind=="func" then
-        return orion.resolveIdentifiers(inp, imfunc.xvar,imfunc.yvar,imfunc.zvar,env)
-      elseif inp.kind=="lua" then
-        return orion.quoteToOrion(inp.expr(inp:localEnvironment(rvalue,env)),inp)
-      elseif inp.kind=="index" then
-        if inp.expr.kind=="tapLUT" then
-          local newnode = inp.expr:shallowcopy()
-          newnode.kind="tapLUTLookup"
-          newnode.index = inp.index
-          assert(type(inp.expr.tapname)=="string")
-          return orion.ast.new(newnode):copyMetadataFrom(inp)
+      if inp.kind=="var" then
+        if inp.name==imfunc.xvar then  return orion.ast.new({kind="position",coord="x"}):copyMetadataFrom(inp)
+        elseif inp.name==imfunc.yvar then  return orion.ast.new({kind="position",coord="y"}):copyMetadataFrom(inp) 
+        elseif orion.ast.isAST(env[inp.name]) then
+          return env[inp.name]
+        elseif env[inp.name]~=nil then
+          return orion.ast.new({kind="value", value=env[inp.name]}):copyMetadataFrom(inp)
+        else
+          orion.error("Could not resolve identifier: "..inp.name, inp:linenumber(), inp:offset())
         end
-      else
-        if inp.expr.kind=="macro" then
+      elseif inp.kind=="fieldselect" then
+        if orion.ast.isAST(inp.expr.value[inp.field]) then
+          return inp.expr.value[inp.field]
+        elseif inp.expr.value[inp.field]~=nil then
+          return orion.ast.new({kind="value", value=inp.expr.value[inp.field]}):copyMetadataFrom(inp)
+        else
+          orion.error("Field is nil: "..inp.field, inp:linenumber(), inp:offset())
+        end
+      elseif inp.kind=="escape" then
+        return orion.evalEscape(inp.expr(inp:localEnvironment(rvalue,env)),inp)
+      elseif inp.kind=="apply" then
+        print("apply",inp.expr.kind, inp:arraySize("arg"))
+
+        if inp.expr.kind=="type" then -- a typecast
+          if inp:arraySize("arg") ~= 1 then
+            orion.error("Typecasts only take one argument",inp:linenumber(), inp:offset())
+          end
+          return orion.ast.new({kind="cast",expr=inp.arg1,type=inp.expr.type}):copyMetadataFrom(inp)
+        elseif type(inp.expr.value)=="function" then
           local args = {}
           inp:map("arg",function(n) table.insert(args,n) end)
           assert(#args>0)
           
-          local macroResult = inp.expr.func(inp, unpack(args))
+          local macroResult = inp.expr.value(inp, unpack(args))
           
           if orion.ast.isAST(macroResult)==false then
             orion.error("Macro returned something other than an AST")
@@ -850,16 +615,19 @@ function orion.compileTimeProcess(imfunc, envfn)
           return macroResult
         elseif inp.expr.kind=="tap" then
           assert(false)
-        else
-          if inp:keyCount("arg") < 2 then
-            orion.error("At least two arguments must be specified when transforming.",
-                        inp:linenumber(),inp:offset())
-          end
-          
+        elseif orion.ast.isAST(inp.expr) then
           -- turn it into a transform
           local newnode = inp:shallowcopy()
           newnode.kind="transform"
+
+          if inp:arraySize("arg") < 2 then
+            orion.error("At least two arguments must be specified when transforming.",
+                        inp:linenumber(),inp:offset())
+          end
+
           return orion.ast.new(newnode):copyMetadataFrom(inp)
+        else
+          orion.error("Could not resolve identifier to a valid application",inp.expr:linenumber(), inp:offset())
         end
       end
     end)

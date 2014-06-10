@@ -142,6 +142,7 @@ function orionSimple.loadRaw(filename, w,h,bits,header,flipEndian)
 
 end
 
+--[=[
 local function makeBindConstant(orionType)
   assert(orion.type.isType(orionType))
 
@@ -248,7 +249,7 @@ function orionSimple.constant(ty, width, height, constantValue)
 
   return idast
 end
-
+]=]
 
 orionSimple._usedTapNames={}
 

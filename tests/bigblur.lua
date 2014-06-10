@@ -11,6 +11,6 @@ for i=-1,1 do
   end
 end
 
-im b(x,y) orion.uint8(b(x,y)) end
+im b(x,y) [uint8](b(x,y)) end
 
 test(b)

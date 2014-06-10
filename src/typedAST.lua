@@ -504,22 +504,14 @@ function orion.typedAST._toTypedAST(inast)
 
       elseif ast.kind=="cast" then
 
-        if inputs["type"][1].kind~="type" then
-          orion.error("Error, this should be a type", origast:linenumber(), origast:offset())
-        end
-
         -- note: we don't eliminate these cast nodes, because there's a difference
         -- between calculating a value at a certain precision and then downsampling,
         -- and just calculating the value at the lower precision.
         ast.expr = inputs["expr"][1]
-        -- extract the type from the type node
-        ast.type = inputs["type"][1].type
         
         if orion.type.checkExplicitCast(ast.expr.type,ast.type,origast)==false then
           orion.error("Casting from "..ast.expr.type:str().." to "..ast.type:str().." isn't allowed!",origast:linenumber(),origast:offset())
         end
-        
-
       elseif ast.kind=="assert" then
 
         ast.cond = inputs["cond"][1]

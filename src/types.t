@@ -37,6 +37,23 @@ function orion.type.array(_type,size)
   return orion.type._array[_type][size]
 end
 
+function orion.type.fromTerraType(ty)
+  assert(terralib.types.istype(ty))
+
+  if ty==int32 then
+    return orion.type.int(32)
+  elseif ty==uint8 then
+    return orion.type.uint(8)
+  elseif ty==float then
+    return orion.type.float(32)
+  elseif ty:isarray() then
+    return orion.type.array(orion.type.fromTerraType(ty.type),ty.N)
+  end
+
+  print("error, unsupported terra type",ty)
+  assert(false)
+end
+
 -- given a lua variable, figure out the correct type and
 -- least precision that can represent it
 function orion.type.valueToType(v)
@@ -63,21 +80,6 @@ function orion.type.valueToType(v)
   end
   
   orion.error("Couldn't convert "..v.." to orion type")
-end
-
-function orion.type.cropMeet(a,b)
-  assert(orion.type.isCropMode(a))
-  assert(orion.type.isCropMode(b))
-
-  if a==b then 
-    return a
-  elseif a==orion.cropSame then
-    return b
-  elseif b==orion.cropSame then
-    return a
-  end
-
-  assert(false)
 end
 
 -- returns resultType, lhsType, rhsType

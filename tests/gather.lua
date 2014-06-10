@@ -8,7 +8,7 @@ darkroomSimple.setTap(targetX,1)
 darkroomSimple.setTap(targetY,1)
 
 -- synth something that selects one of the pixels in a 3x3 area
-test(im(x,y) orion.uint8(
+test(im(x,y) [uint8](
      orion.gather(testinput(x,y)+3,targetX,targetY,1,1,false)
                         )
 end)

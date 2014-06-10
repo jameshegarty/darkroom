@@ -2,7 +2,7 @@ terralib.require "test"
 import "darkroom"
 
 --a=testinput
-im a(x,y)   orion.float32(testinput(x,y)) end
+im a(x,y)   [float](testinput(x,y)) end
 
 im b(x,y) 
   orion.crop((a(x-1,y-1)+a(x,y-1)+a(x+1,y-1)+
@@ -24,4 +24,4 @@ end
 
 
 
-test(im(x,y) orion.uint8(d(x,y)) end)
+test(im(x,y) [uint8](d(x,y)) end)

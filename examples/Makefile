@@ -1,10 +1,5 @@
-ISRCS = $(wildcard *.t)
-SRCS := $(filter-out common.t, $(ISRCS))
-# some tests can't compile with the conv engine
-YML_SRCS := $(filter-out bruteof.t deconvlucy.t fluid2d.t lk.t, $(SRCS))
-
+SRCS = $(wildcard *.t)
 RES = $(patsubst %.t,out/%.bmp,$(SRCS))
-RES += $(patsubst %.t,out/%.yml,$(YML_SRCS))
 
 all: $(RES)
 
@@ -14,5 +9,3 @@ clean:
 out/%.bmp : %.t
 	terra $<
 
-out/%.yml : %.t
-	terra $< conv
