@@ -372,38 +372,6 @@ orion.lang.expr = orion.Parser.Pratt()
 
     return orion.ast.new(switchexpr):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
   end)
-:prefix("let",function(p)
-    local letast = {kind="let"}
-    local exprcnt = 1
-
-    local seen = {}
-
-    p:expect("let")
-    
-    repeat
-      local name = p:expect(p.name).value
-
-      if seen[name]~=nil then
-        p:error("name '"..name.."' is a duplicate, which isn't allowed")
-      end
-      seen[name] = 1
-
-      p:expect("=")
-
-      local expr = p:expr()
-
-      p:nextif(";") -- accept a semicolon at the end if the user added one
-
-      letast["exprname"..exprcnt]=name
-      letast["expr"..exprcnt]=expr
-      exprcnt = exprcnt+1
-
-    until p:nextif("in")
-
-    letast.res = p:expr()
-
-    return orion.ast.new(letast):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
-  end)
 :prefix("map",function(p)
     p:expect("map")
 
@@ -431,6 +399,40 @@ orion.lang.expr = orion.Parser.Pratt()
     for k,v in ipairs(vars) do newnode["varname"..k]=v[1];newnode["varlow"..k]=v[2];newnode["varhigh"..k]=v[3]; end
     return orion.ast.new(newnode):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
   end)
+
+orion.lang.letexpr = function(p)
+  local letast = {kind="let"}
+  local exprcnt = 0
+  
+  local seen = {}
+
+  while p:lookahead().type=="=" do
+    local name = p:expect(p.name).value
+    
+    if seen[name]~=nil then
+      p:error("name '"..name.."' is a duplicate, which isn't allowed")
+    end
+    seen[name] = 1
+
+    p:expect("=")
+    
+    local expr = p:expr()
+
+    p:nextif(";") -- accept a semicolon at the end if the user added one
+
+    exprcnt = exprcnt+1    
+    letast["exprname"..exprcnt]=name
+    letast["expr"..exprcnt]=expr
+  end
+
+  letast.res = p:expr()
+
+  if exprcnt==0 then
+    return letast.res -- no lets, so just passthrough
+  else
+    return orion.ast.new(letast):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
+  end
+end
 
 -----------------------------------------------------------
 orion.lang.imageFunction = function(p)
@@ -463,7 +465,7 @@ orion.lang.imageFunction = function(p)
     yvar = p:expect(p.name).value
     p:expect(")")
 
-    local rvalue = p:expr()
+    local rvalue = p:letexpr()
 
     p:expect("end")
 
@@ -538,13 +540,13 @@ function orion.compileTimeProcess(imfunc, envfn)
   -- desugar let statements
 
   local function removeLet( expr, namemap )
-    return expr:S("func"):process(
+    return expr:S("var"):process(
       function(n)
-        if n:arraySize("identifier")==1 and namemap[n.identifier1]~=nil then
+        if namemap[n.name]~=nil then
           if n:arraySize("arg")>0 then
             orion.error("You can't index into a named expression in a let statement",n:linenumber(),n:offset())
           end
-          return namemap[n.identifier1]
+          return namemap[n.name]
         end
         return n
       end)

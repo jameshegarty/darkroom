@@ -1,9 +1,8 @@
 terralib.require("test")
 import "darkroom"
 
-test(im(x,y) orion.uint8(
-     let
+test(im(x,y)
       a = testinput(x,y)/2
       b = testinput(x,y)-100+a
-      in a+b)
+      [uint8](a+b)
      end)

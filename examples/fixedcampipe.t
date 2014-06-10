@@ -13,7 +13,6 @@ function bilinearDemosaic(in1)
   local yoff = 1
 
   return im dem(x,y)
-    let
     out = [uint8[3]](0)
     
     -- build the red channel
@@ -29,7 +28,7 @@ function bilinearDemosaic(in1)
     r_tl_b = in1(x-1,y-1)
     r_tl_c = in1(x-1,y+1)
     r_tl_d = in1(x+1,y-1)
-    r_tl = (r_tl_a+r_tl_b+r_tl_c+r_tl_d)/orion.uint8(4)
+    r_tl = (r_tl_a+r_tl_b+r_tl_c+r_tl_d)/[uint8](4)
 
     phase = {x+xoff,y+yoff}%2
     out_r = if orion.arrayAnd(phase=={1,1}) then in1(x,y) else
@@ -42,14 +41,14 @@ function bilinearDemosaic(in1)
     g_tl_b = in1(x-1,y)
     g_tl_c = in1(x,y+1)
     g_tl_d = in1(x,y-1)
-    g_tl = ( g_tl_a + g_tl_b + g_tl_c + g_tl_d )/orion.uint8(4)
+    g_tl = ( g_tl_a + g_tl_b + g_tl_c + g_tl_d )/[uint8](4)
 
 
     g_br_a = in1(x+1,y)
     g_br_b = in1(x-1,y)
     g_br_c = in1(x,y+1)
     g_br_d = in1(x,y-1)
-    g_br = (g_br_a+g_br_b+g_br_c+g_br_d)/orion.uint8(4)
+    g_br = (g_br_a+g_br_b+g_br_c+g_br_d)/[uint8](4)
 
     out_g = if orion.arrayAnd(phase=={0,0}) then g_tl else
       if orion.arrayAnd(phase=={1,1}) then g_br else
@@ -58,24 +57,24 @@ function bilinearDemosaic(in1)
     -- build blue
     b_bl_a = in1(x,y+1)
     b_bl_b = in1(x,y-1)
-    b_bl = (b_bl_a+b_bl_b)/orion.uint8(2)
+    b_bl = (b_bl_a+b_bl_b)/[uint8](2)
 
     b_tr_a = in1(x-1,y)
     b_tr_b = in1(x+1,y)
-    b_tr = (b_tr_a+b_tr_b)/orion.uint8(2)
+    b_tr = (b_tr_a+b_tr_b)/[uint8](2)
     
     b_br_a = in1(x+1,y+1)
     b_br_b = in1(x-1,y-1)
     b_br_c = in1(x-1,y+1)
     b_br_d = in1(x+1,y-1)
-    b_br = (b_br_a+b_br_b+b_br_c+b_br_d)/orion.uint8(4)
+    b_br = (b_br_a+b_br_b+b_br_c+b_br_d)/[uint8](4)
 
     out_b = if orion.arrayAnd(phase=={0,0}) then in1(x,y) else
       if orion.arrayAnd(phase=={0,1}) then b_bl else
       if orion.arrayAnd(phase=={1,0}) then b_tr else
-      b_br end end end
+        b_br end end end;
 
-    in {out_r, out_g, out_b}
+    {out_r, out_g, out_b}
   end
 end
 
