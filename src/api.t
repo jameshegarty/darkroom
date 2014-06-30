@@ -1,6 +1,8 @@
 orion._inputCount = 0
 
 function orion.input( imtype )
+  imtype = orion.type.fromTerraType(imtype)
+
   assert(orion.type.isType(imtype))
 
   local res  = orion.ast.new({kind="load", type = imtype, relX=0, relY=0, from=orion._inputCount} ):setLinenumber(0):setOffset(0):setFilename("null_special")
@@ -15,6 +17,8 @@ end
 
 orion._tapcount = 0
 function orion.tap(ty)
+  ty = orion.type.fromTerraType(ty)
+
   assert(orion.type.isType(ty))
   assert(orion.type.isArray(ty)==false)
 

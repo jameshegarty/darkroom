@@ -116,37 +116,24 @@ end
 -- if input isn't null, only calculate stencil for this input (a kernelGraph node)
 function typedASTFunctions:stencil(input)
 
+  -- the translate operator can take a few different arguments as translations
+  -- it can contain binary + ops, and mapreduce vars. This finds the correct
+  -- stencil for those situations
+  local function translateStencil(dim, t)
+    if type(t)=="number" then
+      return Stencil.new():addDim(dim, t)
+    elseif t.kind=="mapreducevar" then
+      return Stencil.new():addDim(dim, t.low):addDim(dim, t.high)
+    elseif t.kind=="binop" and t.op=="+" and t.rhs.kind=="value" then
+      return translateStencil(dim, t.lhs):translateDim(dim, t.rhs.value)
+    else
+      print("internal error, couldn't analyze stencil")
+      assert(false)
+    end
+  end
+  
   local function translateArea(t1,t2)
-    local xs, ys
-
-    local function accShift(t, shift)
-      if type(t)=="table" and t.kind=="binop" then
-        assert(t.rhs.kind=="value")
-        return t.lhs, t.rhs.value+shift
-      end
-      return t,shift
-    end
-
-    t1 = accShift(accShift(t1,0))
-    t2 = accShift(accShift(t2,0))
-
-    if type(t1)=="number" then
-      xs = Stencil.new():add(t1,0,0)
-    elseif t1.kind=="mapreducevar" then
-      xs = Stencil.new():add(t1.low,0,0):add(t1.high,0,0)
-    else
-      assert(false)
-    end
-
-    if type(t2)=="number" then
-      ys = Stencil.new():add(0,t2,0)
-    elseif t2.kind=="mapreducevar" then
-      ys = Stencil.new():add(0,t2.low,0):add(0,t2.high,0)
-    else
-      assert(false)
-    end
-
-    return xs:product(ys)
+    return translateStencil(1,t1):product(translateStencil(2,t2))
   end
 
   if self.kind=="binop" then
@@ -213,7 +200,7 @@ function typedASTFunctions:stencil(input)
     local s = Stencil.new()
     local i=1
     while self["expr"..i] do
-      s = s:unionWith(self["expr"..i]:stencil(input):translate(self["translate1_expr"..i],self["translate2_expr"..i],0))
+      s = s:unionWith(self["expr"..i]:stencil(input))
       i=i+1
     end
     return s
@@ -264,7 +251,9 @@ function orion.typedAST._toTypedAST(inast)
 
       if ast.kind=="value" then
         if ast.type==nil then ast.type=orion.type.valueToType(ast.value) end
-        assert(ast.type~=nil)
+        if ast.type==nil then
+          orion.error("Internal error, couldn't convert "..tostring(ast.value).." to orion type", origast:linenumber(), origast:offset(), origast:filename() )
+        end
       elseif ast.kind=="unary" then
         ast.expr = inputs["expr"][1]
         

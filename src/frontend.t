@@ -470,7 +470,7 @@ orion.lang.imageFunction = function(p)
     p:expect("end")
 
     local chosenName
-    if ident==nil then
+    if #ident < 1 then
       local cleanFilename = rvalue:filename():gsub("%.","")
       cleanFilename = cleanFilename:gsub([[%/]],"")
       cleanFilename = cleanFilename:gsub([[%-]],"")

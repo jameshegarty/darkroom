@@ -38,14 +38,22 @@ function orion.type.array(_type,size)
 end
 
 function orion.type.fromTerraType(ty)
+  if orion.type.isType(ty) then return ty end
+
   assert(terralib.types.istype(ty))
 
   if ty==int32 then
     return orion.type.int(32)
+  elseif ty==int16 then
+    return orion.type.int(16)
   elseif ty==uint8 then
     return orion.type.uint(8)
+  elseif ty==uint16 then
+    return orion.type.uint(16)
   elseif ty==float then
     return orion.type.float(32)
+  elseif ty==bool then
+    return orion.type.bool()
   elseif ty:isarray() then
     return orion.type.array(orion.type.fromTerraType(ty.type),ty.N)
   end
@@ -77,9 +85,17 @@ function orion.type.valueToType(v)
     else
       return orion.type.int(32)
     end
+  elseif type(v)=="table" then
+    if keycount(v)~=#v then return nil end
+    local tys = {}
+    for k,vv in ipairs(v) do
+      tys[k] = orion.type.valueToType(vv)
+      if tys[k]==nil then return nil end
+    end
+    return orion.type.array(orion.type.reduce("",tys),#v)
   end
   
-  orion.error("Couldn't convert "..v.." to orion type")
+  return nil -- fail
 end
 
 -- returns resultType, lhsType, rhsType

@@ -40,9 +40,11 @@ function kernelGraphFunctions:minUse(input)
   return self.kernel:stencil(input):min(2)
 end
 
+-- find the consumer with the largest stencil
 function kernelGraphFunctions:bufferSize(root)
   local bufferSize = 1
   for v,_ in self:parents(root) do
+    assert(v:maxUse(self) <= 0 ) -- can't read from the future
     local b = -v:minUse(self)+1
     if b>bufferSize then bufferSize=b end
   end

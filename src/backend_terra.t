@@ -231,9 +231,10 @@ function LineBufferWrapperFunctions:get(loopid, gather, relX,relY, V, validLeft,
 
       table.insert(debugChecks, 
                    quote 
-                     -- because we expand out the valid region to the largest vector size, some of the area we compute is garbage, and
-                     -- will read invalid values (but we will overwrite it so its ok). Bypass the debug checks on those regions.
-                     if [self.posX[loopid]]+i+lrelX >= validLeft and [self.posX[loopid]]+i+lrelX < validRight then
+                     -- because we expand out the valid region to the largest vector size (to save having to codegen the non-vectorized dangling region), 
+                     -- some of the area we compute is garbage, and thus
+                     -- will read invalid values (but we will overwrite it later so its ok). Bypass the debug checks on those regions.
+                     if [self.posX[loopid]]+i >= validLeft and [self.posX[loopid]]+i < validRight then
                        orionAssert(@([self.ivDebugId[loopid]]+lrelY*[self:lineWidth()]+i+lrelX) == [self.id], "incorrect LB Id")
                        orionAssert(@([self.ivDebugY[loopid]]+lrelY*[self:lineWidth()]+i+lrelX) == [self.posY[loopid]]+lrelY, "incorrect LB Y") 
                        orionAssert(@([self.ivDebugX[loopid]]+lrelY*[self:lineWidth()]+i+lrelX) == [self.posX[loopid]]+i+lrelX, "incorrect LB X")
@@ -763,6 +764,38 @@ function orion.terracompiler.codegen(
           i = i + 1
         end
         
+      elseif node.kind=="reduce" then
+    
+        local list = node:map("expr",function(v,i) return inputs["expr"..i] end)
+        assert(#list == node:arraySize("expr"))
+
+        -- theoretically, a tree reduction is faster than a linear reduction
+        -- starti and endi are both inclusive
+        local function foldt(list,starti,endi)
+          assert(type(list)=="table")
+          assert(type(starti)=="number")
+          assert(type(endi)=="number")
+          assert(starti<=endi)
+          if starti==endi then
+            return list[starti]
+          else
+            local half = math.floor((endi-starti)/2)
+            local lhs = foldt(list,starti,starti+half)
+            local rhs = foldt(list,starti+half+1,endi)
+
+            if node.op=="sum" then
+              return `(lhs+rhs)
+            elseif node.op=="min" then
+              return `terralib.select(lhs<rhs,lhs,rhs)
+            elseif node.op=="max" then
+              return `terralib.select(lhs>rhs,lhs,rhs)
+            else
+              assert(false)
+            end
+          end
+        end
+
+        out = foldt(list,1,#list)
       else
         orion.error("Internal error, unknown ast kind "..node.kind)
       end

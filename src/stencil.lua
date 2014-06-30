@@ -1,6 +1,13 @@
 Stencil={}
 StencilMT = {__index = Stencil}
 
+local function dimToXYZ(dim,t)
+  if dim==1 then return t,0,0
+  elseif dim==2 then return 0,t,0
+  else return 0,0,t
+  end
+end
+
 function Stencil.isStencil(s)
   return getmetatable(s)==StencilMT	 
 end
@@ -79,11 +86,15 @@ function Stencil:translate(x,y,z)
   return ns
 end
 
+function Stencil:translateDim(dim,t) return self:translate(dimToXYZ(dim,t)) end
+
 -- in place, add (x,y,z) to stencil
 function Stencil:add(x,y,z)
   self[Stencil.key(x,y,z)]=1
   return self
 end
+
+function Stencil:addDim(dim, t) return self:add(dimToXYZ(dim,t)) end
 
 function Stencil:addKey(k)
   self[k]=1
