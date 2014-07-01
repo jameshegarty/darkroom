@@ -27,13 +27,16 @@ end
 local function synthRel(rel,t)
   if type(t)=="number" and type(rel)=="number" then
     return rel+t
-  elseif type(rel)=="number" and type(t)=="table" and t.kind=="mapreducevar" then
+  elseif type(rel)=="number" and orion.typedAST.isTypedAST(t) then
     local v = orion.typedAST.new({kind="value",value=rel,type=t.type}):copyMetadataFrom(t)
     return orion.typedAST.new({kind="binop", lhs=t, rhs=v, type = t.type, op="+"}):copyMetadataFrom(t)
-  elseif type(rel)~="number" and type(t)=="number" then
+  elseif orion.typedAST.isTypedAST(rel) and type(t)=="number" then
     local v = orion.typedAST.new({kind="value",value=t,type=rel.type}):copyMetadataFrom(rel)
     return orion.typedAST.new({kind="binop", lhs=rel, rhs=v, type = rel.type, op="+"}):copyMetadataFrom(rel)
+  elseif orion.typedAST.isTypedAST(rel) and orion.typedAST.isTypedAST(t) then
+    return orion.typedAST.new({kind="binop", lhs=rel, rhs=t, type = rel.type, op="+"}):copyMetadataFrom(rel)
   else
+    print(type(rel),type(t))
     assert(false)
   end
 end
@@ -69,9 +72,9 @@ function shift(graph, shifts)
                   local res = {kind="binop", lhs=nn, type = nn.type, op="+"}
 
                   if nn.coord=="x" then
-                    res.rhs = orion.typedAST.new({kind="value",value=n.translate1,type=nn.type}):copyMetadataFrom(nn)
+                    res.rhs = n.translate1
                   elseif nn.coord=="y" then
-                    res.rhs = orion.typedAST.new({kind="value",value=n.translate2,type=nn.type}):copyMetadataFrom(nn)
+                    res.rhs = n.translate2
                   else
                     assert(false)
                   end

@@ -356,8 +356,8 @@ end
 function ImageWrapperFunctions:get(loopid, gather, relX, relY, V)
   assert(type(loopid)=="number")
   assert(type(gather)=="boolean")
-  assert(type(relX)=="number")
-  assert(type(relY)=="number")
+  assert(type(relX)=="number" or terralib.isquote(relX))
+  assert(type(relY)=="number" or terralib.isquote(relY))
   assert(type(V)=="number")
 
   local expr

@@ -340,9 +340,9 @@ orion.lang.expr = orion.Parser.Pratt()
     p:expect("if")
     local condexpr = p:expr()
     p:expect("then")
-    local a = p:expr()
+    local a = p:letexpr()
     p:expect("else")
-    local b = p:expr()
+    local b = p:letexpr()
     p:expect("end")
     return orion.ast.new({kind="select",cond=condexpr,a=a,b=b}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
   end)
@@ -391,7 +391,7 @@ orion.lang.expr = orion.Parser.Pratt()
     local reduceop = p:expect(p.name).value
     p:expect(")")
 
-    local expr = p:expr()
+    local expr = p:letexpr()
     
     p:expect("end")
 
@@ -406,31 +406,29 @@ orion.lang.letexpr = function(p)
   
   local seen = {}
 
-  while p:lookahead().type=="=" do
-    local name = p:expect(p.name).value
-    
-    if seen[name]~=nil then
-      p:error("name '"..name.."' is a duplicate, which isn't allowed")
-    end
-    seen[name] = 1
-
-    p:expect("=")
-    
-    local expr = p:expr()
-
-    p:nextif(";") -- accept a semicolon at the end if the user added one
-
-    exprcnt = exprcnt+1    
-    letast["exprname"..exprcnt]=name
-    letast["expr"..exprcnt]=expr
-  end
-
-  letast.res = p:expr()
-
-  if exprcnt==0 then
-    return letast.res -- no lets, so just passthrough
-  else
+  if p:lookahead().type=="=" then
+    repeat
+      local name = p:expect(p.name).value
+      
+      if seen[name]~=nil then
+        p:error("name '"..name.."' is a duplicate, which isn't allowed")
+      end
+      seen[name] = 1
+      
+      p:expect("=")
+      
+      local expr = p:expr()
+      
+      p:nextif(";") -- accept a semicolon at the end if the user added one
+      
+      exprcnt = exprcnt+1    
+      letast["exprname"..exprcnt]=name
+      letast["expr"..exprcnt]=expr
+    until p:nextif("in")
+    letast.res = p:expr()
     return orion.ast.new(letast):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
+  else
+    return p:expr()  -- no lets, so just passthrough
   end
 end
 

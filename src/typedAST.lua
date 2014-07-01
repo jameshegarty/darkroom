@@ -12,103 +12,73 @@ orion.typedAST = {}
 function orion.typedAST.checkOffsetExpr(expr, coord)
   assert(type(coord)=="string")
 
-  if expr.kind=="binop" then
-    if expr.op=="+" or expr.op=="-" or expr.op=="*" or expr.op=="/" then
-      return orion.typedAST.checkOffsetExpr(expr.lhs,coord) and orion.typedAST.checkOffsetExpr(expr.rhs,coord)
-    end
-
-    orion.error("binop '"..expr.op.."' is not supported in an offset expr")
-  elseif expr.kind=="value" then
-    if type(expr.value)=="number" then
-      return true
-    else
-      orion.error("type "..type(expr.value).." is not supported in offset expr")
-    end
-  elseif expr.kind=="position" then
-    if expr.coord==coord then
-      return true
-    else
-      orion.error("you can't use coord "..expr.coord.." in expression for coord "..coord)
-    end
-  elseif expr.kind=="cast" then
-    return orion.typedAST.checkOffsetExpr(expr.expr,coord)
-  elseif expr.kind=="mapreducevar" then
-    return true
-  else
-    orion.error(expr.kind.." is not supported in offset expr")    
+  -- no x+x allowed
+  if expr:S("position"):count() ~= 1 then
+return false
   end
 
-  return false
-end
-
-function orion.typedAST.convertOffset(ast,coord)
-
-  local translate = 0
-  local scale = 1
- 
-  -- just ignore casts for now
-  ast = ast:S("cast"):process(function(a) return a.expr end)
-
-  -- try to coerce this expr into a translate/scale
-  if ast.kind=="position" then
-
-  elseif ast.kind=="binop" then
-    if ast.lhs.kind=="position" then
-      if ast.rhs.kind=="value" then
-        if ast.op=="+" then
-          translate = ast.rhs.value
-        elseif ast.op=="-" then
-          translate = -ast.rhs.value
-        elseif ast.op=="*" then
-          scale = ast.rhs.value
-        else
-          assert(false)
+  expr:S("*"):traverse( 
+    function(n)
+      if expr.kind=="binop" then
+        if expr.op~="+" and expr.op~="-" then
+          orion.error("binop '"..expr.op.."' is not supported in an offset expr")
         end
-      elseif ast.rhs.kind=="mapreducevar" then
-        if ast.op=="+" then
-          translate = ast.rhs
-        else
-          assert(false)
+      elseif expr.kind=="value" then
+        if type(expr.value)~="number" then
+          orion.error("type "..type(expr.value).." is not supported in offset expr")
         end
+      elseif expr.kind=="position" then
+        if expr.coord~=coord then
+          orion.error("you can't use coord "..expr.coord.." in expression for coord "..coord)
+        end
+      elseif expr.kind=="cast" then
+      elseif expr.kind=="mapreducevar" then
       else
-
+        orion.error(expr.kind.." is not supported in offset expr")    
       end
-    elseif ast.rhs.kind=="position" then
-        assert(ast.lhs.kind=="value")
+    end)
 
-        if ast.op=="+" then
-          translate = ast.lhs.value
-        elseif ast.op=="-" then
-          translate = -ast.lhs.value
-        else
-          assert(false)
-        end
-    else
-      print(ast.lhs.kind,ast.rhs.kind)
-      assert(false)
-    end
-  else
-    assert(false)
-  end
-
-  return translate,scale
+  return true
 end
 
 -- take the ast input that's an offset expr for coord 'coord'
 -- and convert it into a translate,scale. returns nil if there was an error.
 function orion.typedAST.synthOffset(ast,coord)
+  -- note that we don't typecheck these expressions! we keep them as ASTs,
+  -- because they aren't really part of the language
+  assert(orion.typedAST.isTypedAST(ast))
 
   -- first check that there isn't anything in the expression that's definitely not allowed...
-  local a = orion.typedAST.checkOffsetExpr(ast,coord)
-  if a==false then return nil end
+  if orion.typedAST.checkOffsetExpr(ast,coord)==false then
+return nil
+  end
 
-  -- now distribute the math ops. This should theoretically reduce the 
-  -- expression to a standard form
+  -- now distribute the multiplies until they can't be distributed any more. ((x+i)+j) * 2 => (x*2 + i*2)+j*2
+  
+  -- now, the path up the tree from the position to the root should only have 1 multiply and >=0 adds
+  -- note that this thing must be a tree!
+  local pos
+  local mulCount = 0
+  local addCount = 0
+  ast:S("position"):traverse(function(n) pos = n end)
+  while pos:parentCount(ast) > 0 do
+    for k,_ in pos:parents(ast) do pos = k end
+    if pos.kind=="binop" and (pos.op=="+" or pos.op=="-") then addCount = addCount+1
+    elseif pos.kind=="binop" and (pos.op=="*" or pos.op=="/") then mulCount = mulCount+1
+    else print(pos.kind,pos.op);assert(false) end
+  end
+  assert(mulCount==0)
 
-  ast = orion.optimize.optimizeMath(ast)
-
-  -- now try to match this to a standard form
-  return orion.typedAST.convertOffset(ast,coord)
+  -- cheap hack, since the path from the position to the root is just a bunch of adds,
+  -- we can get the translation by setting the position to 0
+  local translate = ast:S("position"):process(
+    function(n) 
+      if n.kind=="position" then
+        return orion.typedAST.new({kind="value",value=0,type=orion.type.int(32)}):copyMetadataFrom(n)
+      end
+    end)
+  assert(translate:S("position"):count()==0)
+  return translate, 1
 end
 
 
@@ -122,12 +92,17 @@ function typedASTFunctions:stencil(input)
   local function translateStencil(dim, t)
     if type(t)=="number" then
       return Stencil.new():addDim(dim, t)
+    elseif t.kind=="value" then
+      assert(type(t.value)=="number")
+      return Stencil.new():addDim(dim, t.value)
     elseif t.kind=="mapreducevar" then
       return Stencil.new():addDim(dim, t.low):addDim(dim, t.high)
-    elseif t.kind=="binop" and t.op=="+" and t.rhs.kind=="value" then
-      return translateStencil(dim, t.lhs):translateDim(dim, t.rhs.value)
+    elseif t.kind=="binop" and t.op=="+" then
+      return translateStencil(dim, t.lhs):product(translateStencil(dim, t.rhs))
+    elseif t.kind=="binop" and t.op=="-" then
+      return translateStencil(dim, t.lhs):product(translateStencil(dim, t.rhs):flipDim(dim))
     else
-      print("internal error, couldn't analyze stencil")
+      print("internal error, couldn't analyze stencil", t.kind)
       assert(false)
     end
   end
@@ -578,7 +553,14 @@ function orion.typedAST._toTypedAST(inast)
       elseif ast.kind=="load" then
         -- already has a type
       elseif ast.kind=="mapreduce" then
-        ast.type = inputs.expr[1].type
+        if ast.reduceop=="sum" then
+          ast.type = inputs.expr[1].type
+        elseif ast.reduceop=="argmin" or ast.reduceop=="argmax" then
+          ast.type = orion.type.array(orion.type.int(32),origast:arraySize("varname"))
+        else
+          orion.error("Unknown reduce operator '"..ast.reduceop.."'")
+        end
+
         ast.expr = inputs.expr[1]
 
         local i = 1

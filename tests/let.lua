@@ -4,5 +4,5 @@ import "darkroom"
 test(im(x,y)
       a = testinput(x,y)/2
       b = testinput(x,y)-100+a
-      [uint8](a+b)
+      in [uint8](a+b)
      end)

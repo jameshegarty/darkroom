@@ -199,3 +199,12 @@ function Stencil:print()
   end
 end
 
+function Stencil:flipDim(dim)
+  local ns = Stencil.new()
+  for k,_ in pairs(self) do
+    if dim==1 then  ns:add(-k[1],k[2],k[3])
+    elseif dim==2 then  ns:add(k[1],-k[2],k[3])
+    elseif dim==3 then  ns:add(k[1],k[2],-k[3]) end
+  end
+  return ns
+end
