@@ -40,6 +40,63 @@ function orion.ast.new(tab)
   return setmetatable(tab,astMT)
 end
 
+function astFunctions:optimize()
+  local res = self:S("*"):process(
+    function(n)
+      if n.kind=="binop" and n.op=="+" and n.lhs.kind=="value" and n.lhs.value==0 then
+        return n.rhs
+      elseif n.kind=="binop" and n.op=="+" and n.rhs.kind=="value" and n.rhs.value==0 then
+        return n.lhs
+      end
+    end)
+
+  return res
+end
+
+function astFunctions:eval(dim)
+  assert(type(dim)=="number")
+
+  if self.kind=="value" then
+    assert(type(self.value)=="number")
+    return Stencil.new():addDim(dim, self.value)
+  elseif self.kind=="unary" and self.op=="-" then
+    return self.expr:eval(dim):flipDim(dim)
+  elseif self.kind=="mapreducevar" then
+    local l = self.low:eval(dim)
+    local h = self.high:eval(dim)
+    assert(l:area()==1)
+    assert(h:area()==1)
+    -- we call :min here just to extract the one coord we care about
+    return Stencil.new():addDim(dim, l:min(dim)):addDim(dim, h:min(dim))
+  elseif self.kind=="binop" and self.op=="+" then
+    return self.lhs:eval(dim):product(self.rhs:eval(dim))
+  elseif self.kind=="binop" and self.op=="-" then
+    return self.lhs:eval(dim):product(self.rhs:eval(dim):flipDim(dim))
+  else
+    print("internal error, couldn't statically evaluate ", self.kind)
+    assert(false)
+  end
+end
+
+function astFunctions:codegen()
+  if self.kind=="value" then
+    return `[self.value]
+  elseif self.kind=="binop" and self.op=="+" then
+    return `[self.lhs:codegen()]+[self.rhs:codegen()]
+  elseif self.kind=="binop" and self.op=="-" then
+    return `[self.lhs:codegen()]-[self.rhs:codegen()]
+  elseif self.kind=="mapreducevar" then
+    if mapreducevarSymbols[self.id]==nil then
+      mapreducevarSymbols[self.id] = symbol(int,self.variable)
+    end
+    return `[mapreducevarSymbols[self.id]]
+  else
+    print("internal error, couldn't codegen ast ", self.kind)
+    assert(false)
+  end
+
+end
+
 -- 
 function astFunctions:localEnvironment(root,envROOT)
   local env

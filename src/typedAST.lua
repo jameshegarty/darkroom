@@ -46,7 +46,7 @@ end
 function orion.typedAST.synthOffset(ast,coord)
   -- note that we don't typecheck these expressions! we keep them as ASTs,
   -- because they aren't really part of the language
-  assert(orion.typedAST.isTypedAST(ast))
+  assert(orion.ast.isAST(ast))
 
   -- first check that there isn't anything in the expression that's definitely not allowed...
   if orion.typedAST.checkOffsetExpr(ast,coord)==false then
@@ -74,11 +74,11 @@ return nil
   local translate = ast:S("position"):process(
     function(n) 
       if n.kind=="position" then
-        return orion.typedAST.new({kind="value",value=0,type=orion.type.int(32)}):copyMetadataFrom(n)
+        return orion.ast.new({kind="value",value=0}):copyMetadataFrom(n)
       end
     end)
   assert(translate:S("position"):count()==0)
-  return translate, 1
+  return translate:optimize(), 1
 end
 
 
@@ -87,28 +87,12 @@ end
 function typedASTFunctions:stencil(input)
 
   -- the translate operator can take a few different arguments as translations
-  -- it can contain binary + ops, and mapreduce vars. This finds the correct
-  -- stencil for those situations
-  local function translateStencil(dim, t)
-    if type(t)=="number" then
-      return Stencil.new():addDim(dim, t)
-    elseif t.kind=="value" then
-      assert(type(t.value)=="number")
-      return Stencil.new():addDim(dim, t.value)
-    elseif t.kind=="mapreducevar" then
-      return Stencil.new():addDim(dim, t.low):addDim(dim, t.high)
-    elseif t.kind=="binop" and t.op=="+" then
-      return translateStencil(dim, t.lhs):product(translateStencil(dim, t.rhs))
-    elseif t.kind=="binop" and t.op=="-" then
-      return translateStencil(dim, t.lhs):product(translateStencil(dim, t.rhs):flipDim(dim))
-    else
-      print("internal error, couldn't analyze stencil", t.kind)
-      assert(false)
-    end
-  end
-  
+  -- it can contain binary + ops, and mapreduce vars. This evaluates all possible
+  -- index values to find the correct stencil for those situations
   local function translateArea(t1,t2)
-    return translateStencil(1,t1):product(translateStencil(2,t2))
+    if type(t1)=="number" then t1=orion.ast.new({kind="value",value=t1}) end
+    if type(t2)=="number" then t2=orion.ast.new({kind="value",value=t2}) end
+    return t1:eval(1):product(t2:eval(2))
   end
 
   if self.kind=="binop" then
@@ -147,7 +131,7 @@ function typedASTFunctions:stencil(input)
   elseif self.kind=="position" or self.kind=="tap" or self.kind=="value" then
     return Stencil.new()
   elseif self.kind=="tapLUTLookup" then
-    return self.index:stencil(input):translate(self.translate1_index,self.translate2_index,0)
+    return self.index:stencil(input)
   elseif self.kind=="load" then
     local s = Stencil.new()
     if input==nil or input==self.from then s = translateArea(self.relX,self.relY) end
@@ -161,7 +145,7 @@ function typedASTFunctions:stencil(input)
     else
       -- note the kind of nasty hack we're doing here: gathers read from loads, and loads can be shifted.
       -- so we need to shift this the same as the load
-      return Stencil.new():add(-self.maxX+self.input.relX, -self.maxY+self.input.relY,0):add(self.maxX+self.input.relX, self.maxY+self.input.relY,0)
+      return translateArea(self.input.relX, self.input.relY):product( Stencil.new():add(-self.maxX,-self.maxY,0):add(self.maxX,self.maxY,0))
     end
   elseif self.kind=="array" then
     local exprsize = self:arraySize("expr")
@@ -390,7 +374,7 @@ function orion.typedAST._toTypedAST(inast)
         local i=1
         while ast["arg"..i] do
           -- if we got here we can assume it's valid
-          local translate,scale=orion.typedAST.synthOffset( ast["arg"..i], orion.dimToCoord[i])
+          local translate,scale=orion.typedAST.synthOffset( origast["arg"..i], orion.dimToCoord[i])
           assert(translate~=nil)
           newtrans["translate"..i]=translate
           newtrans["scale"..i]=scale
@@ -421,7 +405,7 @@ function orion.typedAST._toTypedAST(inast)
         local atype, btype
         
         if orion.type.isArray(mtype) then
-          orion.error("You can't have nested arrays (index 0 of vector)")
+          orion.error("You can't have nested arrays (index 0 of vector)",origast:linenumber(),origast:offset(),origast:filename())
         end
         
         local cnt = 2
@@ -499,13 +483,13 @@ function orion.typedAST._toTypedAST(inast)
         -- taps should be tagged with type already
       elseif ast.kind=="tapLUTLookup" then
         ast.index = inputs["index"][1]
-
+        
         -- tapLUTs should be tagged with type already
         assert(orion.type.isType(ast.type))
-
+        
         if orion.type.isUint(ast.index.type)==false and
           orion.type.isInt(ast.index.type)==false then
-
+          
           orion.error("Error, index into tapLUT must be integer",ast:linenumber(),ast:offset())
           return nil
         end

@@ -15,22 +15,22 @@ function resampleBilinear(clamp,input, maxX, maxY, offsetX, offsetY)
   assert(orion.ast.isAST(offsetX))
   assert(orion.ast.isAST(offsetY))
 
-  im offsetX(x,y) orion.float32( offsetX(x,y) ) end
-  im offsetY(x,y) orion.float32( offsetY(x,y) ) end
+  im offsetX(x,y) [float]( offsetX(x,y) ) end
+  im offsetY(x,y) [float]( offsetY(x,y) ) end
 
   
-  local im targetX(x,y) orion.int32( orion.floor(offsetX(x,y)) ) end
-  local im targetXp1(x,y) orion.int32( orion.floor(offsetX(x,y))+1 ) end
- local im targetY(x,y) orion.int32( orion.floor(offsetY(x,y)) ) end  
-  local im targetYp1(x,y) orion.int32( orion.floor(offsetY(x,y))+1 ) end
+  local im targetX(x,y) [int32]( orion.floor(offsetX(x,y)) ) end
+  local im targetXp1(x,y) [int32]( orion.floor(offsetX(x,y))+1 ) end
+  local im targetY(x,y) [int32]( orion.floor(offsetY(x,y)) ) end  
+  local im targetYp1(x,y) [int32]( orion.floor(offsetY(x,y))+1 ) end
 
   local im valueXY(x,y)  orion.gather(input(x,y), targetX(x,y), targetY(x,y), maxX, maxY, clamp) end
   local im valueXp1Y(x,y)  orion.gather(input(x,y), targetXp1(x,y), targetY(x,y), maxX, maxY, clamp) end
   local im valueXYp1(x,y)  orion.gather(input(x,y), targetX(x,y), targetYp1(x,y), maxX, maxY, clamp) end
   local im valueXp1Yp1(x,y)  orion.gather(input(x,y), targetXp1(x,y), targetYp1(x,y), maxX, maxY, clamp) end
 
-  local im wx(x,y) orion.float32( offsetX(x,y) - targetX(x,y) ) end
-  local im wy(x,y) orion.float32( offsetY(x,y) - targetY(x,y) ) end
+  local im wx(x,y) [float]( offsetX(x,y) - targetX(x,y) ) end
+  local im wy(x,y) [float]( offsetY(x,y) - targetY(x,y) ) end
   local im a(x,y) valueXY(x,y)*(1-wx(x,y)) + valueXp1Y(x,y)*wx(x,y) end
   local im b(x,y) valueXYp1(x,y)*(1-wx(x,y)) + valueXp1Yp1(x,y)*wx(x,y) end
   local im out(x,y) a(x,y)*(1-wy(x,y))+b(x,y)*wy(x,y) end
@@ -73,11 +73,11 @@ function resampleBilinearInt(clamp,input, inputType, maxX, maxY, offsetX, offset
   local im valueXYp1(x,y)  orion.gather(input(x,y), targetX(x,y), targetYp1(x,y), gatherRangeX, gatherRangeY, clamp) end
   local im valueXp1Yp1(x,y)  orion.gather(input(x,y), targetXp1(x,y), targetYp1(x,y), gatherRangeX, gatherRangeY, clamp) end
 
-  local im wx(x,y) : orion.uint8( offsetX(x,y) - (targetX(x,y) << logMaxX) ) end -- in subpixel units. always between 0 and maxX
-  local im wy(x,y) : orion.uint8( offsetY(x,y) - (targetY(x,y) << logMaxY) ) end -- in subpixel units. always between 0 and maxY
-  local im a(x,y) : cropNone, [inputType]  orion.uint32(valueXY(x,y))*(orion.uint8(maxX)-wx(x,y)) + orion.uint32(valueXp1Y(x,y))*wx(x,y) >> orion.uint8(logMaxX) end
-  local im b(x,y) : cropNone, [inputType] orion.uint32(valueXYp1(x,y))*(orion.uint8(maxX)-wx(x,y)) + orion.uint32(valueXp1Yp1(x,y))*wx(x,y) >> orion.uint8(logMaxX) end
-  local im out(x,y) : cropNone, [inputType] orion.uint32(a(x,y))*(orion.uint8(maxY)-wy(x,y))+orion.uint32(b(x,y))*wy(x,y) >> orion.uint8(logMaxY) end
+  local im wx(x,y) [uint8]( offsetX(x,y) - (targetX(x,y) << logMaxX) ) end -- in subpixel units. always between 0 and maxX
+  local im wy(x,y) [uint8]( offsetY(x,y) - (targetY(x,y) << logMaxY) ) end -- in subpixel units. always between 0 and maxY
+  local im a(x,y) [inputType](orion.uint32(valueXY(x,y))*(orion.uint8(maxX)-wx(x,y)) + orion.uint32(valueXp1Y(x,y))*wx(x,y) >> orion.uint8(logMaxX)) end
+  local im b(x,y) [inputType](orion.uint32(valueXYp1(x,y))*(orion.uint8(maxX)-wx(x,y)) + orion.uint32(valueXp1Yp1(x,y))*wx(x,y) >> orion.uint8(logMaxX)) end
+  local im out(x,y) [inputType](orion.uint32(a(x,y))*(orion.uint8(maxY)-wy(x,y))+orion.uint32(b(x,y))*wy(x,y) >> orion.uint8(logMaxY)) end
 
   return out
 end

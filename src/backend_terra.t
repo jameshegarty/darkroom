@@ -217,20 +217,29 @@ function LineBufferWrapperFunctions:get(loopid, gather, relX,relY, V, validLeft,
   assert(type(relY)=="number" or terralib.isquote(relY))
   assert(type(V)=="number")
 
-  local debugChecks = {}
+  local res
+
+  if gather then 
+    local vres = {}
+    for i=0,V-1 do table.insert(vres, `@([self.iv[loopid]] + relY[i]*[self:lineWidth()] + relX[i] + i) ) end
+    res = `vectorof([self.orionType:toTerraType()], vres)
+  else
+    res = `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]] + relY*[self:lineWidth()]+ relX),{align=V})
+  end
 
   if self.debug then
-    for i=0,V-1 do
-      local lrelX = relX
-      local lrelY = relY
+    local i = symbol(int,"lbGetDebugI")
 
-      if gather then
-        lrelX = `relX[i]
-        lrelY = `relY[i]
-      end
+    local lrelX = relX
+    local lrelY = relY
+    
+    if gather then
+      lrelX = `relX[i]
+      lrelY = `relY[i]
+    end
 
-      table.insert(debugChecks, 
-                   quote 
+    res = quote 
+      for [i]=0,[V-1] do
                      -- because we expand out the valid region to the largest vector size (to save having to codegen the non-vectorized dangling region), 
                      -- some of the area we compute is garbage, and thus
                      -- will read invalid values (but we will overwrite it later so its ok). Bypass the debug checks on those regions.
@@ -239,17 +248,12 @@ function LineBufferWrapperFunctions:get(loopid, gather, relX,relY, V, validLeft,
                        orionAssert(@([self.ivDebugY[loopid]]+lrelY*[self:lineWidth()]+i+lrelX) == [self.posY[loopid]]+lrelY, "incorrect LB Y") 
                        orionAssert(@([self.ivDebugX[loopid]]+lrelY*[self:lineWidth()]+i+lrelX) == [self.posX[loopid]]+i+lrelX, "incorrect LB X")
                      end
-      end)
-    end
+
+      end
+      in res end
   end
 
-  if gather then 
-    local res = {}
-    for i=0,V-1 do table.insert(res, `@([self.iv[loopid]] + relY[i]*[self:lineWidth()] + relX[i] + i) ) end
-    return quote debugChecks in vectorof([self.orionType:toTerraType()], res) end
-  else
-    return quote debugChecks in terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]] + relY*[self:lineWidth()]+ relX),{align=V}) end
-  end
+  return res
 end
 
 function LineBufferWrapperFunctions:next(loopid,v)
@@ -528,7 +532,7 @@ orion.terracompiler.boolBinops={
   ["or"]=function(lhs,rhs) return `lhs or rhs end
 }
 
-local mapreducevarSymbols = {}
+mapreducevarSymbols = {}
 function orion.terracompiler.codegen(
   inkernel, V, xsymb, ysymb, loopid, stripCount, kernelNode, inputImages, outputs, taps, TapStruct, validLeft, validRight)
 
@@ -552,13 +556,13 @@ function orion.terracompiler.codegen(
           if type(node.relX)=="number" then 
             relX = node.relX 
           else
-            relX = `[inputs.relX[1]][0]
+            relX = node.relX:codegen()
           end
 
           if type(node.relY)=="number" then 
             relY = node.relY 
           else
-            relY = `[inputs.relY[1]][0]
+            relY = node.relY:codegen()
           end
 
           assert(orion.kernelGraph.isKernelGraph(node.from) or type(node.from)=="number")
@@ -621,24 +625,22 @@ function orion.terracompiler.codegen(
         elseif node.kind=="tap" then
           -- kind of a cheap hack to save threading around some state
           local entry
-          for k,v in pairs(TapStruct:getentries()) do print(k,v,v.field);if v.field==tostring(node.id) then entry=v.field end end
+          for k,v in pairs(TapStruct:getentries()) do if v.field==tostring(node.id) then entry=v.field end end
             out = `taps.[entry]
         elseif node.kind=="tapLUTLookup" then
-          local index = inputs["index"]
+          local index = inputs["index"][1]
           
+          local entry
+          for k,v in pairs(TapStruct:getentries()) do if v.field==tostring(node.id) then entry=v.field end end
+
           local q = {}
           for i=1,V do
-            local debugQ = quote end
-          
-          if orion.debug then
-            debugQ = quote orionAssert(index[i-1]>=0,"LUT index <0");
-              if index[i-1]>=[node.count] then
-                cstdio.printf("i %d, c %d\n",index[i-1],[node.count]);
-                orionAssert(false,"LUT index >= count");
-              end end
-        end
-        
-            table.insert(q,quote debugQ in [&orion.type.toTerraType(node.type)](orion.runtime.getTapLUT(node.id))[index[i-1]] end)
+            table.insert(q, quote 
+                           if index[i-1]<0 or index[i-1]>=[node.count] then
+                             cstdio.printf("Error, read tap lut value out of range %d\n", index[i-1])
+                             orionAssert(false, "read tap lut value out of range")
+                           end
+                           in (taps.[entry])[index[i-1]] end)
           end
           out = `vector(q)
         elseif node.kind=="cast" then
@@ -695,110 +697,141 @@ function orion.terracompiler.codegen(
             local cond = inputs["cond"][c]
             local printval = inputs["printval"][c]
       
-          if node.printval.type==orion.type.float(32) then
-            for i = 1,V do
+            if node.printval.type==orion.type.float(32) then
+              for i = 1,V do
               table.insert(stat,quote if cond[i-1]==false then 
                                cstdio.printf("ASSERT FAILED, value %f line %d x:%d y:%d\n",printval[i-1],[node:linenumber()],xsymb,ysymb);
                              cstdlib.exit(1); 
                                       end end)
-            end
-          elseif node.printval.type==orion.type.int(32) then
-            for i = 1,V do
+              end
+            elseif node.printval.type==orion.type.int(32) then
+              for i = 1,V do
               table.insert(stat,quote if cond[i-1]==false then 
                                cstdio.printf("ASSERT FAILED, value %d file %s line %d x:%d y:%d\n",printval[i-1],[node:filename()],[node:linenumber()],xsymb,ysymb);
                              cstdlib.exit(1); 
                                       end end)
             end
-          else
-            assert(false)
-          end
-        end
-
-        out = expr
-      elseif node.kind=="gather" then
-        local inpX = inputs["x"][1] -- should be scalar
-        local inpY = inputs["y"][1] -- should be scalar
-
-        assert(node.input.kind=="load")
-        assert(orion.kernelGraph.isKernelGraph(node.input.from) or type(node.input.from)=="number")
-
-        out = quote
-          for i = 0,V do
-            if inpX[i] > node.maxX or inpX[i] < -node.maxX then
-              cstdio.printf("error, gathered outside of stencil X %d (max %d)\n",inpX[i], node.maxX)
-              orionAssert(false,"gathered outside of stencil")
-            end
-
-            if inpY[i] > node.maxY or inpY[i] < -node.maxY then
-              cstdio.printf("error, gathered outside of stencil Y %d (max %d)\n",inpY[i], node.maxY)
-              orionAssert(false,"gathered outside of stencil")
-            end
-          end
-
-          in [inputImages[kernelNode][node.input.from][c]:get(loopid, true, `inpX+node.input.relX, `inpY+node.input.relY,  V, validLeft, validRight)]
-          end
-      elseif node.kind=="crop" then
-        -- just pass through, crop only affects loop iteration space
-        out = inputs["expr"][c]
-      elseif node.kind=="array" then
-        out = inputs["expr"..c][1]
-      elseif node.kind=="index" then
-        out = inputs["expr"][node.index+1]
-      elseif node.kind=="mapreducevar" then
-        if mapreducevarSymbols[node.id]==nil then
-          mapreducevarSymbols[node.id] = symbol(int,node.variable)
-        end
-        out = `[mapreducevarSymbols[node.id]]
-      elseif node.kind=="mapreduce" then
-        out = quote stat in [inputs["expr"][c]] end
-        for k,v in pairs(stat) do stat[k] = nil end
-
-        local i = 1
-        while node["varid"..i] do
-          out = quote 
-            var sum : orion.type.toTerraType(node.type:baseType(),false,V) = 0
-            for [mapreducevarSymbols[node["varid"..i]]]=[node["varlow"..i]],[node["varhigh"..i]]+1 do 
-              sum = sum +out 
-            end
-                                                         in sum end
-          i = i + 1
-        end
-        
-      elseif node.kind=="reduce" then
-    
-        local list = node:map("expr",function(v,i) return inputs["expr"..i] end)
-        assert(#list == node:arraySize("expr"))
-
-        -- theoretically, a tree reduction is faster than a linear reduction
-        -- starti and endi are both inclusive
-        local function foldt(list,starti,endi)
-          assert(type(list)=="table")
-          assert(type(starti)=="number")
-          assert(type(endi)=="number")
-          assert(starti<=endi)
-          if starti==endi then
-            return list[starti]
-          else
-            local half = math.floor((endi-starti)/2)
-            local lhs = foldt(list,starti,starti+half)
-            local rhs = foldt(list,starti+half+1,endi)
-
-            if node.op=="sum" then
-              return `(lhs+rhs)
-            elseif node.op=="min" then
-              return `terralib.select(lhs<rhs,lhs,rhs)
-            elseif node.op=="max" then
-              return `terralib.select(lhs>rhs,lhs,rhs)
             else
               assert(false)
             end
           end
-        end
 
-        out = foldt(list,1,#list)
-      else
-        orion.error("Internal error, unknown ast kind "..node.kind)
-      end
+          out = expr
+        elseif node.kind=="gather" then
+          local inpX = inputs["x"][1] -- should be scalar
+          local inpY = inputs["y"][1] -- should be scalar
+
+          assert(node.input.kind=="load")
+          assert(orion.kernelGraph.isKernelGraph(node.input.from) or type(node.input.from)=="number")
+
+          local relX, relY
+          if type(node.input.relX)=="number" then 
+            relX = node.input.relX 
+          else
+            relX = node.input.relX:codegen()
+          end
+          
+          if type(node.input.relY)=="number" then 
+            relY = node.input.relY 
+          else
+            relY = node.input.relY:codegen()
+          end
+
+          out = quote
+            for i = 0,V do
+              if inpX[i] > node.maxX or inpX[i] < -node.maxX then
+                cstdio.printf("error, gathered outside of stencil X %d (max %d)\n",inpX[i], node.maxX)
+                orionAssert(false,"gathered outside of stencil")
+              end
+
+              if inpY[i] > node.maxY or inpY[i] < -node.maxY then
+                cstdio.printf("error, gathered outside of stencil Y %d (max %d)\n",inpY[i], node.maxY)
+                orionAssert(false,"gathered outside of stencil")
+              end
+            end
+
+            in [inputImages[kernelNode][node.input.from][c]:get(loopid, true, `inpX+relX, `inpY+relY,  V, validLeft, validRight)]
+            end
+        elseif node.kind=="crop" then
+          -- just pass through, crop only affects loop iteration space
+          out = inputs["expr"][c]
+        elseif node.kind=="array" then
+          out = inputs["expr"..c][1]
+        elseif node.kind=="index" then
+          out = inputs["expr"][node.index+1]
+        elseif node.kind=="mapreducevar" then
+          if mapreducevarSymbols[node.id]==nil then
+            mapreducevarSymbols[node.id] = symbol(int,node.variable)
+          end
+          out = `[mapreducevarSymbols[node.id]]
+        elseif node.kind=="mapreduce" then
+
+          if node.reduceop=="sum" then
+            out = quote stat in [inputs["expr"][c]] end
+        
+            if c==node.type:channels() then
+              for k,v in pairs(stat) do stat[k] = nil end -- no longer needed in top scope
+            end
+        
+            local i = 1
+            while node["varid"..i] do
+              out = quote 
+                var sum : orion.type.toTerraType(node.type:baseType(),false,V) = 0
+                for [mapreducevarSymbols[node["varid"..i]]]=[node["varlow"..i]],[node["varhigh"..i]]+1 do 
+                  sum = sum +out 
+                end
+              in sum end
+              i = i + 1
+            end
+          elseif node.reduceop=="argmin" then
+
+            -- special case: for argmin, the multiple channels are generated by the one loop
+            -- (they are the mapreducevars that yield the smallest value)
+            out = quote 
+              var sum : orion.type.toTerraType(node.type:baseType(),false,V) = 0
+              for [mapreducevarSymbols[node["varid"..i]]]=[node["varlow"..i]],[node["varhigh"..i]]+1 do 
+                sum = sum +out 
+              end
+              in sum end
+          else
+            assert(false)
+          end
+        
+        elseif node.kind=="reduce" then
+    
+          local list = node:map("expr",function(v,i) return inputs["expr"..i] end)
+          assert(#list == node:arraySize("expr"))
+
+          -- theoretically, a tree reduction is faster than a linear reduction
+          -- starti and endi are both inclusive
+          local function foldt(list,starti,endi)
+            assert(type(list)=="table")
+            assert(type(starti)=="number")
+            assert(type(endi)=="number")
+            assert(starti<=endi)
+            if starti==endi then
+              return list[starti]
+            else
+              local half = math.floor((endi-starti)/2)
+              local lhs = foldt(list,starti,starti+half)
+              local rhs = foldt(list,starti+half+1,endi)
+
+              if node.op=="sum" then
+                return `(lhs+rhs)
+              elseif node.op=="min" then
+                return `terralib.select(lhs<rhs,lhs,rhs)
+              elseif node.op=="max" then
+               return `terralib.select(lhs>rhs,lhs,rhs)
+              else
+                assert(false)
+              end
+            end
+          end
+
+          out = foldt(list,1,#list)
+        else
+          orion.error("Internal error, unknown ast kind "..node.kind)
+        end
 
         --print(node.kind)
         assert(terralib.isquote(out))
@@ -1057,8 +1090,8 @@ function orion.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, shift
   assert(type(shifts)=="table")
   assert(type(options)=="table")
 
-  local core = symbol(int)
-  local clock = symbol(int)
+  local core = symbol(int, "core")
+  local clock = symbol(int, "clock")
   local input = symbol(&opaque)
   local inputArgs = `[&&opaque](&([&int8](input)[4]))
 

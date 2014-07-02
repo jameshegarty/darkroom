@@ -571,7 +571,7 @@ function orion.compileTimeProcess(imfunc, envfn)
   end
 
   rvalue = rvalue:S(
-    function(n)  return n.kind=="apply" or  n.kind=="escape" or n.kind=="var" or n.kind=="fieldselect" end):process(
+    function(n)  return n.kind=="index" or n.kind=="apply" or  n.kind=="escape" or n.kind=="var" or n.kind=="fieldselect" end):process(
     function(inp)
       if inp.kind=="var" then
         if inp.name==imfunc.xvar then  return orion.ast.new({kind="position",coord="x"}):copyMetadataFrom(inp)
@@ -582,6 +582,14 @@ function orion.compileTimeProcess(imfunc, envfn)
           return orion.ast.new({kind="value", value=env[inp.name]}):copyMetadataFrom(inp)
         else
           orion.error("Could not resolve identifier: "..inp.name, inp:linenumber(), inp:offset())
+        end
+      elseif inp.kind=="index" then
+        if inp.expr.kind=="tap" and inp.expr.count~=nil then -- count~=nil indicates LUT
+          local n = inp.expr:shallowcopy()
+          n.kind="tapLUTLookup"
+          n.index = inp.index
+          n.type = orion.type.arrayOver(inp.expr.type)
+          return orion.ast.new(n):copyMetadataFrom(inp)
         end
       elseif inp.kind=="fieldselect" then
         if orion.ast.isAST(inp.expr.value[inp.field]) then

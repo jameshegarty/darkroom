@@ -262,6 +262,7 @@ function orion.ast.check(node,options)
 end
 
 function astPrintPrettys(self)
+  if type(self)=="number" then return tostring(self) end
 
   local out
 
@@ -548,14 +549,14 @@ function typedASTPrintPrettys(self,root,assignments)
   elseif self.kind=="tap" then
     out=out.."_tap_"..self.id
   elseif self.kind=="tapLUTLookup" then
-    out=out.."_tapLUT_"..self.tapname.."["..self.index:printprettys(root,self,"index",assignments).."]"
+    out=out.."_tapLUT_"..self.tapname.."["..typedASTPrintPrettys(self.index,root,assignments).."]"
   elseif self.kind=="transformBaked" then
     out = out..typedASTPrintPrettys(self.expr,root,assignments).."("
 
     local i=1
     while self["translate"..i] do
       -- translate is either a number or an AST
-      out = out..orion.dimToCoord[i].."*"..self["scale"..i].."+"..typedASTPrintPrettys(self["translate"..i], root, assignments)
+      out = out..orion.dimToCoord[i].."*"..self["scale"..i].."+"..astPrintPrettys(self["translate"..i], root, assignments)
       if self["translate"..(i+1)] then out = out.."," end
       i=i+1
     end
@@ -612,7 +613,7 @@ function typedASTPrintPrettys(self,root,assignments)
   elseif self.kind=="load" then
     local n = self.from
     if type(self.from)=="table" then n=self.from:name() end
-    out = "load_from_"..n.."("..typedASTPrintPrettys(self.relX,root,assignments)..","..typedASTPrintPrettys(self.relY,root,assignments)..")"
+    out = "load_from_"..n.."("..astPrintPrettys(self.relX,root,assignments)..","..astPrintPrettys(self.relY,root,assignments)..")"
   elseif self.kind=="mapreduce" then
     local vars,i = "",1
     while self["varname"..i] do

@@ -26,15 +26,15 @@ end
 
 local function synthRel(rel,t)
   if type(t)=="number" and type(rel)=="number" then
-    return rel+t
-  elseif type(rel)=="number" and orion.typedAST.isTypedAST(t) then
-    local v = orion.typedAST.new({kind="value",value=rel,type=t.type}):copyMetadataFrom(t)
-    return orion.typedAST.new({kind="binop", lhs=t, rhs=v, type = t.type, op="+"}):copyMetadataFrom(t)
-  elseif orion.typedAST.isTypedAST(rel) and type(t)=="number" then
-    local v = orion.typedAST.new({kind="value",value=t,type=rel.type}):copyMetadataFrom(rel)
-    return orion.typedAST.new({kind="binop", lhs=rel, rhs=v, type = rel.type, op="+"}):copyMetadataFrom(rel)
-  elseif orion.typedAST.isTypedAST(rel) and orion.typedAST.isTypedAST(t) then
-    return orion.typedAST.new({kind="binop", lhs=rel, rhs=t, type = rel.type, op="+"}):copyMetadataFrom(rel)
+    return orion.ast.new({kind="value",value=rel+t})
+  elseif type(rel)=="number" and orion.ast.isAST(t) then
+    local v = orion.ast.new({kind="value",value=rel}):copyMetadataFrom(t)
+    return orion.ast.new({kind="binop", lhs=t, rhs=v, op="+"}):copyMetadataFrom(t)
+  elseif orion.ast.isAST(rel) and type(t)=="number" then
+    local v = orion.ast.new({kind="value",value=t}):copyMetadataFrom(rel)
+    return orion.ast.new({kind="binop", lhs=rel, rhs=v, op="+"}):copyMetadataFrom(rel)
+  elseif orion.ast.isAST(rel) and orion.ast.isAST(t) then
+    return orion.ast.new({kind="binop", lhs=rel, rhs=t, op="+"}):copyMetadataFrom(rel)
   else
     print(type(rel),type(t))
     assert(false)
@@ -62,8 +62,8 @@ function shift(graph, shifts)
                 if nn.kind=="load" then
                   local r = nn:shallowcopy()                  
 
-                  r.relX = synthRel(r.relX, n.translate1)
-                  r.relY = synthRel(r.relY, n.translate2)
+                  r.relX = synthRel(r.relX, n.translate1):optimize()
+                  r.relY = synthRel(r.relY, n.translate2):optimize()
 
                   if type(nn.from)=="table" then r.from = oldToNewRemap[nn.from]; assert(r.from~=nil) end
                   return orion.typedAST.new(r):copyMetadataFrom(nn)
@@ -72,9 +72,9 @@ function shift(graph, shifts)
                   local res = {kind="binop", lhs=nn, type = nn.type, op="+"}
 
                   if nn.coord=="x" then
-                    res.rhs = n.translate1
+                    res.rhs = orion.typedAST._toTypedAST(n.translate1)
                   elseif nn.coord=="y" then
-                    res.rhs = n.translate2
+                    res.rhs = orion.typedAST._toTypedAST(n.translate2)
                   else
                     assert(false)
                   end
@@ -92,8 +92,7 @@ function shift(graph, shifts)
             if nn.kind=="load" then
               if type(nn.from)=="table" then
                 local r = nn:shallowcopy()
---                r.relY = r.relY - shifts[orig] + shifts[newToOldRemap[nn.from]]
-                r.relY = synthRel(r.relY,shifts[newToOldRemap[nn.from]]-shifts[orig])
+                r.relY = synthRel(r.relY, shifts[newToOldRemap[nn.from]]-shifts[orig]):optimize()
                 if type(nn.from)=="table" then r.from = oldToNewRemap[nn.from]; assert(r.from~=nil) end
                 return orion.typedAST.new(r):copyMetadataFrom(nn)
               end

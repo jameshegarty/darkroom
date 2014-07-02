@@ -151,7 +151,7 @@ function explode(div,str) -- credit: http://richard.warburton.it
   return arr
 end
 
-
+-- round x up to the next largest number that has 'roundto' as a factor
 function upToNearest(roundto,x)
   assert(type(x)=="number")
   --if x < 0 then orion.error("uptoNearest x<=0 "..x) end
@@ -160,11 +160,7 @@ function upToNearest(roundto,x)
   
   local ox
 
-  if x < 0 then
-    ox = x + (x%roundto)
-  else
-    ox = x + (roundto-x%roundto)
-  end
+  ox = x + (roundto-x%roundto)
 
   assert(ox > x)
   assert( (ox % roundto) == 0)

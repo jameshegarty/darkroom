@@ -2,6 +2,8 @@ Stencil={}
 StencilMT = {__index = Stencil}
 
 local function dimToXYZ(dim,t)
+  assert(type(dim)=="number")
+  assert(type(t)=="number")
   if dim==1 then return t,0,0
   elseif dim==2 then return 0,t,0
   else return 0,0,t

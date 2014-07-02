@@ -74,7 +74,7 @@ function bilinearDemosaic(in1)
       if orion.arrayAnd(phase=={1,0}) then b_tr else
         b_br end end end;
 
-    {out_r, out_g, out_b}
+    in {out_r, out_g, out_b}
   end
 end
 

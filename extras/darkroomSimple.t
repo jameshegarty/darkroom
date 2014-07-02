@@ -142,115 +142,6 @@ function orionSimple.loadRaw(filename, w,h,bits,header,flipEndian)
 
 end
 
---[=[
-local function makeBindConstant(orionType)
-  assert(orion.type.isType(orionType))
-
-  local terraType = orion.type.toTerraType(orionType,false)
-
-  -- if orionType is an array type, figure out what it's an array over
-  local baseOrionType = orionType
-  if orion.type.isArray(baseOrionType) then baseOrionType = orion.type.arrayOver(orionType) end
-  local baseTerraType = orion.type.toTerraType(baseOrionType,false)
-
-  local arrayLength = orion.type.arrayLength(orionType)
-  if arrayLength==0 then arrayLength=1 end
-
-  local isFloat = orion.type.isFloat(baseOrionType)
-  local isSigned = orion.type.isInt(baseOrionType)
-
-  return terra(boundId : int, w:int, h:int, constantValue : terraType)
-
-    orionAssert( boundId < orion._boundImagesRuntime:count() and boundId>=0, "bindImage id out of bound")
-    orionAssert( w>0, "bindConstant w<0")
-    orionAssert( h>0, "bindConstant h<0")
-    
-    -- check if the input image has the right width, height, etc
-    if orion._boundImagesRuntime:get(boundId).width>0 then
-      orionAssert(orion._boundImagesRuntime:get(boundId).width == w, "incorrect constant width")
-      orionAssert(orion._boundImagesRuntime:get(boundId).height == h, "incorrect constant height")
-    end
-
-    orionAssert(orion._boundImagesRuntime:get(boundId).bits == sizeof(baseTerraType)*8, "bindConstant bits")
-    orionAssert(orion._boundImagesRuntime:get(boundId).floating == isFloat, "floating")
-    orionAssert(orion._boundImagesRuntime:get(boundId).isSigned == isSigned, "sign should match in makeBindConstant")
-    orionAssert(orion._boundImagesRuntime:get(boundId).channels == arrayLength, "channels")
-    
-    -- make the new const image
-    var c = orion._boundImagesRuntime:get(boundId).channels
-    
-    var data = [&terraType](cstdlib.malloc(w*h*sizeof(terraType)))
-    
-    for i=0,w*h do data[i] = constantValue end
-    
-    var img : Image
-    img:init(w,h,w,c,sizeof(baseTerraType)*8,isFloat,isSigned,[&uint8](data),[&uint8](data))
-    
-    if orion.verbose then cstdio.printf("Bind Constant %d w %d h %d bits %d\n",boundId, w,h,sizeof(baseTerraType)*8) end
-    
-    -- was something already bound to this image? need to free it
-    if orion._boundImagesRuntime:get(boundId).active then
-      orion._boundImagesRuntime:get(boundId).image:free()
-    end
-    
-    orion._boundImagesRuntime:getPtr(boundId).active = true
-    orion._boundImagesRuntime:getPtr(boundId).image = img
-  end
-end
-
-orionSimple.bindConstantFloat32 = makeBindConstant(orion.type.float(32))
-orionSimple.bindConstantInt32 = makeBindConstant(orion.type.int(32))
-orionSimple.bindConstantUint8 = makeBindConstant(orion.type.uint(8))
-orionSimple.bindConstantArray2Float32 = makeBindConstant(orion.type.array(orion.type.float(32),2))
-orionSimple.bindConstantArray3Float32 = makeBindConstant(orion.type.array(orion.type.float(32),3))
-orionSimple.bindConstantArray3Uint8 = makeBindConstant(orion.type.array(orion.type.uint(8),3))
-orionSimple.bindConstantArray2Uint8 = makeBindConstant(orion.type.array(orion.type.uint(8),2))
-
-function orionSimple.constant(ty, width, height, constantValue)
-  assert(orion.type.isType(ty))
-  assert(type(width)=="number")
-  assert(type(height)=="number")
-  assert(type(constantValue)=="number")
-
-  if orionSimple.width==nil then
-    orionSimple.width = width
-    orionSimple.height = height
-  else
-    assert(orionSimple.width==width)
-    assert(orionSimple.height==height)
-  end
-
-  local idast = orion.image(ty,width,height)
-  
-  local tty = orion.type.toTerraType(ty)
-
-  if ty == orion.type.float(32) then
-    local terra dobind(id : int, inp : float)
-      orion.bindConstantFloat32( id, width, height, inp )
-    end
-    
-    dobind(idast:id(),constantValue)
-  elseif ty == orion.type.int(32) then
-    local terra dobind(id : int, inp : int)
-      orion.bindConstantInt32( id, width, height, inp )
-    end
-    
-    dobind(idast:id(),constantValue)
-  elseif ty == orion.type.uint(8) then
-    local terra dobind(id : int, inp : uint8)
-      orion.bindConstantUint8( id, width, height, inp )
-    end
-    
-    dobind(idast:id(),constantValue)
-  else
-    print("unsupported type pased to orion.constant",ty:str())
-    assert(false)
-  end
-
-  return idast
-end
-]=]
-
 orionSimple._usedTapNames={}
 
 function orionSimple.tap(ty)
@@ -265,7 +156,14 @@ end
 
 function orionSimple.setTap( ast, value )
   assert(orion.ast.isAST(ast))
-  orionSimple.tapInputs[ast.id+1] = value
+  assert(ast.kind=="tap")
+
+  if ast.type:isArray() then
+    assert(orion.type.arrayLength(ast.type)==#value)
+    orionSimple.tapInputs[ast.id+1] = `arrayof([orion.type.arrayOver(ast.type):toTerraType()],value)
+  else
+    orionSimple.tapInputs[ast.id+1] = value
+  end
 end
 
 function orionSimple.getTap(ast)
@@ -280,34 +178,15 @@ function orionSimple.getTap(ast)
   return getit(ast.id)
 end
 
-
--- even though the LUT will be 0 indexed, value is 1 indexed
--- nice one
-function orionSimple.setTapLUT(ast,value)
-  assert(orion.ast.isAST(ast))
-  assert(type(value)=="table")
-
-  local terraType = orion.type.toTerraType(ast.type)
-
-  assert(value[0]==nil)
-  assert(#value == ast.count)
-  local terra alloc()
-    var tptr : &terraType = [&terraType]( cstdlib.malloc(sizeof(terraType)*[ast.count]) )
-    return tptr
+function orionSimple.tapLUT(ty, entries, name)
+  assert(type(name)=="string")
+  local r = orion.tapLUT(ty, entries, name)
+  if #orionSimple.taps ~= r.id then 
+    orion.error("If you use the simple interface, you must use to for _all_ taps "..#orionSimple.taps.." "..r.id)
   end
 
-  local ptr = alloc()
-
-  local terra seti(tptr : &terraType, index : int, value : terraType)
-    tptr[index] = value
-  end
-
-  for i=1,ast.count do
-    assert(type(value[i])=="number")
-    seti(ptr,i-1,value[i])
-  end
-
-  (terra() orion.runtime.setTapLUT(ast.id, [&opaque](ptr)) end)()
+  orionSimple.taps[r.id+1] = r
+  return r
 end
 
 function astFunctions:save(filename,compilerOptions)

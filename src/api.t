@@ -16,25 +16,25 @@ function orion.input( imtype )
 end
 
 orion._tapcount = 0
-function orion.tap(ty)
+function orion.tap(ty, name)
   ty = orion.type.fromTerraType(ty)
 
   assert(orion.type.isType(ty))
   assert(orion.type.isArray(ty)==false)
 
   orion._tapcount = orion._tapcount+1
-  return orion.ast.new({kind="tap",type=ty, id=orion._tapcount-1}):setLinenumber(0):setOffset(0):setFilename("null_tap")
+  return orion.ast.new({kind="tap", type=ty, tapname = name, id=orion._tapcount-1}):setLinenumber(0):setOffset(0):setFilename("null_tap")
 end
 
-orion._tapLUTcount = 0
 function orion.tapLUT(ty, count, name)
-  assert(orion.type.isType(ty))
+  ty = orion.type.fromTerraType(ty)
+
   assert(orion.type.isArray(ty)==false)
   assert(type(count)=="number")
   assert(type(name)=="string")
 
-  orion._tapLUTcount = orion._tapLUTcount+1
-  return orion.ast.new({kind="tapLUT",type=ty,count=count,tapname=name,id=orion._tapLUTcount-1}):setLinenumber(0):setOffset(0):setFilename("null_tapLUT")
+  orion._tapcount = orion._tapcount+1
+  return orion.ast.new({kind="tap", type=orion.type.array(ty,count), count=count, tapname=name, id=orion._tapcount-1}):setLinenumber(0):setOffset(0):setFilename("null_tapLUT")
 end
 
 function orion.frontEnd(ast, options)
