@@ -1,13 +1,12 @@
 orionSimple = {}
 
-orionSimple.images = {}
+orionSimple.images = {} -- images returned from orion.input
 orionSimple.imageInputs = {} -- this is the image data we pass in
+orionSimple.imageWidths = {}
+orionSimple.imageHeights = {}
 -- with taps, we pass them in the same order they're created. We just track what ID was last seen to make sure the user always uses this interface
 orionSimple.taps = {}
 orionSimple.tapInputs = {} -- tap values we pass in
--- track W/H to make sure user always passes the same w/h
-orionSimple.width = nil
-orionSimple.height = nil
 
 terralib.require("image")
 
@@ -43,23 +42,22 @@ function imageToOrionType(im)
   return _type
 end
 
+-- img is an Image object
 function orionSimple.image(img)
-  if orionSimple.width==nil then
-    orionSimple.width = img.width
-    orionSimple.height = img.height
-  else
-    assert(orionSimple.width==img.width)
-    assert(orionSimple.height==img.height)
-  end
-
   local _type = imageToOrionType(img)
 
   local inp = orion.input(_type)
+
+  if inp.expr.from ~= #orionSimple.images then
+    orion.error("If you use the simple interface, you must use to for _all_ inputs "..#orionSimple.images.." "..inp.expr.from)
+  end
+
   table.insert(orionSimple.images,inp)
   table.insert(orionSimple.imageInputs,quote img:toDarkroomFormat() in img.data end)
+  table.insert(orionSimple.imageWidths, img.width)
+  table.insert(orionSimple.imageHeights, img.height)
 
   return inp
-
 end
 
 -- convenience function. Loads an image and returns it as an orion function
@@ -72,28 +70,12 @@ function orionSimple.load(filename, boundaryCond)
   local terra makeIm( filename : &int8)
     var im : &Image = [&Image](cstdlib.malloc(sizeof(Image)))
     im:initWithFile(filename)
-    im:toDarkroomFormat()
-
     return im
   end
   
-  local im = makeIm(filename)
+  local img = makeIm(filename)
 
-  if orionSimple.width==nil then
-    orionSimple.width = im.width
-    orionSimple.height = im.height
-  else
-    assert(orionSimple.width==im.width)
-    assert(orionSimple.height==im.height)
-  end
-
-  local _type = imageToOrionType(im)
-
-  local inp = orion.input(_type)
-  table.insert(orionSimple.images,inp)
-  table.insert(orionSimple.imageInputs,`im.data)
-
-  return inp
+  return orionSimple.image(img)
 end
 
 function orionSimple.loadRaw(filename, w,h,bits,header,flipEndian)
@@ -228,12 +210,31 @@ function astFunctions:_cparam(key)
   return orion._boundImages[id+1][key]
 end
 
+function astFunctions:size()
+  local width, height
+  self:S("load"):traverse(
+    function(n)
+      if width==nil then
+        width = orionSimple.imageWidths[n.from+1]
+        height = orionSimple.imageHeights[n.from+1]
+      else
+        if orionSimple.imageWidths[n.from+1]~=width or
+          orionSimple.imageHeights[n.from+1]~=height then
+          orion.error(":size() Width/ height of all input images must match!")
+        end
+      end
+    end)
+  return width, height
+end
+
 function astFunctions:width()
-  return orionSimple.width
+  local w,h = self:size()
+  return w
 end
 
 function astFunctions:height()
-  return orionSimple.height
+  local w,h = self:size()
+  return h
 end
 
 
@@ -246,11 +247,35 @@ function astFunctions:id()
   return self.expr.id
 end
 
+-- explicitly set image width/height
+function orionSimple.setImageSize(width, height)
+  assert(type(width)=="number")
+  assert(type(height)=="number")
+  orionSimple.width = width
+  orionSimple.height = height
+end
+
 function orionSimple.compile(outList, options)
   options = options or {}
   local outDecl = {}
   local outArgs = {}
   local outRes = {}
+
+  -- check that the width/height of all _used_ images match
+  local width = orionSimple.width
+  local height = orionSimple.height
+  for _,v in pairs(outList) do
+    local w,h = v:size()
+    if width==nil then
+      width=w; height=h
+    elseif w~=nil and (w~=width or h~=height) then
+      orion.error("Width/ height of all input images must match!")
+    end
+  end
+
+  if width==nil then
+    orion.error("Width/Height of output could not be deteremined! If no image inputs, it must be specified!")
+  end
 
   local ocallbackKernelGraph = options.callbackKernelGraph
   options.callbackKernelGraph = function(kernelGraph)
@@ -262,8 +287,8 @@ function orionSimple.compile(outList, options)
         quote 
           var [s] 
           var data : &opaque
-          cstdlib.posix_memalign( [&&opaque](&data), 4*1024, [orionSimple.width*orionSimple.height*v.kernel.type:sizeof()])
-          s:initSimple([orionSimple.width],[orionSimple.height],[v.kernel.type:channels()],[v.kernel.type:baseType():sizeof()]*8,[v.kernel.type:isFloat()],[v.kernel.type:isInt()],true,data)
+          cstdlib.posix_memalign( [&&opaque](&data), 4*1024, [width*height*v.kernel.type:sizeof()])
+          s:initSimple([width],[height],[v.kernel.type:channels()],[v.kernel.type:baseType():sizeof()]*8,[v.kernel.type:isFloat()],[v.kernel.type:isInt()],true,data)
         end)
       table.insert(outRes, quote s:toAOS() in s end)
       table.insert(outArgs, `s.data)
@@ -271,7 +296,7 @@ function orionSimple.compile(outList, options)
     if ocallbackKernelGraph ~= nil then ocallbackKernelGraph(kernelGraph) end
   end
   
-  local fn = orion.compile(orionSimple.images,outList,orionSimple.taps,orionSimple.width, orionSimple.height, options)
+  local fn = orion.compile( orionSimple.images, outList, orionSimple.taps, width, height, options)
 
   options.callbackKernelGraph = ocallbackKernelGraph
 

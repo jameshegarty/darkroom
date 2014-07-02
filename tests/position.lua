@@ -1,6 +1,8 @@
 terralib.require "test"
 import "darkroom"
 
+darkroomSimple.setImageSize(128,64)
+
 im a(x,y)  x+y*2 end
 im b(x,y)  a(x-10,y+5) end
 

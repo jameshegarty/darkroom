@@ -9,7 +9,6 @@ function orion.input( imtype )
   res:setName("cropSpecial"..(orion._inputCount).."Node")
   orion._inputCount = orion._inputCount + 1
 
-  -- this is kind of a trick: crop from special node will propagate
   res = orion.ast.new({kind="crop", shiftY = 0, expr=res}):setLinenumber(0):setOffset(0):setFilename("null_special")
 
   return res
