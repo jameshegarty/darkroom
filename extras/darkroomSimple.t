@@ -288,7 +288,7 @@ function orionSimple.compile(outList, options)
           var [s] 
           var data : &opaque
           cstdlib.posix_memalign( [&&opaque](&data), 4*1024, [width*height*v.kernel.type:sizeof()])
-          s:initSimple([width],[height],[v.kernel.type:channels()],[v.kernel.type:baseType():sizeof()]*8,[v.kernel.type:isFloat()],[v.kernel.type:isInt()],true,data)
+          s:init([width],[height],[upToNearest(options.V,width)],[v.kernel.type:channels()],[v.kernel.type:baseType():sizeof()]*8,[v.kernel.type:isFloat()],[v.kernel.type:isInt()],true,data,data)
         end)
       table.insert(outRes, quote s:toAOS() in s end)
       table.insert(outArgs, `s.data)

@@ -903,7 +903,7 @@ function validStencil(kernelGraph, kernelNode, shifts)
 end
 
 function stripLeft(strip, options) return `strip*[stripWidth(options)] end
-function stripRight(strip, options) return `(strip+1)*[stripWidth(options)] end
+function stripRight(strip, options) return quote var w = (strip+1)*[stripWidth(options)] in terralib.select(w>options.width,options.width,w) end end
 
 -- return interiorValue or exteriorValue depending if this strip's edge is on the exterior of the region we're calculating or not
 terra interiorSelectLeft(strip : int, interiorValue : int, exteriorValue : int)
@@ -1248,7 +1248,7 @@ function orion.terracompiler.allocateImageWrappers(
         -- make the output
         if parentIsOutput(n)~=nil then
           outputs[n] = {}
-          for c=1,n.kernel.type:channels() do outputs[n][c] = newImageWrapper( channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType()), n.kernel.type:baseType(), options.width, options.terradebug) end
+          for c=1,n.kernel.type:channels() do outputs[n][c] = newImageWrapper( channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType()), n.kernel.type:baseType(), upToNearest(options.V, options.width), options.terradebug) end
           setmetatable(outputs[n],pointwiseDispatchMT)
 
           print("OUT imageWrapper","kernelNode:",n,n:name(),"wrapper",outputs[n])

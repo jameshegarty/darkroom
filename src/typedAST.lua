@@ -81,19 +81,18 @@ return nil
   return translate:optimize(), 1
 end
 
+-- the translate operator can take a few different arguments as translations
+-- it can contain binary + ops, and mapreduce vars. This evaluates all possible
+-- index values to find the correct stencil for those situations
+function orion.typedAST.transformArea(t1,t2)
+  if type(t1)=="number" then t1=orion.ast.new({kind="value",value=t1}) end
+  if type(t2)=="number" then t2=orion.ast.new({kind="value",value=t2}) end
+  return t1:eval(1):product(t2:eval(2))
+end
 
 -- returns the stencil with (0,0,0) at the origin
 -- if input isn't null, only calculate stencil for this input (a kernelGraph node)
 function typedASTFunctions:stencil(input)
-
-  -- the translate operator can take a few different arguments as translations
-  -- it can contain binary + ops, and mapreduce vars. This evaluates all possible
-  -- index values to find the correct stencil for those situations
-  local function translateArea(t1,t2)
-    if type(t1)=="number" then t1=orion.ast.new({kind="value",value=t1}) end
-    if type(t2)=="number" then t2=orion.ast.new({kind="value",value=t2}) end
-    return t1:eval(1):product(t2:eval(2))
-  end
 
   if self.kind=="binop" then
     return self.lhs:stencil(input):unionWith(self.rhs:stencil(input))
@@ -134,7 +133,7 @@ function typedASTFunctions:stencil(input)
     return self.index:stencil(input)
   elseif self.kind=="load" then
     local s = Stencil.new()
-    if input==nil or input==self.from then s = translateArea(self.relX,self.relY) end
+    if input==nil or input==self.from then s = orion.typedAST.transformArea(self.relX,self.relY) end
     return s
   elseif self.kind=="gather" then
     --if input~=nil then assert(false) end
@@ -145,7 +144,7 @@ function typedASTFunctions:stencil(input)
     else
       -- note the kind of nasty hack we're doing here: gathers read from loads, and loads can be shifted.
       -- so we need to shift this the same as the load
-      return translateArea(self.input.relX, self.input.relY):product( Stencil.new():add(-self.maxX,-self.maxY,0):add(self.maxX,self.maxY,0))
+      return orion.typedAST.transformArea(self.input.relX, self.input.relY):product( Stencil.new():add(-self.maxX,-self.maxY,0):add(self.maxX,self.maxY,0))
     end
   elseif self.kind=="array" then
     local exprsize = self:arraySize("expr")
@@ -168,7 +167,7 @@ function typedASTFunctions:stencil(input)
   elseif self.kind=="crop" then
     return self.expr:stencil(input)
   elseif self.kind=="transformBaked" then
-    return self.expr:stencil(input):product(translateArea(self.translate1,self.translate2))
+    return self.expr:stencil(input):product(orion.typedAST.transformArea(self.translate1,self.translate2))
   elseif self.kind=="mapreduce" then
     return self.expr:stencil(input)
   elseif self.kind=="mapreducevar" then
