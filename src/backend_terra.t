@@ -799,7 +799,7 @@ function orion.terracompiler.codegen(
         
         elseif node.kind=="reduce" then
     
-          local list = node:map("expr",function(v,i) return inputs["expr"..i] end)
+          local list = node:map("expr",function(v,i) return inputs["expr"..i][c] end)
           assert(#list == node:arraySize("expr"))
 
           -- theoretically, a tree reduction is faster than a linear reduction

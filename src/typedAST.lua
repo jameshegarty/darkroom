@@ -222,11 +222,13 @@ function orion.typedAST._toTypedAST(inast)
           end
           
           ast.type = ast.expr.type
-        elseif ast.op=="floor" then
+        elseif ast.op=="floor" or ast.op=="ceil" then
           ast.type = orion.type.float(32)
         elseif ast.op=="abs" then
           if ast.expr.type==orion.type.float(32) then
             ast.type = orion.type.float(32)
+          elseif ast.expr.type==orion.type.float(64) then
+            ast.type = orion.type.float(64)
           elseif orion.type.isInt(ast.expr.type) or orion.type.isUint(ast.expr.type) then
             -- obv can't make it any bigger
             ast.type = ast.expr.type
@@ -244,8 +246,10 @@ function orion.typedAST._toTypedAST(inast)
         elseif ast.op=="sin" or ast.op=="cos" or ast.op=="exp" then
           if ast.expr.type==orion.type.float(32) then
             ast.type = orion.type.float(32)
+          elseif ast.expr.type==orion.type.float(64) then
+            ast.type = orion.type.float(64)
           else
-            assert(false)
+            orion.error("sin, cos, and exp only work on floating point types",origast:linenumber(),origast:offset(),origast:filename())
           end
         elseif ast.op=="arrayAnd" then
           if orion.type.isArray(ast.expr.type) and orion.type.isBool(orion.type.arrayOver(ast.expr.type)) then

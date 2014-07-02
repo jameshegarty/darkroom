@@ -567,7 +567,7 @@ function typedASTPrintPrettys(self,root,assignments)
 
     local i=1
     while self["expr"..i] do
-      out = out..self["expr"..i]:printprettys(root,self,"expr"..i,assignments)
+      out = out..typedASTPrintPrettys(self["expr"..i],root,assignments)
       if self["expr"..(i+1)] then out = out..",\n" end
       i=i+1
     end

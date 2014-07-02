@@ -73,6 +73,11 @@ function orion.floor( thisast, expr)
   return orion.ast.new({kind="unary",op="floor",expr=expr}):copyMetadataFrom(thisast)
 end
 
+function orion.ceil( thisast, expr)
+  assert(orion.ast.isAST(expr))
+  return orion.ast.new({kind="unary",op="ceil",expr=expr}):copyMetadataFrom(thisast)
+end
+
 function orion.abs( thisast, expr)
   assert(orion.ast.isAST(expr))
   return orion.ast.new({kind="unary",op="abs",expr=expr}):copyMetadataFrom(thisast)

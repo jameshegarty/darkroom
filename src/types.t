@@ -48,10 +48,16 @@ function orion.type.fromTerraType(ty)
     return orion.type.int(16)
   elseif ty==uint8 then
     return orion.type.uint(8)
+  elseif ty==uint32 then
+    return orion.type.uint(32)
+  elseif ty==int8 then
+    return orion.type.int(8)
   elseif ty==uint16 then
     return orion.type.uint(16)
   elseif ty==float then
     return orion.type.float(32)
+  elseif ty==double then
+    return orion.type.float(64)
   elseif ty==bool then
     return orion.type.bool()
   elseif ty:isarray() then
@@ -179,7 +185,7 @@ function orion.type.meet( a, b, op, ast)
       if a.type=="int" then ut,t = t,ut end
       
       local prec
-      if ut.precision==t.precision and t.precision < 32 then
+      if ut.precision==t.precision and t.precision < 64 then
         prec = t.precision * 2
       elseif ut.precision<t.precision then
         prec = math.max(a.precision,b.precision)
@@ -192,6 +198,8 @@ function orion.type.meet( a, b, op, ast)
       if orion.cmpops[op] then
         return orion.type.bool(), thistype, thistype
       elseif orion.binops[op] or treatedAsBinops[op] then
+        return thistype, thistype, thistype
+      elseif op=="pow" then
         return thistype, thistype, thistype
       else
         print( "operation " .. op .. " is not implemented for aType:" .. a.type .. " bType:" .. b.type .. " " )
