@@ -540,15 +540,19 @@ function orion.terracompiler.codegen(
   assert(type(stripCount)=="number")
   assert(type(TapStruct)=="table")
 
-  local stat = {}
-
-  local expr =inkernel:visitEach(
+  local res = inkernel:visitEach(
     function(node,args)
+
       local inputs = {}
       local packedSymbol = {}
+      local stat = {}
       for k,v in pairs(args) do 
         inputs[k] = args[k][1]
         packedSymbol[k] = args[k][2]
+        for kk, vv in pairs(args[k][3]) do
+          assert(terralib.isquote(vv))
+          table.insert(stat, vv)
+        end
       end
 
       local finalOut = {}
@@ -881,20 +885,20 @@ function orion.terracompiler.codegen(
       local packedSymbol = symbol(orion.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
       table.insert(stat,quote var [packedSymbol] = array(finalOut) end)
 
-      for c=1,node.type:channels() do
-        finalOut[c] = `[packedSymbol][c-1]
+      for c=0,node.type:channels()-1 do
+        finalOut[c+1] = `[packedSymbol][c]
       end
       
-      return {finalOut,`[packedSymbol]}
+      return {finalOut, `[packedSymbol], stat}
     end)
 
-  for k,v in ipairs(expr[1]) do assert(terralib.isquote(expr[1][k])) end
+  for k,v in ipairs(res[1]) do assert(terralib.isquote(res[1][k])) end
   
   if orion.printstage then
-    print("terracompiler.codegen astNodes:",inkernel:S("*"):count()," statements:",#stat,inkernel:name())
+    print("terracompiler.codegen astNodes:",inkernel:S("*"):count()," statements:",#res[3],inkernel:name())
   end
 
-  return expr[1],stat
+  return res[1],res[3]
 end
 
 -- user is expected to allocate an image that is padded to the (vector size)*(stripCount)
