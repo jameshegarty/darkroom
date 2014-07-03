@@ -69,9 +69,11 @@ function astFunctions:eval(dim)
     -- we call :min here just to extract the one coord we care about
     return Stencil.new():addDim(dim, l:min(dim)):addDim(dim, h:min(dim))
   elseif self.kind=="binop" and self.op=="+" then
-    return self.lhs:eval(dim):product(self.rhs:eval(dim))
+    return self.lhs:eval(dim):sum(self.rhs:eval(dim))
   elseif self.kind=="binop" and self.op=="-" then
-    return self.lhs:eval(dim):product(self.rhs:eval(dim):flipDim(dim))
+    return self.lhs:eval(dim):sum(self.rhs:eval(dim):flipDim(dim))
+  elseif self.kind=="binop" and self.op=="*" then
+    return self.lhs:eval(dim):product(self.rhs:eval(dim))
   else
     print("internal error, couldn't statically evaluate ", self.kind)
     assert(false)
@@ -85,6 +87,8 @@ function astFunctions:codegen()
     return `[self.lhs:codegen()]+[self.rhs:codegen()]
   elseif self.kind=="binop" and self.op=="-" then
     return `[self.lhs:codegen()]-[self.rhs:codegen()]
+  elseif self.kind=="binop" and self.op=="*" then
+    return `[self.lhs:codegen()]*[self.rhs:codegen()]
   elseif self.kind=="mapreducevar" then
     if mapreducevarSymbols[self.id]==nil then
       mapreducevarSymbols[self.id] = symbol(int,self.variable)

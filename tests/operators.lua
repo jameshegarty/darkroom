@@ -37,6 +37,8 @@ function gen(T,a)
   im a(x,y) [T](if a==3 then a+1 else a+2 end) end
   im a(x,y) [T](orion.vectorSelect(a==3,a+1,a+2)) end
 
+  im a(x,y) [T](map i=-1,1 reduce(sum) a(x,y)/3 end) end -- mapreduce var unused
+
   if drt:isArray() then
     return im(x,y) [uint8[3]](a) end
   else

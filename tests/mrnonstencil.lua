@@ -11,5 +11,5 @@ im a(x,y)
 end
 
 test(im(x,y) 
-     [uint8](map i=-1,1 j=-1,1 reduce(sum) (a(x+i,y+j)*T[(j+1)*3+(i+1)])/(26) end)
+     [uint8](map i=-1,1 j=-1,1 reduce(sum) (a(x,y)*T[(j+1)*3+(i+1)])/(26) end)
 end)

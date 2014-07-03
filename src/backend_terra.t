@@ -13,10 +13,10 @@ pointwiseDispatchMT = {
   __index = function(self, method) 
     return function(self, ...)
       local res = {}
-      for i, element in pairs(self) do
+      for i, element in pairs(self) do -- for each channel or image (remember, this nests)
         local varargs = {...}
         for k,v in ipairs(varargs) do 
-          if type(v)=="table" and keycount(v)==#v then
+          if type(v)=="table" and keycount(v)==#v then -- if this argument is an array of chennels, break it open
             varargs[k] = v[i]; 
           end
         end
@@ -543,7 +543,13 @@ function orion.terracompiler.codegen(
   local stat = {}
 
   local expr =inkernel:visitEach(
-    function(node,inputs)
+    function(node,args)
+      local inputs = {}
+      local packedSymbol = {}
+      for k,v in pairs(args) do 
+        inputs[k] = args[k][1]
+        packedSymbol[k] = args[k][2]
+      end
 
       local finalOut = {}
 
@@ -621,7 +627,13 @@ function orion.terracompiler.codegen(
           end
 
         elseif node.kind=="value" then
-          out = `[orion.type.toTerraType(node.type:baseType(),false,V)](node.value)
+          local val = node.value
+
+          if type(node.value)=="table" then
+            val = node.value[c]
+          end
+
+          out = `[orion.type.toTerraType(node.type:baseType(),false,V)](val)
         elseif node.kind=="tap" then
           -- kind of a cheap hack to save threading around some state
           local entry
@@ -758,13 +770,26 @@ function orion.terracompiler.codegen(
         elseif node.kind=="array" then
           out = inputs["expr"..c][1]
         elseif node.kind=="index" then
-          out = inputs["expr"][node.index+1]
+          if node.index:eval(1):area()==1 then
+            out = inputs["expr"][node.index:eval(1):min(1)+1]
+          else
+            local cg = node.index:codegen()
+            out = `[packedSymbol["expr"]][cg]
+          end
         elseif node.kind=="mapreducevar" then
           if mapreducevarSymbols[node.id]==nil then
             mapreducevarSymbols[node.id] = symbol(int,node.variable)
           end
           out = `[mapreducevarSymbols[node.id]]
         elseif node.kind=="mapreduce" then
+
+          local i = 1
+          while node["varid"..i] do -- unused variables
+            if mapreducevarSymbols[node["varid"..i]]==nil then
+              mapreducevarSymbols[node["varid"..i]] = symbol(int)
+            end
+            i = i + 1
+          end
 
           if node.reduceop=="sum" then
             out = quote stat in [inputs["expr"][c]] end
@@ -775,6 +800,9 @@ function orion.terracompiler.codegen(
         
             local i = 1
             while node["varid"..i] do
+              if mapreducevarSymbols[node["varid"..i]]==nil then
+                mapreducevarSymbols[node["varid"..i]] = symbol(int)
+              end
               out = quote 
                 var sum : orion.type.toTerraType(node.type:baseType(),false,V) = 0
                 for [mapreducevarSymbols[node["varid"..i]]]=[node["varlow"..i]],[node["varhigh"..i]]+1 do 
@@ -849,16 +877,24 @@ function orion.terracompiler.codegen(
 
       end
 
-      return finalOut
+      -- if this is an array and we index into it, pack it into a terra array
+      local packedSymbol = symbol(orion.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
+      table.insert(stat,quote var [packedSymbol] = array(finalOut) end)
+
+      for c=1,node.type:channels() do
+        finalOut[c] = `[packedSymbol][c-1]
+      end
+      
+      return {finalOut,`[packedSymbol]}
     end)
 
-  for k,v in ipairs(expr) do assert(terralib.isquote(expr[k])) end
+  for k,v in ipairs(expr[1]) do assert(terralib.isquote(expr[1][k])) end
   
   if orion.printstage then
     print("terracompiler.codegen astNodes:",inkernel:S("*"):count()," statements:",#stat,inkernel:name())
   end
 
-  return expr,stat
+  return expr[1],stat
 end
 
 -- user is expected to allocate an image that is padded to the (vector size)*(stripCount)
@@ -881,10 +917,10 @@ function neededStencil( interior, kernelGraph, kernelNode, shifts)
       if node.kernel==nil then -- ie, kernelNode is an output
         s = s:unionWith(Stencil.new():add(0,shifts[kernelNode],0))
       elseif node.kernel.kind=="crop" and interior==false then -- on the interior of strips, crops have no effect
-        s = s:unionWith(node.kernel:stencil(kernelNode):product(Stencil.new():add(0,node.kernel.shiftY,0)))
+        s = s:unionWith(node.kernel:stencil(kernelNode):sum(Stencil.new():add(0,node.kernel.shiftY,0)))
       else
         print("stencil of",node.kernel:name(),"onto",kernelNode.kernel:name(),node.kernel:stencil(kernelNode):min(2), "max",node.kernel:stencil(kernelNode):max(2))
-        s = s:unionWith(node.kernel:stencil(kernelNode):product(neededStencil( interior,kernelGraph,node, shifts)))
+        s = s:unionWith(node.kernel:stencil(kernelNode):sum(neededStencil( interior,kernelGraph,node, shifts)))
       end
     end
     

@@ -45,13 +45,25 @@ end
 
 -- this basically 'convolves' two stencils
 -- not in place
-function Stencil:product(b)
+function Stencil:sum(b)
   assert(Stencil.isStencil(b))
 
   local ns = Stencil.new()
 
   for k,_ in pairs(self) do
     ns = ns:unionWith(b:translate(k[1],k[2],k[3]))
+  end
+
+  return ns
+end
+
+function Stencil:product(b)
+  assert(Stencil.isStencil(b))
+
+  local ns = Stencil.new()
+
+  for k,_ in pairs(self) do
+    ns = ns:unionWith(b:scale(k[1],k[2],k[3]))
   end
 
   return ns
@@ -83,6 +95,20 @@ function Stencil:translate(x,y,z)
 
   for k,_ in pairs(self) do
     ns[Stencil.key(k[1]+x,k[2]+y,k[3]+z)] = 1
+  end
+
+  return ns
+end
+
+function Stencil:scale(x,y,z)
+  assert(type(x)=="number")
+  assert(type(y)=="number")
+  assert(type(z)=="number")
+
+  local ns = Stencil.new()
+
+  for k,_ in pairs(self) do
+    ns[Stencil.key(k[1]*x,k[2]*y,k[3]*z)] = 1
   end
 
   return ns

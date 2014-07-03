@@ -604,7 +604,7 @@ function typedASTPrintPrettys(self,root,assignments)
 
     out = out..")"
   elseif self.kind=="index" then
-    out = out.."("..typedASTPrintPrettys(self.expr, root, assignments)..")["..self.index.."]"
+    out = out.."("..typedASTPrintPrettys(self.expr, root, assignments)..")["..astPrintPrettys(self.index).."]"
   elseif self.kind=="gather" then
     out = "gather(\n"..typedASTPrintPrettys(self.input, root, assignments)..",\n"
     out = out..typedASTPrintPrettys(self.x,root, assignments)..",\n"
@@ -613,7 +613,7 @@ function typedASTPrintPrettys(self,root,assignments)
   elseif self.kind=="load" then
     local n = self.from
     if type(self.from)=="table" then n=self.from:name() end
-    out = "load_from_"..n.."("..astPrintPrettys(self.relX,root,assignments)..","..astPrintPrettys(self.relY,root,assignments)..")"
+    out = "load_from_"..n.."("..astPrintPrettys(self.relX)..","..astPrintPrettys(self.relY)..")"
   elseif self.kind=="mapreduce" then
     local vars,i = "",1
     while self["varname"..i] do

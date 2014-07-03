@@ -9,11 +9,10 @@ orion.typedAST = {}
 
 
 
-function orion.typedAST.checkOffsetExpr(expr, coord)
-  assert(type(coord)=="string")
+function orion.typedAST.checkConstantExpr(expr, coord)
 
   -- no x+x allowed
-  if expr:S("position"):count() ~= 1 then
+  if coord~=nil and expr:S("position"):count() ~= 1 then
 return false
   end
 
@@ -21,20 +20,20 @@ return false
     function(n)
       if expr.kind=="binop" then
         if expr.op~="+" and expr.op~="-" then
-          orion.error("binop '"..expr.op.."' is not supported in an offset expr")
+          orion.error("binop '"..expr.op.."' is not supported in an constant expr")
         end
       elseif expr.kind=="value" then
         if type(expr.value)~="number" then
-          orion.error("type "..type(expr.value).." is not supported in offset expr")
+          orion.error("type "..type(expr.value).." is not supported in constant expr")
         end
-      elseif expr.kind=="position" then
+      elseif coord~=nil and expr.kind=="position" then
         if expr.coord~=coord then
           orion.error("you can't use coord "..expr.coord.." in expression for coord "..coord)
         end
       elseif expr.kind=="cast" then
       elseif expr.kind=="mapreducevar" then
       else
-        orion.error(expr.kind.." is not supported in offset expr")    
+        orion.error(expr.kind.." is not supported in constant expr")    
       end
     end)
 
@@ -49,7 +48,7 @@ function orion.typedAST.synthOffset(ast,coord)
   assert(orion.ast.isAST(ast))
 
   -- first check that there isn't anything in the expression that's definitely not allowed...
-  if orion.typedAST.checkOffsetExpr(ast,coord)==false then
+  if orion.typedAST.checkConstantExpr(ast,coord)==false then
 return nil
   end
 
@@ -87,7 +86,7 @@ end
 function orion.typedAST.transformArea(t1,t2)
   if type(t1)=="number" then t1=orion.ast.new({kind="value",value=t1}) end
   if type(t2)=="number" then t2=orion.ast.new({kind="value",value=t2}) end
-  return t1:eval(1):product(t2:eval(2))
+  return t1:eval(1):sum(t2:eval(2))
 end
 
 -- returns the stencil with (0,0,0) at the origin
@@ -144,7 +143,7 @@ function typedASTFunctions:stencil(input)
     else
       -- note the kind of nasty hack we're doing here: gathers read from loads, and loads can be shifted.
       -- so we need to shift this the same as the load
-      return orion.typedAST.transformArea(self.input.relX, self.input.relY):product( Stencil.new():add(-self.maxX,-self.maxY,0):add(self.maxX,self.maxY,0))
+      return orion.typedAST.transformArea(self.input.relX, self.input.relY):sum( Stencil.new():add(-self.maxX,-self.maxY,0):add(self.maxX,self.maxY,0))
     end
   elseif self.kind=="array" then
     local exprsize = self:arraySize("expr")
@@ -167,7 +166,7 @@ function typedASTFunctions:stencil(input)
   elseif self.kind=="crop" then
     return self.expr:stencil(input)
   elseif self.kind=="transformBaked" then
-    return self.expr:stencil(input):product(orion.typedAST.transformArea(self.translate1,self.translate2))
+    return self.expr:stencil(input):sum(orion.typedAST.transformArea(self.translate1,self.translate2))
   elseif self.kind=="mapreduce" then
     return self.expr:stencil(input)
   elseif self.kind=="mapreducevar" then
@@ -345,16 +344,17 @@ function orion.typedAST._toTypedAST(inast)
         
         ast.expr = expr
 
-        if inputs["index"][1].kind~="value" then
-          orion.error("index must be a value",origast:linenumber(), origast:offset())
+        if orion.typedAST.checkConstantExpr(origast["index"])==false then
+          orion.error("index must be a constant expression",origast:linenumber(), origast:offset(), origast:filename())
         end
 
-        if orion.type.isInt(inputs["index"][1].type)==false and
-          orion.type.isUint(inputs["index"][1].type)==false then
-          orion.error("index must be a integer",origast:linenumber(), origast:offset())
+        local range = origast["index"]:eval(1)
+
+        if range:min(1)<0 or range:max(1) >= orion.type.arrayLength(expr.type) then
+          orion.error("index value out of range. It is ["..range:min(1)..","..range:max(1).."] but should be within [0,"..(orion.type.arrayLength(expr.type)-1).."]",origast:linenumber())
         end
 
-        ast.index = inputs["index"][1].value
+        ast.index = origast["index"]
         ast.type = orion.type.astArrayOver(expr)
         
       elseif ast.kind=="transform" then
