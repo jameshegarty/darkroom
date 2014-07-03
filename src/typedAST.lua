@@ -543,6 +543,10 @@ function orion.typedAST._toTypedAST(inast)
         if ast.reduceop=="sum" then
           ast.type = inputs.expr[1].type
         elseif ast.reduceop=="argmin" or ast.reduceop=="argmax" then
+          if inputs.expr[1].type:isArray()==true then
+            orion.error("argmin and argmax can only be applied to scalar quantities", origast:linenumber(), origast:offset(), origast:filename())
+          end
+
           ast.type = orion.type.array(orion.type.int(32),origast:arraySize("varname"))
         else
           orion.error("Unknown reduce operator '"..ast.reduceop.."'")
