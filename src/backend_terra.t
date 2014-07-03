@@ -546,12 +546,13 @@ function orion.terracompiler.codegen(
       local inputs = {}
       local packedSymbol = {}
       local stat = {}
+      local statSeen = {} -- dedup the statements. It's possible a single node is refered to multiple times eg (a+a)
       for k,v in pairs(args) do 
         inputs[k] = args[k][1]
         packedSymbol[k] = args[k][2]
         for kk, vv in pairs(args[k][3]) do
           assert(terralib.isquote(vv))
-          table.insert(stat, vv)
+          if statSeen[vv]==nil then table.insert(stat, vv); statSeen[vv]=1 end
         end
       end
 
