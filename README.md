@@ -13,7 +13,7 @@ First you will need to clone and build Terra using the instructions in the [Terr
 
 Add the Darkroom language definition to your lua path environment variable. Add this to .profile or .bashrc:
 
-    export LUA_PATH="?.t;[path to Darkroom]/?.t;[path to terra]/tests/lib/?.t"
+    export LUA_PATH="?.t;[path to Darkroom]/?.t;[path to Darkroom]/src/?.t;[path to Darkroom]/extras/?.t;[path to terra]/tests/lib/?.t"
 
 Darkroom and Terra are tested to work on Linux and Mac OS X. Other platforms are unlikely to work.
 
@@ -130,8 +130,8 @@ Darkroom also lets you define temporaries inside image functions to make it easi
 
 Temporaries must each have a unique name, a form known as Single Static Assignment (SSA). This makes it clear that these temporaries aren't imperative assignments; instead they are like a 'let' statement in functional programming. Temporaries hold values, not image functions, so they can't be indexed.
 
-Types and Operators
--------------------
+Types
+-----
 
 Darkroom supports the same set of primitive types as the Terra language. These are `int int8 int16 int32 int64 uint uint8 uint16 uint32 uint64 bool float double`. Typecast syntax is the same as Terra:
 
@@ -150,7 +150,10 @@ In image processing, array types are typically used to represent color channels.
 * `e.b` === `e.z` === `e[2]`
 * `e.a` === `e.w` === `e[3]`
 
-On these types Darkroom supports standard operators, similar to C/Terra:
+Operators
+---------
+
+Darkroom supports standard operators, similar to C/Terra:
 
 * Unary: `-`
 * Binary: `- + * / %`
@@ -166,7 +169,7 @@ The `if` operator behaves like the ternary operator in C (an expression), not li
       in if input(x,y) > 100 then a else 255 end
     end
 
-The `switch` operator performs similarly to a switch-case statement in C, but like the `if` operator, it is an expression:
+The `switch` operator performs similarly to a switch-case statement in C, but like the `if` operator, it is an expression not a statement:
 
     switch controlExpression 
       case value1 -> resultExpr1 
@@ -189,14 +192,7 @@ Darkroom also includes a number of standard math operators like pow, abs, etc. d
 
 Similar to Terra, if an expression isn't explicitly tagged with a type, then type propagation occurs.
 
-It's possible to explicitly cast a value to a type that doesn't have enough precision to hold it. But you must explicitely tag it with the behavior you want when it overflows. Darkroom is designed as a hardware description language, so it prevents you from accidentally losing bits:
-
-    im input32(x,y) : uint32 input(x,y) end  -- assume this isn't a downcast
-    im downcast(x,y) : uint8 input32(x,y) end -- generates an error
-    im downcastFixed(x,y) : uint8 orion.wraparound(input32(x,y)) end -- OK
-
-Mapreduce
-----------
+### Mapreduce Operator ###
 
 It's common in image processing to generate a number of intermediates (map), and then combine them (reduce). For example, consider convolution:
 
