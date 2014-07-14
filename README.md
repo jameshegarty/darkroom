@@ -227,95 +227,6 @@ Supported reduce operators are: `sum min max argmin argmax`
 
 `sum min max` evaluate to the type of the `[expression]`. `argmin argmax` return the variable values that attained the highest or lowest expression value. They evalute to the type `int[N]`, where N is the number of variables.
 
-Darkroom API
-------------
-
-
-
-Taps, Lookup Tables, and Statistics
---------------------------
-
-The programming model of Darkroom is quite restrictive - it's purely functional, fixed-function, etc. This section introduces a number of mechanisms that break these restrictions in limited situations and allow you to accomplish a number of typical image processing tasks that would not be otherwise possible.
-
-### Taps: Read-Only Memory ###
-
-Image processing pipelines typically have a number of runtime configurable parameters, called 'taps' in the image processing community. Examples include the color correction matrix (CCM) or gamma. To create a tap in Darkroom call `darkroom.tap` from Lua:
-
-    theTap = darkroom.tap(tapType, name)
-
-`tapType` is an type, e.g. `uint8`. `name` is a string that will identify the tap.
-
-Following declaration of the tap, you must assign it a value. This works similarly to creating and binding images:
-
-    orion.setTap(theTap, 3)
-
-Example code for using a tap to control gamma correction:
-
-     gammaTap = orion.tap(orion.type.float(32), 'gammatap')
-     orion.setTap(gammaTap, 2.4)
-     im gammaCorrected(x,y) orion.pow( input(x,y), gammaTap) end
-
-#### Tap Lookup Tables ####
-
-Recall that Darkroom image functions and arrays cannot be indexed with values calculated at runtime (they can only be indexed with constants). Lookup tables (LUTs) are an array of taps that can be indexed using runtime-calculated values, but their values can't change, and they can only have a compile-time determinable set of entries.
-
-    orion.tapLUT(tapType, count, name)
-
-Following declaration of the LUT, you must assign it an array of values. This works similarly to creating and binding images:
-
-    orion.setTapLUT(theTapLUT, {1,2,...})
-
-A typical use of this functionality would be to implement 'tone mapping', which remaps output pixel values of a pipeline based on a given tone curve (typically includes gamma and contrast). In 8bit, we can implement this with a 256 entry lookup table:
-
-    tonemap = orion.tapLUT(orion.type.uint(8), 256, "tonemap")
-    orion.setTapLUT(tonemap,{1,2,4,...})
-    im finalImage(x,y) tonemap[input(x,y)] end
-
-> Tip: if your lookup tables start to have a large number of entries, it may be more efficient to just calculate their value at runtime from a reduced set of parameters.
-
-### Statistics: Write-Only Memory  ###
-
-Darkroom image functions can't have side effects, but Darkroom does allow you to capture information about images using statistics variables. Statistics variables are write-only, commutative and associative. They perform a reduction over the calculated region of the image. Various reductions are supported:
-
-* `orion.statistic.sum(type, imgFn)`
-* `orion.statistic.min(type, imgFn)`
-* `orion.statistic.max(type, imgFn)`
-
-`type` is an orion type, and `imgFn` is the image the reduction will be performed over. For example `orion.statistic.sum` calculates the sum of all the pixel values in the image. These functions return a 'statistic function' that behaves like an image function, but returns a single value instead of an image. 
-
-For example, to calculate the maximum seen value in an image:
-
-    maxImagePixel = orion.statistic.max(orion.type.uint(8), input)
-    print(maxImagePixel())
-
-<!--- this is kind of similar to map-reduce? -->
-
-### Driver Code ###
-
-Now consider how you can combine statistics and taps to create a pipeline that performs a ridiculously simple version of automatic digital gain:
-  
-    gain = 1
-    lastFrameMax = 254
-
-    gaintap = orion.tap(orion.type.float(32),  function()
-        if lastFrameMax >= 255 then 
-          gain = gain*0.9 
-        elseif lastFrameMax < 230 then
-          gain = gain*1.1
-        end
-        return gain
-      end)
-
-    im gained(x,y) : uint8 input(x,y)*gaintap end
-
-    while(1) do
-      pipeline = orion.compile({gained,orion.statistic.max(gained)})
-      out, lastFrameMax = pipeline()
-    end
-
-> Note: The 'driver' for an image pipeline manages the feedback loop from statistics outputs of one frame to tap inputs of the next. Darkroom currently supports this functionality by returning statistics outputs to Lua, and allowing Lua to calculate new tap registers on demand. However, we think this is an unsolved problem, and we may vastly change this interface in the future (e.g. to offload driver code to a dedicated core, for example). So beware that this interface is provisional.
-
-
 Metaprogramming
 ---------------
 
@@ -406,56 +317,9 @@ When passing an Darkroom value to Lua:
 Boundary Conditions
 -------------------
 
-Outside of an image functions crop region, Darkroom will calculate the image as a boundary condition. Darkroom supports a number of default boundary conditions:
 
-* `constant(N)`  constant value `N`
-* `clamp` (default) clamp to nearest valid pixel in image
-* `wrap` wraparound - toroidal
-
-Image functions use the `clamp` boundary condition by default.
-
-As with crop options, boundary conditions are specified along with the type of the image function, and propagate:
-
-    im blurX(x,y) : constant(255) a(x-1,y)+a(x+1,y) end
-
-> Tip: Darkroom doesn't perform particularly well in the boundary section of an image, because this is typically not a common case so it isn't well optimized. Try to avoid reading from the boundary portion of an image.
-
-API
----
-
-The Darkroom system contains a number of Lua functions that interact with the language (e.g. loading images, compiling). This section contains a list of all these functions.
-
-### Inputs/Outputs ###
-
-Darkroom supports creating 'input image functions' which can be bound to input data at runtime.
-
-`orion.image(type, [width], [height]) [lua]` Create an input image function of type `type`, but don't yet bind it to data. Data must be bound before the pipeline is executed, or a compile error will occur. If `width` and `height` are specified, this will bake these values into the pipeline, potentially making it faster (allowing it to perform more optimizations b/c it knows the image bounds).
-
-`orion.bindImage(orionImageDst, orionImageSrc : &Image) [terra]` binds `orionImageSrc` to input image function `orionImageDst`. Useful for feeding the result of one run of the pipeline into the input of the next run. BindImage takes a copy of orionImageSrc, so you should call orionImageSrc:free() after binding the image if you no longer need it.
-
-`orion.bindFile(orionImage, filename) [terra]` Load the image located at 'filename' and bind it to the input image function `orionImage`. Images gets mapped to the area x=[0,W) y=[0,H). bmp, pgm, ppm, flo, and tmp are supported.
-
-`orion.load(filename) [lua]` Convenience function that calls both `orion.image` and `orion.bindFile` and returns an input image function of static size. Useful if you're only planning on running your pipeline on one image.
-
-`orion.bindConstant(orionImage, width, height, constantValue) [terra]` A convenience function that allocates an array of the size of orionImage and fills it with value `constant`. If you just need a runtime configurable constant in your pipeline it's better to use a tap, but this can be used to initialize initial values for example.
-
-`orion.constant(type, width, height, constantValue) [lua]` A convenience function that calles `orion.image` and then `orion.bindConstant` on that image.
-
-<!--- we may want to support taking in images in arbitrary formats (AoS) without reformatting them (bitmaps are often stored AoS) -->
-
-### Taps/Statistics ###
-
-`orion.tap(tapType, name)`
-
-`orion.tapLUT(tapType, count, name)`
-
-`orion.statistic.sum(type, imgFn)`
-
-`orion.statistic.min(type, imgFn)`
-
-`orion.statistic.max(type, imgFn)`
-
-`orion.statistic.histogramSum(type, imgFn)`
+Darkroom API
+------------
 
 ### Compiling ###
 
@@ -482,25 +346,17 @@ While all image function objects have convenience functions for compiling and ru
 
 The compile options table is a lua table with some or all of the following key/value pairs set (values are passed as strings). Option in [] brackets are the default:
 
-`platform=[cpu] convolution` If platform is `cpu`, the compiler returns a lua function that you can call to calculate the pipeline. If platform is `convolution`, the result of compilation is a string in YAML format that can be saved and sent to the convolution engine framework.
+`V = [4] number`
+Vector width for generated code.
 
-`schedule=[default] fuseall materialize materializeall`
-The scheduling algorithm to use (see Halide paper).
+`cores = [4] number`
+Number of threads for generated code.
 
-* `default` Our best guess for high performance based on our heuristics
-* `materialize` materialize all supernodes. No inlining or linebuffering.
-* `linebufferall` linebuffer all supernodes.
-* `materializeall` materialize _all_ intermediates.
+`stripcount = number`
+Number for strips for generated code. Defaults to the number of cores. More strips => smaller strip width => less linebuffering.
 
-`precision=[arbitrary] or cpu`
-
-`region=[default] centered specify` Specifies the region of the image function that we want to calculate.
-
-* `default` Calculate exactly the crop region of the passed image function(s) - not necessarily starting at (0,0). 
-* `centered` Calculate the region x=[0,W) y=[0,H) where W,H is the width and height of the crop region.  See `cropMeet` option below to specify behavior when multiple functions are passed.
-* `specify` The function returned by `orion.compile` will take 4 arguments that specify the area to calculate: (lowX,lowY,highX,highY)
-
-If you're compiling a pipeline with multiple outputs, `default` and `crop` apply to each output as if they were the single output (i.e. the outputs may be rendered to different sizes). `specify` sets the size for all outputs.
+`fastmath = [false] true`
+Enables a number of math optimizations that don't preserve semantics (but are close). e.g. turning divides into shifts.
 
 `debug = [false] true`
 Run a number of extra runtime and compile time checks to make sure the compiler is behaving correctly.
@@ -511,17 +367,38 @@ Print out a lot of intermediate compiler state.
 `printruntime = [false] true`
 Print runtime statistics.
 
-`printasm = [false] true`
-Print assembly of final generated code.
-
-`printloopir = [false] true`
-Print loopIR (final IR before code generation)
-
-`printschedule = [false] true`
-Print schedule out to stdout in JSON format
-
 `looptimes = [1] number`
 number of times to run the inner loop of each kernel. Used to make runtime statistics more accurate.
+
+### Taps: Read-Only Memory ###
+
+The programming model of Darkroom is quite restrictive - it's purely functional, fixed-function, etc. This section introduces a number of mechanisms that break these restrictions in limited situations and allow you to accomplish a number of typical image processing tasks that would not be otherwise possible.
+
+Image processing pipelines typically have a number of runtime configurable parameters, called 'taps' in the image processing community. Examples include the color correction matrix (CCM) or gamma. These are values you want to change every run without recompiling. To create a tap in Darkroom call `darkroom.tap` from Lua:
+
+    theTap = darkroom.tap(tapType, name)
+
+`tapType` is an type, e.g. `uint8`. `name` is a string that will identify the tap.
+
+Example code for using a tap to control gamma correction:
+
+     gammaTap = orion.tap( float32, 'gammatap')
+     im gammaCorrected(x,y) orion.pow( input(x,y), gammaTap) end
+
+Tap values are passed as arguments to the compiled pipeline.
+
+#### Tap Lookup Tables ####
+
+Recall that Darkroom image functions and arrays cannot be indexed with values calculated at runtime (they can only be indexed with constants). Lookup tables (LUTs) are an array of taps that can be indexed using runtime-calculated values, but their values can't change, and they can only have a compile-time determinable set of entries.
+
+    orion.tapLUT(tapType, count, name)
+
+A typical use of this functionality would be to implement 'tone mapping', which remaps output pixel values of a pipeline based on a given tone curve (typically includes gamma and contrast). In 8bit, we can implement this with a 256 entry lookup table:
+
+    tonemap = orion.tapLUT(uint8, 256, "tonemap")
+    im finalImage(x,y) tonemap[input(x,y)] end
+
+> Tip: if your lookup tables start to have a large number of entries, it may be more efficient to just calculate their value at runtime from a reduced set of parameters.
 
 Standard Library
 ----------------
