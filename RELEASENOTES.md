@@ -5,11 +5,11 @@ v1.0 7/13/2014
 
   Previous code like this:
 
-    im a(x,y) : uint8, cropDefault img(x,y)+darkroom.float32(4) end
+      im a(x,y) : uint8, cropDefault img(x,y)+darkroom.float32(4) end
 
   Should be rewritten to look like this:
 
-    im a(x,y) [uint8](darkroom.crop(img(x,y)+[float32](4))) end
+      im a(x,y) [uint8](darkroom.crop(img(x,y)+[float32](4))) end
 
   This brings darkroom in line with the typecast syntax of Terra.
 
