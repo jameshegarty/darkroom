@@ -970,7 +970,6 @@ function neededStencil( interior, kernelGraph, kernelNode, shifts)
       elseif node.kernel.kind=="crop" and interior==false then -- on the interior of strips, crops have no effect
         s = s:unionWith(node.kernel:stencil(kernelNode):sum(Stencil.new():add(0,node.kernel.shiftY,0)))
       else
-        print("stencil of",node.kernel:name(),"onto",kernelNode.kernel:name(),node.kernel:stencil(kernelNode):min(2), "max",node.kernel:stencil(kernelNode):max(2))
         s = s:unionWith(node.kernel:stencil(kernelNode):sum(neededStencil( interior,kernelGraph,node, shifts)))
       end
     end
@@ -1110,8 +1109,6 @@ return
 
       table.insert(loopCode,
         quote
-          cstdio.printf("dokernel %s\n",[n:name()])
-
           if clock >= [needed.bottom] and clock < [needed.top] then
             if clock < [valid.bottom] or clock >= [valid.top]  then
               -- top/bottom row(s) (all boundary)
@@ -1159,11 +1156,7 @@ return
               [outputs[n]:nextLine( loopid, `needed.right-needed.left)];
               [inputs[n]:nextLine( loopid, `needed.right-needed.left)];
             end
-          else
-            cstdio.printf("Skip\n")
           end
-          
-          cstdio.printf("kernel done %s\n",[n:name()])
       end)
   end)
 
@@ -1264,7 +1257,6 @@ function orion.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, shift
       thisLoopStartCode
 
       for [clock] = startClock, options.height+endClock do
-        cstdio.printf("doclock %d\n",clock)
         thisLoopCode
       end
 
@@ -1316,10 +1308,8 @@ function orion.terracompiler.allocateImageWrappers(
 
       -- collect the inputs
       n:map("child", function(child,i) 
-              print("input","KernelNode",n,"from",child,"wrapper",outputs[child],"inputs",inputs)
               inputs[n][child] = outputs[child]
                      end)
-
 
       if n~=kernelGraph then -- root is just a list of outputs
 
@@ -1327,7 +1317,6 @@ function orion.terracompiler.allocateImageWrappers(
         n.kernel:S("load"):traverse(
           function(node)
             if type(node.from)=="number" then
-              print("inputs","kernelNode",n,"from",node.from)
               inputs[n][node.from] = getInputWrapper(node.from, node.type)
             end
           end)
@@ -1337,8 +1326,6 @@ function orion.terracompiler.allocateImageWrappers(
           outputs[n] = {}
           for c=1,n.kernel.type:channels() do outputs[n][c] = newImageWrapper( channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType()), n.kernel.type:baseType(), upToNearest(options.V, options.width), options.terradebug) end
           setmetatable(outputs[n],pointwiseDispatchMT)
-
-          print("OUT imageWrapper","kernelNode:",n,n:name(),"wrapper",outputs[n])
         else
           outputs[n] = {}
 
@@ -1354,7 +1341,6 @@ function orion.terracompiler.allocateImageWrappers(
             linebufferSize = linebufferSize + outputs[n][c]:allocateSize()
           end
           setmetatable(outputs[n], pointwiseDispatchMT)
-          print("OUT lbwrapper","kernelNode",n,n:name(),"wrapper",outputs[n],"outputs",outputs,"lines",n:bufferSize(kernelGraph))
         end
       end
     end)
@@ -1410,8 +1396,7 @@ function orion.terracompiler.compile(
   marshalBytes = marshalBytes + terralib.sizeof(TapStruct)
 
   local threadCode = orion.terracompiler.codegenThread( kernelGraph, inputImages, TapStruct, shifts, options )
-
-  threadCode:printpretty(false)
+  --threadCode:printpretty(false)
 
   local fin = terra([inputImageSymbolTable], [outputImageSymbolTable], tapsIn : &opaque)
     var start = orion.currentTimeInSeconds()
@@ -1456,6 +1441,6 @@ function orion.terracompiler.compile(
     end
     
   end
-  fin:printpretty()
+
   return fin
 end

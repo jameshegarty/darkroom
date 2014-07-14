@@ -173,7 +173,6 @@ end
 
 function astFunctions:save(filename,compilerOptions)
   local func = orionSimple.compile({self},compilerOptions)
-  print("Call",compilerOptions)
   local out = func()
   local terra dosave(im: &Image, filename : &int8)
     im:save(filename)
@@ -317,7 +316,6 @@ function orionSimple.compile(outList, options)
     return [outRes]
   end
 
-  fin:printpretty()
   return fin
 end
 

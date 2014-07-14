@@ -346,41 +346,18 @@ function orion.type.checkExplicitCast(from, to, ast)
     orion.error("Can't cast an array type to a non-array type. "..from:str().." to "..to:str(),ast:linenumber(),ast:offset(),ast:filename())
     return false
   elseif from.type=="uint" and to.type=="uint" then
-    if from.precision > to.precision then
-      orion.warning("converting "..orion.type.typeToString(from).." to "..orion.type.typeToString(to).." could result in an overflow!",ast:linenumber(),ast:offset())
-    end    
-
     return true
   elseif from.type=="int" and to.type=="int" then
-    if from.precision > to.precision then
-      orion.warning("converting "..orion.type.typeToString(from).." to "..orion.type.typeToString(to).." could result in an overflow!",ast:linenumber(),ast:offset())
-    end    
-
     return true
   elseif from.type=="uint" and to.type=="int" then
-    if from.precision >= to.precision then
-      orion.warning("converting "..orion.type.typeToString(from).." to "..orion.type.typeToString(to).." could result in an overflow!",ast:linenumber(),ast:offset())
-    end    
-
     return true
   elseif from.type=="float" and to.type=="uint" then
-    orion.warning("Converting "..orion.type.typeToString(from).." to "..orion.type.typeToString(to).." could result in overflow!",ast:linenumber(),ast:offset())
     return true
   elseif from.type=="uint" and to.type=="float" then
     return true
   elseif from.type=="int" and to.type=="float" then
-    if from.precision >= to.precision then
-      orion.warning("converting "..from:str().." to "..to:str().." could result in loss of precision!",ast:linenumber(),ast:offset(),ast:filename())
-    end    
-
     return true
   elseif from.type=="int" and to.type=="uint" then
-    orion.warning("converting "..from:str().." to "..to:str().." could result in loss of negative values!",ast:linenumber(),ast:offset())
-
-    if from.precision > to.precision then
-      orion.warning("converting "..orion.type.typeToString(from).." to "..orion.type.typeToString(to).." could result in an overflow!",ast:linenumber(),ast:offset())
-    end    
-    
     return true
   elseif from.type=="int" and to.type=="bool" then
     orion.error("converting an int to a bool will result in incorrect behavior! C makes sure that bools are always either 0 or 1. Terra does not.",ast:linenumber(),ast:offset())
@@ -421,25 +398,13 @@ function orion.type.checkImplicitCast(from, to, ast)
       return true
     end
   elseif from.type=="uint" and to.type=="float" then
-
-    if to.precision == from.precision then
-      orion.warning("implicitly casting "..from:str().." to "..to:str().." which may result in precision loss",ast:linenumber(),ast:offset())
-    end
-
     if to.precision >= from.precision then
       return true
     end
-
   elseif from.type=="int" and to.type=="float" then
-
-    if to.precision == from.precision then
-      orion.warning("implicitly casting "..from:str().." to "..to:str().." which may result in precision loss",ast:linenumber(),ast:offset())
-    end
-
     if to.precision >= from.precision then
       return true
     end
-
   elseif from.type=="float" and to.type=="float" then
     if to.precision >= from.precision then
       return true

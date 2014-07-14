@@ -19,8 +19,6 @@ function schedule(graph)
       end 
     end)
 
-  print("shifts:")
-  for k,v in pairs(shifts) do print(k:name(),v) end
   return shifts
 end
 

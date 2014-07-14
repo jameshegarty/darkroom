@@ -607,8 +607,6 @@ function orion.compileTimeProcess(imfunc, envfn)
       elseif inp.kind=="escape" then
         return orion.evalEscape(inp.expr(inp:localEnvironment(rvalue,env)),inp)
       elseif inp.kind=="apply" then
-        print("apply",inp.expr.kind, inp:arraySize("arg"))
-
         if inp.expr.kind=="type" then -- a typecast
           if inp:arraySize("arg") ~= 1 then
             orion.error("Typecasts only take one argument",inp:linenumber(), inp:offset())

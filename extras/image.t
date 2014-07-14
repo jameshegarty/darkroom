@@ -1158,7 +1158,7 @@ end
 
 terra Image:save(filename : &int8)
   var ext = filename + cstring.strlen(filename) - 3
-  cstdio.printf("EXT %s\n",ext)
+  --cstdio.printf("EXT %s\n",ext)
 
   if self.bits==8 and (self.channels==1 or self.channels==3) and self.floating==false and self.isSigned==false and self.SOA==false then
     if verbose then cstdio.printf("Assuming uint8\n") end
