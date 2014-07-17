@@ -3,7 +3,7 @@ Getting Started with Darkroom
 
 _James Hegarty <jhegarty@stanford.edu>_
 
-Darkroom is a language for describing image processing pipelines embedded in Lua.
+Darkroom is a language for describing image processing pipelines embedded in Terra.
 
 
 Installation
@@ -13,7 +13,9 @@ First you will need to clone and build Terra using the instructions in the [Terr
 
 Add the Darkroom language definition to your lua path environment variable. Add this to .profile or .bashrc:
 
-    export LUA_PATH="?.t;[path to Darkroom]/?.t;[path to Darkroom]/src/?.t;[path to Darkroom]/extras/?.t;[path to terra]/tests/lib/?.t"
+    export DR=[path to darkroom root]
+    export TERRADIR=[path to terra root]
+    export LUA_PATH="$LUA_PATH;$DR/?.t;$DR/src/?.t;$DR/extras/?.t;$TERRADIR/tests/lib/?.t"
 
 Darkroom and Terra are tested to work on Linux and Mac OS X. Other platforms are unlikely to work.
 

@@ -1,5 +1,7 @@
-terralib.require("test")
+--terralib.require("test")
+terralib.loadfile("test.t")
 import "darkroom"
+
 
 local const = darkroomSimple.load("frame_1024.bmp")
 
