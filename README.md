@@ -41,8 +41,6 @@ In Darkroom, images are represented as functions from integer (x,y) coordinates 
 
 ![Darkroom Coordinate Conventions](http://stanford.edu/~jhegarty/coords.png)
 
-<!--- unlike PAN, halide(?) we only allow positions to be integer coords -->
-
 Darkroom is embedded in Lua. While it is possible to write Darkroom code without being familiar with Lua, knowing the basics of Lua will make Darkroom easier to understand and allow you to write more powerful programs. Lua is a simple language - the [Programming in Lua](http://www.lua.org/pil/) tutorial provides a quick introduction.
 
 Hello World
@@ -443,7 +441,7 @@ Vector width for generated code.
 Number of threads for generated code.
 
 `stripcount = number`
-Number for strips for generated code. Defaults to the number of cores. More strips => smaller strip width => less linebuffering.
+Number for strips for generated code. Defaults to the number of cores. More strips => smaller strip width => less linebuffering, but more overcompute.
 
 `fastmath = [false] true`
 Enables a number of math optimizations that don't preserve semantics (but are close). e.g. turning divides into shifts.
@@ -467,7 +465,7 @@ extras/darkroomSimple.t
 
 `darkroomSimple` supersedes the standard darkroom API - you can't mix darkroom and darkroomSimple API calls or it will throw an error.
 
-`darkroomSimple.compile( imageFunctionList, compilerOptions )` 
+`darkroomSimple.compile( outputImageFunctionList, compilerOptions )` 
 
 `darkroomSimple.load(filename)` Loads the image file at `filename` and turns it into an image function.
 
@@ -522,3 +520,4 @@ extras/dpda.t
 
 extras/darkroomDebug.t
 ----------------------
+Including the file installs debug hooks into darkroom that check and print the IR after each compile stage.
