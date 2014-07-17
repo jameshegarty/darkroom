@@ -317,89 +317,6 @@ When passing an Darkroom value to Lua:
 Boundary Conditions
 -------------------
 
-
-Darkroom API
-------------
-
-### Compiling ###
-
-`orion.compile(imageFunctionsArray, compileOptionsTable)` 
-While all image function objects have convenience functions for compiling and running them, you will want to use `orion.compile` when you have a pipeline with multiple outputs. It's likely that the outputs reuse many shared intermediates - compiling them separately will recalculate these intermediates. The function returned from `orion.compile` will return the results in the same order as they are passed:
-
-    im a(x,y) input(x-1,y) end
-    im b(x,y) a(x,y)*2 end
-    
-    a:save("a.bmp")
-    b:save("b.bmp")  -- this recalculated a! a was calculated twice
-
-    pipeline = orion.compile({a,b})
-    aout,bout = pipeline()
-    aout:save("a.bmp")
-    bout:save("b.bmp")  -- This reused calculation of a - a was only calculated once
-
-    aout:free() -- if we are done with these images, we need to manually free their memory
-    bout:free() 
-
-<!--- we may want to have different compile options for different image functions? nah... -->
-
-### Compile Options ###
-
-The compile options table is a lua table with some or all of the following key/value pairs set (values are passed as strings). Option in [] brackets are the default:
-
-`V = [4] number`
-Vector width for generated code.
-
-`cores = [4] number`
-Number of threads for generated code.
-
-`stripcount = number`
-Number for strips for generated code. Defaults to the number of cores. More strips => smaller strip width => less linebuffering.
-
-`fastmath = [false] true`
-Enables a number of math optimizations that don't preserve semantics (but are close). e.g. turning divides into shifts.
-
-`debug = [false] true`
-Run a number of extra runtime and compile time checks to make sure the compiler is behaving correctly.
-
-`verbose = [false] true`
-Print out a lot of intermediate compiler state.
-
-`printruntime = [false] true`
-Print runtime statistics.
-
-`looptimes = [1] number`
-number of times to run the inner loop of each kernel. Used to make runtime statistics more accurate.
-
-### Taps: Read-Only Memory ###
-
-The programming model of Darkroom is quite restrictive - it's purely functional, fixed-function, etc. This section introduces a number of mechanisms that break these restrictions in limited situations and allow you to accomplish a number of typical image processing tasks that would not be otherwise possible.
-
-Image processing pipelines typically have a number of runtime configurable parameters, called 'taps' in the image processing community. Examples include the color correction matrix (CCM) or gamma. These are values you want to change every run without recompiling. To create a tap in Darkroom call `darkroom.tap` from Lua:
-
-    theTap = darkroom.tap(tapType, name)
-
-`tapType` is an type, e.g. `uint8`. `name` is a string that will identify the tap.
-
-Example code for using a tap to control gamma correction:
-
-     gammaTap = orion.tap( float32, 'gammatap')
-     im gammaCorrected(x,y) orion.pow( input(x,y), gammaTap) end
-
-Tap values are passed as arguments to the compiled pipeline.
-
-#### Tap Lookup Tables ####
-
-Recall that Darkroom image functions and arrays cannot be indexed with values calculated at runtime (they can only be indexed with constants). Lookup tables (LUTs) are an array of taps that can be indexed using runtime-calculated values, but their values can't change, and they can only have a compile-time determinable set of entries.
-
-    orion.tapLUT(tapType, count, name)
-
-A typical use of this functionality would be to implement 'tone mapping', which remaps output pixel values of a pipeline based on a given tone curve (typically includes gamma and contrast). In 8bit, we can implement this with a 256 entry lookup table:
-
-    tonemap = orion.tapLUT(uint8, 256, "tonemap")
-    im finalImage(x,y) tonemap[input(x,y)] end
-
-> Tip: if your lookup tables start to have a large number of entries, it may be more efficient to just calculate their value at runtime from a reduced set of parameters.
-
 Standard Library
 ----------------
 
@@ -450,7 +367,101 @@ Remember, Darkroom is purely functional, so the result of assert and print must 
       in darkroom.print(input(x,y))  -- works, prints every pixel of input to the console
     end
 
-### extras/darkroomSimple.t ###
+Darkroom API
+------------
+
+`darkroom.input( type )`
+Returns an image function for an input that will be bound at runtime (e.g. the input image you want to process).
+
+### Taps: Read-Only Memory ###
+
+Image processing pipelines typically have a number of runtime configurable parameters, called 'taps' in the image processing community. Examples include the color correction matrix (CCM) or gamma. These are values you want to change every run without recompiling. To create a tap in Darkroom call `darkroom.tap` from Lua:
+
+    theTap = darkroom.tap(tapType, name)
+
+`tapType` is an type, e.g. `uint8`. `name` is a string that will identify the tap.
+
+Example code for using a tap to control gamma correction:
+
+     gammaTap = orion.tap( float32, 'gammatap')
+     im gammaCorrected(x,y) orion.pow( input(x,y), gammaTap) end
+
+Tap values are passed as arguments to the compiled pipeline.
+
+#### Tap Lookup Tables ####
+
+Recall that Darkroom image functions and arrays cannot be indexed with values calculated at runtime (they can only be indexed with constants). Lookup tables (LUTs) are an array of taps that can be indexed using runtime-calculated values, but their values can't change, and they can only have a compile-time determinable set of entries.
+
+    orion.tapLUT(tapType, count, name)
+
+A typical use of this functionality would be to implement 'tone mapping', which remaps output pixel values of a pipeline based on a given tone curve (typically includes gamma and contrast). In 8bit, we can implement this with a 256 entry lookup table:
+
+    tonemap = orion.tapLUT(uint8, 256, "tonemap")
+    im finalImage(x,y) tonemap[input(x,y)] end
+
+> Tip: if your lookup tables start to have a large number of entries, it may be more efficient to just calculate their value at runtime from a reduced set of parameters.
+
+### Compiling ###
+
+`darkroom.compile( inputImageFunctionsArray, outputImageFunctionsArray, tapsArray, width, height, compileOptionsTable)` 
+Compile takes a lua array of input image functions (returned from `darkroom.input`), an array of outputs to generate, and array of tap inputs, the width and height of the output, and compile options. `darkroom.compile` returns a terra function with this type signature:
+
+  compiledPipeline( input0 : &opaque, input1 : &opaque, ... output1 : &opaque, output2 : &opaque, taps : TapStruct )
+
+Where inputs, outputs, and taps are in the same order as passed to `darkroom.compile`, and `TapStruct` is a struct with entries in the same order as the `tapsArray`. All input and output images must be pointers stored in 'darkroom format'. First, the data must match the type of the darkroom input or output. Second, the stride of the input must be `width` rounded up to the nearest vector width `V` passed in the compile options. For example if `width=63` and `V=4` then the stride must be 64. Finally, multi-channel images must be in struct of array form (i.e. all red pixels come before all blue pixels etc).
+
+For convenience, you can you the [Darkroom Simple][] library, which provides an abstraction on top of this that doesn't require loading images, or use the image.t class:
+
+    inp = darkroom.input( uint8[3] )
+    tap = darkroom.tap( uint8 )
+    im out(x,y) [uint8](inp[0]/tap + inp[1]/tap + inp[2]/tap) end
+    terraPipe = darkroom.compile( {inp}, {out}, {tap}, 128, 128 )
+
+    terra loadAndRun()
+      var inp : Image
+      inp:load("myfile.bmp"):toDarkroomFormat()
+
+      var out : Image
+      out:allocateDarkroomFormat( 128, 128, 1, 8, false, false )
+
+      terraPipe( inp.data, out.data, {3} ) -- run pipeline
+
+      out:fromDarkroomFormat()
+      out:save("myoutput.bmp")
+    end
+
+    loadAndRun()
+
+### Compile Options ###
+
+The compile options table is a lua table with some or all of the following key/value pairs set (values are passed as strings). Option in [] brackets are the default:
+
+`V = [4] number`
+Vector width for generated code.
+
+`cores = [4] number`
+Number of threads for generated code.
+
+`stripcount = number`
+Number for strips for generated code. Defaults to the number of cores. More strips => smaller strip width => less linebuffering.
+
+`fastmath = [false] true`
+Enables a number of math optimizations that don't preserve semantics (but are close). e.g. turning divides into shifts.
+
+`debug = [false] true`
+Run a number of extra runtime and compile time checks to make sure the compiler is behaving correctly.
+
+`verbose = [false] true`
+Print out a lot of intermediate compiler state.
+
+`printruntime = [false] true`
+Print runtime statistics.
+
+`looptimes = [1] number`
+number of times to run the inner loop of each kernel. Used to make runtime statistics more accurate.
+
+extras/darkroomSimple.t [Darkroom Simple]
+-----------------------------------------
 
 `darkroomSimple.t` is a convenience wrapper around Darkroom that reduces the amount of code you have to write if you're using Darkroom in restricted, simple situations. Specifically, it does not allow you to change input images or tap values without recompiling all the image functions. `darkroomSimple` should not be used if you're writing the compiled pipeline out to an object file.
 
@@ -470,7 +481,8 @@ Remember, Darkroom is purely functional, so the result of assert and print must 
 
 `imageFunction:save( filename, compilerOptions )` darkroomSimple installs a `:save` method on every image function that calles compile, run, and save.
 
-### extras/image.t ###
+extras/image.t
+--------------
 
 `image.t` is a pure Terra library provided with Darkroom that provides code for loading and saving a number of simple image formats. The formats supported are `bmp ppm flo raw`. It's not necessary to use `image.t` - any image loading library can be used with Darkroom as long as you pass the data in the expected format (described in the `darkroom.compile` section above).
 
@@ -505,6 +517,8 @@ Remember, Darkroom is purely functional, so the result of assert and print must 
 
 `Image:free()`
 
-### extras/dpda.t ###
+extras/dpda.t
+-------------
 
-### extras/darkroomDebug.t ###
+extras/darkroomDebug.t
+----------------------
