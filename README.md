@@ -410,7 +410,7 @@ Compile takes a lua array of input image functions (returned from `darkroom.inpu
 
 Where inputs, outputs, and taps are in the same order as passed to `darkroom.compile`, and `TapStruct` is a struct with entries in the same order as the `tapsArray`. All input and output images must be pointers stored in 'darkroom format'. First, the data must match the type of the darkroom input or output. Second, the stride of the input must be `width` rounded up to the nearest vector width `V` passed in the compile options. For example if `width=63` and `V=4` then the stride must be 64. Finally, multi-channel images must be in struct of array form (i.e. all red pixels come before all blue pixels etc).
 
-For convenience, you can you the [Darkroom Simple](library), which provides an abstraction on top of this that doesn't require loading images, or use the image.t class:
+For convenience, you can you the [Darkroom Simple Library](#extras/darkroomSimple.t), which provides an abstraction on top of this that doesn't require loading images, or use the image.t class:
 
     inp = darkroom.input( uint8[3] )
     tap = darkroom.tap( uint8 )
@@ -460,8 +460,8 @@ Print runtime statistics.
 `looptimes = [1] number`
 number of times to run the inner loop of each kernel. Used to make runtime statistics more accurate.
 
-extras/darkroomSimple.t [Darkroom Simple]
------------------------------------------
+extras/darkroomSimple.t
+-----------------------
 
 `darkroomSimple.t` is a convenience wrapper around Darkroom that reduces the amount of code you have to write if you're using Darkroom in restricted, simple situations. Specifically, it does not allow you to change input images or tap values without recompiling all the image functions. `darkroomSimple` should not be used if you're writing the compiled pipeline out to an object file.
 
