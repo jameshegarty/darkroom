@@ -130,7 +130,7 @@ end
 -- maxX, maxY maximum area to gather from. so x=[-maxX,maxX], y=[-maxY,maxY]
 -- clamp: what to do when we go outside of maxX, maxY? clamp to that
 --        window, or raise an assert?
-function darkroom.gather( thisast, input,x,y,maxXV,maxYV,clamp)
+function darkroom.gather( thisast, input,x,y,maxXV,maxYV)
   assert(darkroom.ast.isAST(input))
   assert(darkroom.ast.isAST(x))
   assert(darkroom.ast.isAST(y))
@@ -145,18 +145,12 @@ function darkroom.gather( thisast, input,x,y,maxXV,maxYV,clamp)
   local maxY = maxYV.value
   assert(type(maxY)=="number")
 
-  assert(darkroom.ast.isAST(clamp))
-  assert(clamp.kind=="value")
-  clamp = clamp.value
-  assert(type(clamp)=="boolean")
-
   return darkroom.ast.new({kind="gather",
                         input=input, 
                         x=x,
                         y=y,
                         maxX=maxX,
-                        maxY=maxY,
-                        clamp=clamp}):copyMetadataFrom(thisast)
+                        maxY=maxY}):copyMetadataFrom(thisast)
 end
 
 ---------------------------------

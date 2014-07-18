@@ -155,14 +155,22 @@ function orionSimple.tap( ty, value )
   return r
 end
 
-function orionSimple.tapLUT(ty, entries, name)
-  assert(type(name)=="string")
-  local r = darkroom.tapLUT(ty, entries, name)
+function orionSimple.tapLUT(ty, entries, value)
+
+  local r = darkroom.tapLUT( ty, entries )
+
   if #orionSimple.taps ~= r.id then 
     darkroom.error("If you use the simple interface, you must use to for _all_ taps "..#orionSimple.taps.." "..r.id)
   end
 
   orionSimple.taps[r.id+1] = r
+
+  if darkroom.type.arrayLength(r.type)~=#value then
+    darkroom.error("Number of elements in tap value doesn't match type")
+  end
+
+  orionSimple.tapInputs[r.id+1] = `arrayof([darkroom.type.arrayOver(r.type):toTerraType()],value)
+
   return r
 end
 

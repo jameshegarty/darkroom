@@ -28,7 +28,7 @@ if false then
     end
 
 --    print("DB",info.short_src)
---        if info.short_src == "/Users/research/Documents/orion/orion.t" then
+--        if info.short_src == "/Users/research/Documents/orion/darkroom.t" then
     linetable[info.short_src][info.currentline] = linetable[info.short_src][info.currentline] or 0
     linetable[info.short_src][info.currentline] = linetable[info.short_src][info.currentline] + 1
 --        end
@@ -60,7 +60,7 @@ testinput = darkroomSimple.load(arg[1])
 
 function test(inast)
 
-  if orion.ast.isAST(inast) then inast = {inast} end
+  if darkroom.ast.isAST(inast) then inast = {inast} end
 
   local terra dosave(img: &Image, filename : &int8)
     img:save(filename)

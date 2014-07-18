@@ -1,11 +1,8 @@
 terralib.require "test"
 import "darkroom"
 
-local targetX = darkroomSimple.tap(orion.type.int(32))
-local targetY = darkroomSimple.tap(orion.type.int(32))
-
-darkroomSimple.setTap(targetX,5)
-darkroomSimple.setTap(targetY,1)
+local targetX = darkroomSimple.tap( int32, 5 )
+local targetY = darkroomSimple.tap( int32, 1 )
 
 -- synth something that selects one of the pixels in a 3x3 area
 test(im(x,y)

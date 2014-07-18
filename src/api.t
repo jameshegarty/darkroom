@@ -15,25 +15,24 @@ function darkroom.input( imtype )
 end
 
 darkroom._tapcount = 0
-function darkroom.tap(ty, name)
+function darkroom.tap( ty )
   ty = darkroom.type.fromTerraType(ty)
 
   assert(darkroom.type.isType(ty))
   assert(darkroom.type.isArray(ty)==false)
 
   darkroom._tapcount = darkroom._tapcount+1
-  return darkroom.ast.new({kind="tap", type=ty, tapname = name, id=darkroom._tapcount-1}):setLinenumber(0):setOffset(0):setFilename("null_tap")
+  return darkroom.ast.new({kind="tap", type=ty, id=darkroom._tapcount-1}):setLinenumber(0):setOffset(0):setFilename("null_tap")
 end
 
-function darkroom.tapLUT(ty, count, name)
+function darkroom.tapLUT(ty, count)
   ty = darkroom.type.fromTerraType(ty)
 
   assert(darkroom.type.isArray(ty)==false)
   assert(type(count)=="number")
-  assert(type(name)=="string")
 
   darkroom._tapcount = darkroom._tapcount+1
-  return darkroom.ast.new({kind="tap", type=darkroom.type.array(ty,count), count=count, tapname=name, id=darkroom._tapcount-1}):setLinenumber(0):setOffset(0):setFilename("null_tapLUT")
+  return darkroom.ast.new({kind="tap", type=darkroom.type.array(ty,count), count=count, id=darkroom._tapcount-1}):setLinenumber(0):setOffset(0):setFilename("null_tapLUT")
 end
 
 function darkroom.frontEnd(ast, options)

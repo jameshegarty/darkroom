@@ -1,5 +1,4 @@
---terralib.require("test")
-terralib.loadfile("test.t")
+terralib.require("test")
 import "darkroom"
 
 
@@ -10,6 +9,6 @@ im b(x,y) a(x-20,y-1)+a(x+20,y+1) end
 im c(x,y) b(x-20,y-1)+b(x+20,y+1) end
 im d(x,y) c(x-20,y-1)+c(x+20,y+1) end
 im e(x,y) d(x-20,y-1)+d(x+20,y+1) end
-im f(x,y) e(x-20,y-1)+e(x+20,y+1) end
+im f(x,y) [uint8]((e(x-20,y-1)+e(x+20,y+1))/32) end
 
 test(f)

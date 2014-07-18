@@ -9,8 +9,8 @@ function bilinearDemosaic(in1)
 
   -- most sensors are bayer, but some of them might be offset by a pixel in x or y
   -- remember, the origin is at the bottom left, x,y increasing to the right
-  local xoff = 1
-  local yoff = 1
+  local xoff = 0
+  local yoff = 0
 
   return im dem(x,y)
     out = [uint8[3]](0)

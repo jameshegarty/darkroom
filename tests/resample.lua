@@ -32,10 +32,10 @@ local u = darkroomSimple.image(u_im)
 v_im = makeIm(v_data)
 local v = darkroomSimple.image(v_im)
 
-test(im(x,y) [resampleBilinear(
+test(im(x,y) [uint8]([resampleBilinear(
     false,
     testinput, 
     maxVelocity, 
     maxVelocity, 
-    u,v)] end)
+    u,v)]) end)
 

@@ -76,7 +76,7 @@ function astFunctions:checkfn()
     while self["identifier"..i] do
       local v = self["identifier"..i]
       -- the identifier can potentially contain expressions we haven't parsed yet
-      assert(type(v)=="string" or type(v)=="number" or (type(v)=="table" and orion.ast.isAST(v)))
+      assert(type(v)=="string" or type(v)=="number" or (type(v)=="table" and darkroom.ast.isAST(v)))
       i = i + 1
     end
 
@@ -123,9 +123,9 @@ function astFunctions:checkfn()
     end
 
     if self.type~=nil then
-      if orion.type.isNumber(self.type) then assert(type(self.value)=="number") end
-      if orion.type.isBool(self.type) then assert(type(self.value)=="boolean") end
-      if orion.type.isArray(self.type) then assert(type(self.value)=="table") end
+      if darkroom.type.isNumber(self.type) then assert(type(self.value)=="number") end
+      if darkroom.type.isBool(self.type) then assert(type(self.value)=="boolean") end
+      if darkroom.type.isArray(self.type) then assert(type(self.value)=="table") end
     end
 
   elseif self.kind=="select" or self.kind=="vectorSelect" then
@@ -149,7 +149,7 @@ function astFunctions:checkfn()
     -- or "float", "int", "uint", "bool", "number" which will match multiple types
     -- a noop (unless the assert fails). returns _expr
     assert(getmetatable(self.expr)==getmetatable(self))
-    assert(orion.type.isType(self.type))
+    assert(darkroom.type.isType(self.type))
 
   elseif self.kind=="assert" then
     -- asserts that cond is true at runtime. cond must yield a bool
@@ -160,10 +160,10 @@ function astFunctions:checkfn()
   elseif self.kind=="call" then
     assert(type(_args)=="table")
     assert(terralib.isfunction(_tfunc))
-    assert(orion.type.isType(_type))
+    assert(darkroom.type.isType(_type))
   elseif self.kind=="type" then
     -- returns the type of _expr
-    assert(orion.type.isType(self.type))
+    assert(darkroom.type.isType(self.type))
 
   elseif self.kind=="special" then
     assert(self:childrenCount()==0)
@@ -176,8 +176,8 @@ function astFunctions:checkfn()
     local i=1
     while self["varname"..i]~=nil do
       assert(type(self["varname"..i])=="string")
-      assert(orion.ast.isAST(self["varlow"..i]))
-      assert(orion.ast.isAST(self["varhigh"..i]))
+      assert(darkroom.ast.isAST(self["varlow"..i]))
+      assert(darkroom.ast.isAST(self["varhigh"..i]))
       i=i+1
     end
 
@@ -185,23 +185,21 @@ function astFunctions:checkfn()
     assert(getmetatable(self.expr)==getmetatable(self))
   elseif self.kind=="mapreducevar" then
     assert(type(self.variable)=="string")
-    assert(orion.ast.isAST(self.low))
-    assert(orion.ast.isAST(self.high))
+    assert(darkroom.ast.isAST(self.low))
+    assert(darkroom.ast.isAST(self.high))
   elseif self.kind=="letvar" then
     assert(type(self.variable)=="string")
   elseif self.kind=="tap" then
     assert(type(self.id)=="number")
-    assert(type(self.tapname)=="string")
-    assert(orion.type.isType(self.type))
+    assert(darkroom.type.isType(self.type))
   elseif self.kind=="tapLUT" then
     assert(type(self.id)=="number")
     assert(type(self.count)=="number")
-    assert(type(self.tapname)=="string")
-    assert(orion.type.isType(self.type))
+    assert(darkroom.type.isType(self.type))
   elseif self.kind=="tapLUTLookup" then
     assert(type(self.id)=="number")
     assert(type(self.count)=="number")
-    assert(orion.type.isType(self.type))
+    assert(darkroom.type.isType(self.type))
   elseif self.kind=="lua" then
     assert(type(self.expr)=="function")
   elseif self.kind=="reduce" then
@@ -257,7 +255,7 @@ function astFunctions:checkfn()
 
 end
 
-function orion.ast.check(node,options)
+function darkroom.ast.check(node,options)
   return astFunctions.check(node,options)
 end
 
@@ -312,9 +310,9 @@ function astPrintPrettys(self)
   elseif self.kind=="tap" then
     out="_tap_"..self.id
   elseif self.kind=="tapLUT" then
-    out="_tapLUT_"..self.tapname
+    out="_tapLUT_"..self.id
   elseif self.kind=="tapLUTLookup" then
-    out="_tapLUT_"..self.tapname.."["..astPrintPrettys(self.index).."]"
+    out="_tapLUT_"..self.id.."["..astPrintPrettys(self.index).."]"
   elseif self.kind=="transform" then
     out= astPrintPrettys(self.expr)
     if self.arg1~=nil then
@@ -429,7 +427,7 @@ end
 
 function typedASTFunctions:checkfn()
 
-  assert(orion.type.isType(self.type))
+  assert(darkroom.type.isType(self.type))
 
   if self.kind=="mapreduce" or 
     self.kind=="mapreducevar" or 
@@ -451,10 +449,10 @@ function typedASTFunctions:checkfn()
     assert(type(self.index)=="number")
   elseif self.kind=="cropBaked" then
     assert(getmetatable(self.expr)==getmetatable(self))
-    assert(orion.cropIR.isCropIR(self.crop))
+    assert(darkroom.cropIR.isCropIR(self.crop))
     self.crop:check()
   elseif self.kind=="cast" then
-    assert(orion.type.isType(self.type))
+    assert(darkroom.type.isType(self.type))
     assert(getmetatable(self.expr)==getmetatable(self))
     assert(self:childrenCount()==1)
   elseif self.kind=="index" then
@@ -488,7 +486,7 @@ function typedASTFunctions:checkfn()
 
 end
 
-function orion.typedAST.check(node,options)
+function darkroom.typedAST.check(node,options)
   return typedASTFunctions.check(node,options)
 end
 
@@ -497,11 +495,11 @@ end
 function typedASTPrintPrettys(self,root,assignments)
   if type(self)=="number" then return tostring(self) end
 
-  assert(orion.typedAST.isTypedAST(self))
-  assert(orion.typedAST.isTypedAST(root))
+  assert(darkroom.typedAST.isTypedAST(self))
+  assert(darkroom.typedAST.isTypedAST(root))
   assert(type(assignments)=="table")
 
-  local out = "["..orion.type.typeToString(self.type).."]"
+  local out = "["..darkroom.type.typeToString(self.type).."]"
 
   if self.kind=="func" then
     local i=1
@@ -549,14 +547,14 @@ function typedASTPrintPrettys(self,root,assignments)
   elseif self.kind=="tap" then
     out=out.."_tap_"..self.id
   elseif self.kind=="tapLUTLookup" then
-    out=out.."_tapLUT_"..self.tapname.."["..typedASTPrintPrettys(self.index,root,assignments).."]"
+    out=out.."_tapLUT_"..self.id.."["..typedASTPrintPrettys(self.index,root,assignments).."]"
   elseif self.kind=="transformBaked" then
     out = out..typedASTPrintPrettys(self.expr,root,assignments).."("
 
     local i=1
     while self["translate"..i] do
       -- translate is either a number or an AST
-      out = out..orion.dimToCoord[i].."*"..self["scale"..i].."+"..astPrintPrettys(self["translate"..i], root, assignments)
+      out = out..darkroom.dimToCoord[i].."*"..self["scale"..i].."+"..astPrintPrettys(self["translate"..i], root, assignments)
       if self["translate"..(i+1)] then out = out.."," end
       i=i+1
     end
@@ -654,7 +652,7 @@ end
 
 
 function IRFunctions:check()
-  if orion.debug==false then return end
+  if darkroom.debug==false then return end
 --  return
   --print(debug.traceback())
 
@@ -663,7 +661,7 @@ function IRFunctions:check()
 
   self:visitEach(
     function(node)
-      orion.IR.check(node)
+      darkroom.IR.check(node)
 
       if node:keyCount()~=node:expectedKeycount() then
         print("keycount mismatch","kind:",node.kind,"has:",node:keyCount(),"expected:",node:expectedKeycount())
@@ -680,7 +678,7 @@ end
 
 function kernelGraphPrintPretty(root)
   print("KGPP")
-  assert(orion.kernelGraph.isKernelGraph(root))
+  assert(darkroom.kernelGraph.isKernelGraph(root))
   root:visitEach(function(node)
                    print(node:name().." -------------")
                    if node.kernel==nil then
@@ -692,9 +690,9 @@ function kernelGraphPrintPretty(root)
 end
 
 -- install debug hooks
-local origCompile = orion.compile
-function orion.compile(inputImageFunctions, outputImageFunctions, tapInputs, inputWidth, inputHeight, options)
-  print("debug orion.compile")
+local origCompile = darkroom.compile
+function darkroom.compile(inputImageFunctions, outputImageFunctions, tapInputs, inputWidth, inputHeight, options)
+  print("debug darkroom.compile")
   options.callbackAST = function(node) print(astPrintPrettys(node)) end
   options.callbackTypedAST = function(node) typedASTPrintPretty(node) end
   local ocallbackKernelGraph = options.callbackKernelGraph
