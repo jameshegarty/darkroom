@@ -2,14 +2,14 @@ typedASTFunctions={}
 setmetatable(typedASTFunctions,{__index=IRFunctions})
 typedASTMT={__index=typedASTFunctions,
   __newindex = function(table, key, value)
-                    orion.error("Attempt to modify typed AST node")
+                    darkroom.error("Attempt to modify typed AST node")
                   end}
 
-orion.typedAST = {}
+darkroom.typedAST = {}
 
 
 
-function orion.typedAST.checkConstantExpr(expr, coord)
+function darkroom.typedAST.checkConstantExpr(expr, coord)
 
   -- no x+x allowed
   if coord~=nil and expr:S("position"):count() ~= 1 then
@@ -20,20 +20,20 @@ return false
     function(n)
       if expr.kind=="binop" then
         if expr.op~="+" and expr.op~="-" then
-          orion.error("binop '"..expr.op.."' is not supported in an constant expr")
+          darkroom.error("binop '"..expr.op.."' is not supported in an constant expr")
         end
       elseif expr.kind=="value" then
         if type(expr.value)~="number" then
-          orion.error("type "..type(expr.value).." is not supported in constant expr")
+          darkroom.error("type "..type(expr.value).." is not supported in constant expr")
         end
       elseif coord~=nil and expr.kind=="position" then
         if expr.coord~=coord then
-          orion.error("you can't use coord "..expr.coord.." in expression for coord "..coord)
+          darkroom.error("you can't use coord "..expr.coord.." in expression for coord "..coord)
         end
       elseif expr.kind=="cast" then
       elseif expr.kind=="mapreducevar" then
       else
-        orion.error(expr.kind.." is not supported in constant expr")    
+        darkroom.error(expr.kind.." is not supported in constant expr")    
       end
     end)
 
@@ -42,13 +42,13 @@ end
 
 -- take the ast input that's an offset expr for coord 'coord'
 -- and convert it into a translate,scale. returns nil if there was an error.
-function orion.typedAST.synthOffset(ast,coord)
+function darkroom.typedAST.synthOffset(ast,coord)
   -- note that we don't typecheck these expressions! we keep them as ASTs,
   -- because they aren't really part of the language
-  assert(orion.ast.isAST(ast))
+  assert(darkroom.ast.isAST(ast))
 
   -- first check that there isn't anything in the expression that's definitely not allowed...
-  if orion.typedAST.checkConstantExpr(ast,coord)==false then
+  if darkroom.typedAST.checkConstantExpr(ast,coord)==false then
 return nil
   end
 
@@ -73,7 +73,7 @@ return nil
   local translate = ast:S("position"):process(
     function(n) 
       if n.kind=="position" then
-        return orion.ast.new({kind="value",value=0}):copyMetadataFrom(n)
+        return darkroom.ast.new({kind="value",value=0}):copyMetadataFrom(n)
       end
     end)
   assert(translate:S("position"):count()==0)
@@ -83,9 +83,9 @@ end
 -- the translate operator can take a few different arguments as translations
 -- it can contain binary + ops, and mapreduce vars. This evaluates all possible
 -- index values to find the correct stencil for those situations
-function orion.typedAST.transformArea(t1,t2)
-  if type(t1)=="number" then t1=orion.ast.new({kind="value",value=t1}) end
-  if type(t2)=="number" then t2=orion.ast.new({kind="value",value=t2}) end
+function darkroom.typedAST.transformArea(t1,t2)
+  if type(t1)=="number" then t1=darkroom.ast.new({kind="value",value=t1}) end
+  if type(t2)=="number" then t2=darkroom.ast.new({kind="value",value=t2}) end
   return t1:eval(1):sum(t2:eval(2))
 end
 
@@ -132,7 +132,7 @@ function typedASTFunctions:stencil(input)
     return self.index:stencil(input)
   elseif self.kind=="load" then
     local s = Stencil.new()
-    if input==nil or input==self.from then s = orion.typedAST.transformArea(self.relX,self.relY) end
+    if input==nil or input==self.from then s = darkroom.typedAST.transformArea(self.relX,self.relY) end
     return s
   elseif self.kind=="gather" then
     --if input~=nil then assert(false) end
@@ -143,7 +143,7 @@ function typedASTFunctions:stencil(input)
     else
       -- note the kind of nasty hack we're doing here: gathers read from loads, and loads can be shifted.
       -- so we need to shift this the same as the load
-      return orion.typedAST.transformArea(self.input.relX, self.input.relY):sum( Stencil.new():add(-self.maxX,-self.maxY,0):add(self.maxX,self.maxY,0))
+      return darkroom.typedAST.transformArea(self.input.relX, self.input.relY):sum( Stencil.new():add(-self.maxX,-self.maxY,0):add(self.maxX,self.maxY,0))
     end
   elseif self.kind=="array" then
     local exprsize = self:arraySize("expr")
@@ -166,7 +166,7 @@ function typedASTFunctions:stencil(input)
   elseif self.kind=="crop" then
     return self.expr:stencil(input)
   elseif self.kind=="transformBaked" then
-    return self.expr:stencil(input):sum(orion.typedAST.transformArea(self.translate1,self.translate2))
+    return self.expr:stencil(input):sum(darkroom.typedAST.transformArea(self.translate1,self.translate2))
   elseif self.kind=="mapreduce" then
     return self.expr:stencil(input)
   elseif self.kind=="mapreducevar" then
@@ -199,35 +199,35 @@ function typedASTFunctions:eval()
 end
 
 
-function orion.typedAST._toTypedAST(inast)
+function darkroom.typedAST._toTypedAST(inast)
 
   local res = inast:visitEach(
     function(origast,inputs)
-      assert(orion.ast.isAST(origast))
+      assert(darkroom.ast.isAST(origast))
       local ast = origast:shallowcopy()
 
       if ast.kind=="value" then
-        if ast.type==nil then ast.type=orion.type.valueToType(ast.value) end
+        if ast.type==nil then ast.type=darkroom.type.valueToType(ast.value) end
         if ast.type==nil then
-          orion.error("Internal error, couldn't convert "..tostring(ast.value).." to orion type", origast:linenumber(), origast:offset(), origast:filename() )
+          darkroom.error("Internal error, couldn't convert "..tostring(ast.value).." to orion type", origast:linenumber(), origast:offset(), origast:filename() )
         end
       elseif ast.kind=="unary" then
         ast.expr = inputs["expr"][1]
         
         if ast.op=="-" then
-          if orion.type.astIsUint(ast.expr) then
-            orion.warning("You're negating a uint, this is probably not what you want to do!", origast:linenumber(), origast:offset(), origast:filename())
+          if darkroom.type.astIsUint(ast.expr) then
+            darkroom.warning("You're negating a uint, this is probably not what you want to do!", origast:linenumber(), origast:offset(), origast:filename())
           end
           
           ast.type = ast.expr.type
         elseif ast.op=="floor" or ast.op=="ceil" then
-          ast.type = orion.type.float(32)
+          ast.type = darkroom.type.float(32)
         elseif ast.op=="abs" then
-          if ast.expr.type==orion.type.float(32) then
-            ast.type = orion.type.float(32)
-          elseif ast.expr.type==orion.type.float(64) then
-            ast.type = orion.type.float(64)
-          elseif orion.type.isInt(ast.expr.type) or orion.type.isUint(ast.expr.type) then
+          if ast.expr.type==darkroom.type.float(32) then
+            ast.type = darkroom.type.float(32)
+          elseif ast.expr.type==darkroom.type.float(64) then
+            ast.type = darkroom.type.float(64)
+          elseif darkroom.type.isInt(ast.expr.type) or darkroom.type.isUint(ast.expr.type) then
             -- obv can't make it any bigger
             ast.type = ast.expr.type
           else
@@ -235,25 +235,25 @@ function orion.typedAST._toTypedAST(inast)
             assert(false)
           end
         elseif ast.op=="not" then
-          if orion.type.isBool(ast.expr.type) then
+          if darkroom.type.isBool(ast.expr.type) then
             ast.type = ast.expr.type
           else
-            orion.error("not only works on bools",origast:linenumber(), origast:offset())
+            darkroom.error("not only works on bools",origast:linenumber(), origast:offset())
             assert(false)
           end
         elseif ast.op=="sin" or ast.op=="cos" or ast.op=="exp" then
-          if ast.expr.type==orion.type.float(32) then
-            ast.type = orion.type.float(32)
-          elseif ast.expr.type==orion.type.float(64) then
-            ast.type = orion.type.float(64)
+          if ast.expr.type==darkroom.type.float(32) then
+            ast.type = darkroom.type.float(32)
+          elseif ast.expr.type==darkroom.type.float(64) then
+            ast.type = darkroom.type.float(64)
           else
-            orion.error("sin, cos, and exp only work on floating point types",origast:linenumber(),origast:offset(),origast:filename())
+            darkroom.error("sin, cos, and exp only work on floating point types",origast:linenumber(),origast:offset(),origast:filename())
           end
         elseif ast.op=="arrayAnd" then
-          if orion.type.isArray(ast.expr.type) and orion.type.isBool(orion.type.arrayOver(ast.expr.type)) then
-            ast.type = orion.type.bool()
+          if darkroom.type.isArray(ast.expr.type) and darkroom.type.isBool(darkroom.type.arrayOver(ast.expr.type)) then
+            ast.type = darkroom.type.bool()
           else
-            orion.error("vectorAnd only works on arrays of bools",origast:linenumber(), origast:offset())
+            darkroom.error("vectorAnd only works on arrays of bools",origast:linenumber(), origast:offset())
           end
         else
           print(ast.op)
@@ -270,14 +270,14 @@ function orion.typedAST._toTypedAST(inast)
         assert(lhs.type~=nil)
         assert(rhs.type~=nil)
         
-        local thistype, lhscast, rhscast = orion.type.meet( lhs.type, rhs.type, ast.op, origast )
+        local thistype, lhscast, rhscast = darkroom.type.meet( lhs.type, rhs.type, ast.op, origast )
         
         if thistype==nil then
-          orion.error("Type error, inputs to "..ast.op,origast:linenumber(), origast:offset(), origast:filename())
+          darkroom.error("Type error, inputs to "..ast.op,origast:linenumber(), origast:offset(), origast:filename())
         end
         
-        if lhs.type~=lhscast then lhs = orion.typedAST.new({kind="cast",expr=lhs,type=lhscast}):copyMetadataFrom(origast) end
-        if rhs.type~=rhscast then rhs = orion.typedAST.new({kind="cast",expr=rhs,type=rhscast}):copyMetadataFrom(origast) end
+        if lhs.type~=lhscast then lhs = darkroom.typedAST.new({kind="cast",expr=lhs,type=lhscast}):copyMetadataFrom(origast) end
+        if rhs.type~=rhscast then rhs = darkroom.typedAST.new({kind="cast",expr=rhs,type=rhscast}):copyMetadataFrom(origast) end
         
         ast.type = thistype
         ast.lhs = lhs
@@ -286,48 +286,48 @@ function orion.typedAST._toTypedAST(inast)
       elseif ast.kind=="position" then
         -- if position is still in the tree at this point, it means it's being used in an expression somewhere
         -- choose a reasonable type...
-        ast.type=orion.type.int(32)
+        ast.type=darkroom.type.int(32)
       elseif ast.kind=="select" or ast.kind=="vectorSelect" then
         local cond = inputs["cond"][1]
         local a = inputs["a"][1]
         local b = inputs["b"][1]
 
         if ast.kind=="vectorSelect" then
-          if orion.type.arrayOver(cond.type)~=orion.type.bool() then
-            orion.error("Error, condition of vectorSelect must be array of booleans. ",origast:linenumber(),origast:offset())
+          if darkroom.type.arrayOver(cond.type)~=darkroom.type.bool() then
+            darkroom.error("Error, condition of vectorSelect must be array of booleans. ",origast:linenumber(),origast:offset())
             return nil
           end
 
-          if orion.type.isArray(cond.type)==false or
-            orion.type.isArray(a.type)==false or
-            orion.type.isArray(b.type)==false or
-            orion.type.arrayLength(a.type)~=orion.type.arrayLength(b.type) or
-            orion.type.arrayLength(cond.type)~=orion.type.arrayLength(a.type) then
-            orion.error("Error, all arguments to vectorSelect must be arrays of the same length",origast:linenumber(),origast:offset())
+          if darkroom.type.isArray(cond.type)==false or
+            darkroom.type.isArray(a.type)==false or
+            darkroom.type.isArray(b.type)==false or
+            darkroom.type.arrayLength(a.type)~=darkroom.type.arrayLength(b.type) or
+            darkroom.type.arrayLength(cond.type)~=darkroom.type.arrayLength(a.type) then
+            darkroom.error("Error, all arguments to vectorSelect must be arrays of the same length",origast:linenumber(),origast:offset())
             return nil            
           end
         else
-          if cond.type ~= orion.type.bool() then
-            orion.error("Error, condition of select must be scalar boolean. Use vectorSelect",origast:linenumber(),origast:offset(),origast:filename())
+          if cond.type ~= darkroom.type.bool() then
+            darkroom.error("Error, condition of select must be scalar boolean. Use vectorSelect",origast:linenumber(),origast:offset(),origast:filename())
             return nil
           end
 
-          if orion.type.isArray(a.type)~=orion.type.isArray(b.type) then
-            orion.error("Error, if any results of select are arrays, all results must be arrays",origast:linenumber(),origast:offset())
+          if darkroom.type.isArray(a.type)~=darkroom.type.isArray(b.type) then
+            darkroom.error("Error, if any results of select are arrays, all results must be arrays",origast:linenumber(),origast:offset())
             return nil
           end
           
-          if orion.type.isArray(a.type) and
-            orion.type.arrayLength(a.type)~=orion.type.arrayLength(b.type) then
-            orion.error("Error, array arguments to select must be the same length",origast:linenumber(),origast:offset())
+          if darkroom.type.isArray(a.type) and
+            darkroom.type.arrayLength(a.type)~=darkroom.type.arrayLength(b.type) then
+            darkroom.error("Error, array arguments to select must be the same length",origast:linenumber(),origast:offset())
             return nil
           end
         end
 
-        local thistype, lhscast, rhscast =  orion.type.meet(a.type,b.type, ast.kind, origast)
+        local thistype, lhscast, rhscast =  darkroom.type.meet(a.type,b.type, ast.kind, origast)
 
-        if a.type~=lhscast then a = orion.typedAST.new({kind="cast",expr=a,type=lhscast}):copyMetadataFrom(origast) end
-        if b.type~=rhscast then b = orion.typedAST.new({kind="cast",expr=b,type=rhscast}):copyMetadataFrom(origast) end
+        if a.type~=lhscast then a = darkroom.typedAST.new({kind="cast",expr=a,type=lhscast}):copyMetadataFrom(origast) end
+        if b.type~=rhscast then b = darkroom.typedAST.new({kind="cast",expr=b,type=rhscast}):copyMetadataFrom(origast) end
         
         ast.type = thistype
         ast.cond = cond
@@ -337,25 +337,25 @@ function orion.typedAST._toTypedAST(inast)
       elseif ast.kind=="index" then
         local expr = inputs["expr"][1]
         
-        if orion.type.isArray(expr.type)==false then
-          orion.error("Error, you can only index into an array type!",origast:linenumber(),origast:offset())
+        if darkroom.type.isArray(expr.type)==false then
+          darkroom.error("Error, you can only index into an array type!",origast:linenumber(),origast:offset())
           os.exit()
         end
         
         ast.expr = expr
 
-        if orion.typedAST.checkConstantExpr(origast["index"])==false then
-          orion.error("index must be a constant expression",origast:linenumber(), origast:offset(), origast:filename())
+        if darkroom.typedAST.checkConstantExpr(origast["index"])==false then
+          darkroom.error("index must be a constant expression",origast:linenumber(), origast:offset(), origast:filename())
         end
 
         local range = origast["index"]:eval(1)
 
-        if range:min(1)<0 or range:max(1) >= orion.type.arrayLength(expr.type) then
-          orion.error("index value out of range. It is ["..range:min(1)..","..range:max(1).."] but should be within [0,"..(orion.type.arrayLength(expr.type)-1).."]",origast:linenumber())
+        if range:min(1)<0 or range:max(1) >= darkroom.type.arrayLength(expr.type) then
+          darkroom.error("index value out of range. It is ["..range:min(1)..","..range:max(1).."] but should be within [0,"..(darkroom.type.arrayLength(expr.type)-1).."]",origast:linenumber())
         end
 
         ast.index = origast["index"]
-        ast.type = orion.type.astArrayOver(expr)
+        ast.type = darkroom.type.astArrayOver(expr)
         
       elseif ast.kind=="transform" then
         ast.expr = inputs["expr"][1]
@@ -377,8 +377,12 @@ function orion.typedAST._toTypedAST(inast)
         local i=1
         while ast["arg"..i] do
           -- if we got here we can assume it's valid
-          local translate,scale=orion.typedAST.synthOffset( origast["arg"..i], orion.dimToCoord[i])
-          assert(translate~=nil)
+          local translate,scale=darkroom.typedAST.synthOffset( origast["arg"..i], darkroom.dimToCoord[i])
+
+          if translate==nil then
+            darkroom.error("Error, non-stencil access pattern", origast:linenumber(), origast:offset(), origast:filename())
+          end
+
           newtrans["translate"..i]=translate
           newtrans["scale"..i]=scale
 
@@ -407,20 +411,20 @@ function orion.typedAST._toTypedAST(inast)
         local mtype = ast.expr1.type
         local atype, btype
         
-        if orion.type.isArray(mtype) then
-          orion.error("You can't have nested arrays (index 0 of vector)",origast:linenumber(),origast:offset(),origast:filename())
+        if darkroom.type.isArray(mtype) then
+          darkroom.error("You can't have nested arrays (index 0 of vector)",origast:linenumber(),origast:offset(),origast:filename())
         end
         
         local cnt = 2
         while ast["expr"..cnt] do
-          if orion.type.isArray(ast["expr"..cnt].type) then
-            orion.error("You can't have nested arrays (index "..(i-1).." of vector)")
+          if darkroom.type.isArray(ast["expr"..cnt].type) then
+            darkroom.error("You can't have nested arrays (index "..(i-1).." of vector)")
           end
           
-          mtype, atype, btype = orion.type.meet( mtype, ast["expr"..cnt].type, "array", origast)
+          mtype, atype, btype = darkroom.type.meet( mtype, ast["expr"..cnt].type, "array", origast)
           
           if mtype==nil then
-            orion.error("meet error")      
+            darkroom.error("meet error")      
           end
           
           -- our type system should have guaranteed this...
@@ -439,18 +443,18 @@ function orion.typedAST._toTypedAST(inast)
           local from = ast["expr"..cnt].type
 
           if from~=mtype then
-            if orion.type.checkImplicitCast(from, mtype,origast)==false then
-              orion.error("Error, can't implicitly cast "..from:str().." to "..mtype:str(), origast:linenumber(), origast:offset())
+            if darkroom.type.checkImplicitCast(from, mtype,origast)==false then
+              darkroom.error("Error, can't implicitly cast "..from:str().." to "..mtype:str(), origast:linenumber(), origast:offset())
             end
             
-            ast["expr"..cnt] = orion.typedAST.new({kind="cast",expr=ast["expr"..cnt], type=mtype}):copyMetadataFrom(ast["expr"..cnt])
+            ast["expr"..cnt] = darkroom.typedAST.new({kind="cast",expr=ast["expr"..cnt], type=mtype}):copyMetadataFrom(ast["expr"..cnt])
           end
 
           cnt = cnt + 1
         end
         
         local arraySize = cnt - 1
-        ast.type = orion.type.array(mtype, arraySize)
+        ast.type = darkroom.type.array(mtype, arraySize)
         
 
       elseif ast.kind=="cast" then
@@ -460,8 +464,8 @@ function orion.typedAST._toTypedAST(inast)
         -- and just calculating the value at the lower precision.
         ast.expr = inputs["expr"][1]
         
-        if orion.type.checkExplicitCast(ast.expr.type,ast.type,origast)==false then
-          orion.error("Casting from "..ast.expr.type:str().." to "..ast.type:str().." isn't allowed!",origast:linenumber(),origast:offset())
+        if darkroom.type.checkExplicitCast(ast.expr.type,ast.type,origast)==false then
+          darkroom.error("Casting from "..ast.expr.type:str().." to "..ast.type:str().." isn't allowed!",origast:linenumber(),origast:offset())
         end
       elseif ast.kind=="assert" then
 
@@ -469,8 +473,8 @@ function orion.typedAST._toTypedAST(inast)
         ast.expr = inputs["expr"][1]
         ast.printval = inputs["printval"][1]
 
-        if orion.type.astIsBool(ast.cond)==false then
-          orion.error("Error, condition of assert must be boolean",ast:linenumber(),ast:offset())
+        if darkroom.type.astIsBool(ast.cond)==false then
+          darkroom.error("Error, condition of assert must be boolean",ast:linenumber(),ast:offset())
           return nil
         end
 
@@ -479,21 +483,21 @@ function orion.typedAST._toTypedAST(inast)
       elseif ast.kind=="mapreducevar" then
         ast.low = inputs["low"][1]:eval()
         ast.high = inputs["high"][1]:eval()
-        ast.type = orion.type.int(32)
+        ast.type = darkroom.type.int(32)
 
---        ast.type = orion.type.meet(ast.low.type,ast.high.type,"mapreducevar", origast)
+--        ast.type = darkroom.type.meet(ast.low.type,ast.high.type,"mapreducevar", origast)
       elseif ast.kind=="tap" then
         -- taps should be tagged with type already
       elseif ast.kind=="tapLUTLookup" then
         ast.index = inputs["index"][1]
         
         -- tapLUTs should be tagged with type already
-        assert(orion.type.isType(ast.type))
+        assert(darkroom.type.isType(ast.type))
         
-        if orion.type.isUint(ast.index.type)==false and
-          orion.type.isInt(ast.index.type)==false then
+        if darkroom.type.isUint(ast.index.type)==false and
+          darkroom.type.isInt(ast.index.type)==false then
           
-          orion.error("Error, index into tapLUT must be integer",ast:linenumber(),ast:offset())
+          darkroom.error("Error, index into tapLUT must be integer",ast:linenumber(),ast:offset())
           return nil
         end
       elseif ast.kind=="crop" then
@@ -510,7 +514,7 @@ function orion.typedAST._toTypedAST(inast)
           i=i+1
         end
 
-        ast.type = orion.type.reduce( ast.op, typeSet)
+        ast.type = darkroom.type.reduce( ast.op, typeSet)
       elseif ast.kind=="outputs" then
         -- doesn't matter, this is always the root and we never need to get its type
         ast.type = inputs.expr1[1].type
@@ -530,12 +534,12 @@ function orion.typedAST._toTypedAST(inast)
         ast.x = inputs.x[1]
         ast.y = inputs.y[1]
 
-        if orion.type.isInt(ast.x.type)==false then
-          orion.error("Error, x argument to gather must be int but is "..ast.x.type:str(), origast:linenumber(), origast:offset())
+        if darkroom.type.isInt(ast.x.type)==false then
+          darkroom.error("Error, x argument to gather must be int but is "..ast.x.type:str(), origast:linenumber(), origast:offset())
         end
 
-        if orion.type.isInt(ast.y.type)==false then
-          orion.error("Error, y argument to gather must be int but is "..ast.y.type:str(), origast:linenumber(), origast:offset())
+        if darkroom.type.isInt(ast.y.type)==false then
+          darkroom.error("Error, y argument to gather must be int but is "..ast.y.type:str(), origast:linenumber(), origast:offset())
         end
       elseif ast.kind=="load" then
         -- already has a type
@@ -544,12 +548,12 @@ function orion.typedAST._toTypedAST(inast)
           ast.type = inputs.expr[1].type
         elseif ast.reduceop=="argmin" or ast.reduceop=="argmax" then
           if inputs.expr[1].type:isArray()==true then
-            orion.error("argmin and argmax can only be applied to scalar quantities", origast:linenumber(), origast:offset(), origast:filename())
+            darkroom.error("argmin and argmax can only be applied to scalar quantities", origast:linenumber(), origast:offset(), origast:filename())
           end
 
-          ast.type = orion.type.array(orion.type.int(32),origast:arraySize("varname"))
+          ast.type = darkroom.type.array(darkroom.type.int(32),origast:arraySize("varname"))
         else
-          orion.error("Unknown reduce operator '"..ast.reduceop.."'")
+          darkroom.error("Unknown reduce operator '"..ast.reduceop.."'")
         end
 
         ast.expr = inputs.expr[1]
@@ -562,13 +566,13 @@ function orion.typedAST._toTypedAST(inast)
         end
 
       else
-        orion.error("Internal error, typechecking for "..ast.kind.." isn't implemented!",ast.line,ast.char)
+        darkroom.error("Internal error, typechecking for "..ast.kind.." isn't implemented!",ast.line,ast.char)
         return nil
       end
       
-      if orion.type.isType(ast.type)==false then print(ast.kind) end
-      ast = orion.typedAST.new(ast):copyMetadataFrom(origast)
-      assert(orion.type.isType(ast.type))
+      if darkroom.type.isType(ast.type)==false then print(ast.kind) end
+      ast = darkroom.typedAST.new(ast):copyMetadataFrom(origast)
+      assert(darkroom.type.isType(ast.type))
 
       return {ast}
     end)
@@ -576,13 +580,13 @@ function orion.typedAST._toTypedAST(inast)
   return res[1], res[2]
 end
 
-function orion.typedAST.astToTypedAST(ast, options)
-  assert(orion.ast.isAST(ast))
+function darkroom.typedAST.astToTypedAST(ast, options)
+  assert(darkroom.ast.isAST(ast))
   assert(type(options)=="table")
 
   -- first we run CSE to clean up the users code
   -- this will save us a lot of time/memory later on
-  ast = orion.optimize.CSE(ast,{})
+  ast = darkroom.optimize.CSE(ast,{})
 
   if options.verbose or options.printstage then 
     print("toTyped") 
@@ -590,7 +594,7 @@ function orion.typedAST.astToTypedAST(ast, options)
     print("maxDepth",ast:maxDepth())
   end
 
-  if orion.verbose or orion.printstage then 
+  if darkroom.verbose or darkroom.printstage then 
     print("desugar")
   end
 
@@ -628,13 +632,13 @@ function orion.typedAST.astToTypedAST(ast, options)
       elseif node.kind=="switch" then
         local cnt = node:arraySize("expr")
         
-        local cond = orion.ast.new({kind="binop",op="==",lhs=node.controlExpr,rhs=node["val"..cnt]}):copyMetadataFrom(node)
-        local select = orion.ast.new({kind="select",cond=cond,a=node["expr"..cnt],b=node.default}):copyMetadataFrom(node)
+        local cond = darkroom.ast.new({kind="binop",op="==",lhs=node.controlExpr,rhs=node["val"..cnt]}):copyMetadataFrom(node)
+        local select = darkroom.ast.new({kind="select",cond=cond,a=node["expr"..cnt],b=node.default}):copyMetadataFrom(node)
         
         cnt = cnt-1
         while cnt > 0 do
-          cond = orion.ast.new({kind="binop",op="==",lhs=node.controlExpr,rhs=node["val"..cnt]}):copyMetadataFrom(node)
-          select = orion.ast.new({kind="select",cond=cond,a=node["expr"..cnt],b=select}):copyMetadataFrom(node)
+          cond = darkroom.ast.new({kind="binop",op="==",lhs=node.controlExpr,rhs=node["val"..cnt]}):copyMetadataFrom(node)
+          select = darkroom.ast.new({kind="select",cond=cond,a=node["expr"..cnt],b=select}):copyMetadataFrom(node)
           cnt = cnt - 1
         end
         
@@ -648,13 +652,13 @@ function orion.typedAST.astToTypedAST(ast, options)
   end
 
   -- should have been eliminated
-  if orion.debug then assert(ast:S(function(n) return n.kind=="letvar" or n.kind=="switch" end):count()==0) end
+  if darkroom.debug then assert(ast:S(function(n) return n.kind=="letvar" or n.kind=="switch" end):count()==0) end
 
   if options.printstage then
     print("_toTypedAST",collectgarbage("count"))
   end
 
-  local typedAST = orion.typedAST._toTypedAST(ast)
+  local typedAST = darkroom.typedAST._toTypedAST(ast)
 
   if options.verbose or options.printstage then
     print("conversion to typed AST done ------------")
@@ -664,18 +668,18 @@ function orion.typedAST.astToTypedAST(ast, options)
 end
 
 
-function orion.typedAST.isTypedAST(ast) return getmetatable(ast)==typedASTMT end
+function darkroom.typedAST.isTypedAST(ast) return getmetatable(ast)==typedASTMT end
 
 -- kind of a hack - so that the IR library can shallowcopy and then
 -- modify an ast node without having to know its exact type
 function typedASTFunctions:init()
   setmetatable(self,nil)
-  orion.typedAST.new(self)
+  darkroom.typedAST.new(self)
 end
 
-function orion.typedAST.new(tab)
+function darkroom.typedAST.new(tab)
   assert(type(tab)=="table")
-  orion.IR.new(tab)
+  darkroom.IR.new(tab)
   return setmetatable(tab,typedASTMT)
 end
 

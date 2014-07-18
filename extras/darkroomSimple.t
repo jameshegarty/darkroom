@@ -1,6 +1,6 @@
 orionSimple = {}
 
-orionSimple.images = {} -- images returned from orion.input
+orionSimple.images = {} -- images returned from darkroom.input
 orionSimple.imageInputs = {} -- this is the image data we pass in
 orionSimple.imageWidths = {}
 orionSimple.imageHeights = {}
@@ -11,14 +11,14 @@ orionSimple.tapInputs = {} -- tap values we pass in
 terralib.require("image")
 
 function imageToOrionType(im)
-  local _type = orion.type.uint(8)
+  local _type = darkroom.type.uint(8)
 
   
   assert(im.isSigned==false)
 
   if im.floating then
     if im.bits == 32 then
-      _type = orion.type.float(32)
+      _type = darkroom.type.float(32)
     else
       assert(false)
     end
@@ -27,17 +27,17 @@ function imageToOrionType(im)
     if im.bits==8 then
       --print("Bits should be 8, they are " .. im.bits ) 
     elseif im.bits==16 then
-      _type = orion.type.uint(16)
+      _type = darkroom.type.uint(16)
     elseif im.bits==32 then
-      _type = orion.type.uint(32)
+      _type = darkroom.type.uint(32)
     else 
       print("Bits should be 8, 16, or 32, they are " .. im.bits ) 
       assert(false)
     end
   end
 
-  if im.channels>1 then _type = orion.type.array(_type,im.channels) end
-  if orion.verbose then print("channels", im.channels) end
+  if im.channels>1 then _type = darkroom.type.array(_type,im.channels) end
+  if darkroom.verbose then print("channels", im.channels) end
 
   return _type
 end
@@ -46,10 +46,10 @@ end
 function orionSimple.image(img)
   local _type = imageToOrionType(img)
 
-  local inp = orion.input(_type)
+  local inp = darkroom.input(_type)
 
   if inp.expr.from ~= #orionSimple.images then
-    orion.error("If you use the simple interface, you must use to for _all_ inputs "..#orionSimple.images.." "..inp.expr.from)
+    darkroom.error("If you use the simple interface, you must use to for _all_ inputs "..#orionSimple.images.." "..inp.expr.from)
   end
 
   table.insert(orionSimple.images,inp)
@@ -65,7 +65,7 @@ end
 function orionSimple.load(filename, boundaryCond)
   assert(type(filename)=="string")
 
-  if orion.verbose then print("Load",filename) end
+  if darkroom.verbose then print("Load",filename) end
 
   local terra makeIm( filename : &int8)
     var im : &Image = [&Image](cstdlib.malloc(sizeof(Image)))
@@ -106,13 +106,13 @@ function orionSimple.loadRaw(filename, w,h,bits,header,flipEndian)
     im = makeIm(filename,w,h,bits)
   end
 
-  print("orion.loadRaw bits", im.bits)
-  local _type = orion.type.uint(im.bits)
+  print("darkroom.loadRaw bits", im.bits)
+  local _type = darkroom.type.uint(im.bits)
 --  assert(im.bits==32)
 
-  local idast = orion.image(_type,im.width,im.height)
-  orion._boundImages[idast.expr.id+1].filename = filename
-  orion.bindImage(idast.expr.id,im)
+  local idast = darkroom.image(_type,im.width,im.height)
+  darkroom._boundImages[idast.expr.id+1].filename = filename
+  darkroom.bindImage(idast.expr.id,im)
 
   local terra freeIm(im:&Image)
     im:free()
@@ -127,9 +127,9 @@ end
 orionSimple._usedTapNames={}
 
 function orionSimple.tap(ty)
-  local r = orion.tap(ty)
+  local r = darkroom.tap(ty)
   if #orionSimple.taps ~= r.id then 
-    orion.error("If you use the simple interface, you must use to for _all_ taps "..#orionSimple.taps.." "..r.id)
+    darkroom.error("If you use the simple interface, you must use to for _all_ taps "..#orionSimple.taps.." "..r.id)
   end
 
   orionSimple.taps[r.id+1] = r
@@ -137,23 +137,23 @@ function orionSimple.tap(ty)
 end
 
 function orionSimple.setTap( ast, value )
-  assert(orion.ast.isAST(ast))
+  assert(darkroom.ast.isAST(ast))
   assert(ast.kind=="tap")
 
   if ast.type:isArray() then
-    assert(orion.type.arrayLength(ast.type)==#value)
-    orionSimple.tapInputs[ast.id+1] = `arrayof([orion.type.arrayOver(ast.type):toTerraType()],value)
+    assert(darkroom.type.arrayLength(ast.type)==#value)
+    orionSimple.tapInputs[ast.id+1] = `arrayof([darkroom.type.arrayOver(ast.type):toTerraType()],value)
   else
     orionSimple.tapInputs[ast.id+1] = value
   end
 end
 
 function orionSimple.getTap(ast)
---  assert(orion.ast.isAST(ast) or orion.convIR.isConvIR(ast))
-  local terraType = orion.type.toTerraType(ast.type)
+--  assert(darkroom.ast.isAST(ast) or darkroom.convIR.isConvIR(ast))
+  local terraType = darkroom.type.toTerraType(ast.type)
 
   local terra getit(id:int) : terraType
-    var v : &terraType = [&terraType](orion.runtime.getTap(id))
+    var v : &terraType = [&terraType](darkroom.runtime.getTap(id))
     return @v
   end
 
@@ -162,9 +162,9 @@ end
 
 function orionSimple.tapLUT(ty, entries, name)
   assert(type(name)=="string")
-  local r = orion.tapLUT(ty, entries, name)
+  local r = darkroom.tapLUT(ty, entries, name)
   if #orionSimple.taps ~= r.id then 
-    orion.error("If you use the simple interface, you must use to for _all_ taps "..#orionSimple.taps.." "..r.id)
+    darkroom.error("If you use the simple interface, you must use to for _all_ taps "..#orionSimple.taps.." "..r.id)
   end
 
   orionSimple.taps[r.id+1] = r
@@ -183,7 +183,7 @@ function astFunctions:save(filename,compilerOptions)
 end
 
 function astFunctions:saveRaw(filename,bits)
-  local func = orion.compile({self})
+  local func = darkroom.compile({self})
   print("Call")
   local out = func()
   local terra dosave(im: &Image, filename : &int8, bits:int)
@@ -197,16 +197,16 @@ end
 
 function astFunctions:_cparam(key)
   if self.kind~="crop" and self.expr.kind~="special" then
-    orion.error("could not determine "..key.." - not an input fn, kind "..self.kind)
+    darkroom.error("could not determine "..key.." - not an input fn, kind "..self.kind)
   end
 
   local id = self.expr.id
 
-  if type(orion._boundImages[id+1][key])~="number" then
-    orion.error("could not determine "..key.." - wasn't specified at compile time")
+  if type(darkroom._boundImages[id+1][key])~="number" then
+    darkroom.error("could not determine "..key.." - wasn't specified at compile time")
   end
 
-  return orion._boundImages[id+1][key]
+  return darkroom._boundImages[id+1][key]
 end
 
 function astFunctions:size()
@@ -219,7 +219,7 @@ function astFunctions:size()
       else
         if orionSimple.imageWidths[n.from+1]~=width or
           orionSimple.imageHeights[n.from+1]~=height then
-          orion.error(":size() Width/ height of all input images must match!")
+          darkroom.error(":size() Width/ height of all input images must match!")
         end
       end
     end)
@@ -239,7 +239,7 @@ end
 
 function astFunctions:id()
   if self.kind~="crop" or self.expr.kind~="special" then
-    orion.error("could not determine "..key.." - not an input fn")
+    darkroom.error("could not determine "..key.." - not an input fn")
   end
 
   assert(type(self.expr.id)=="number")
@@ -268,12 +268,12 @@ function orionSimple.compile(outList, options)
     if width==nil then
       width=w; height=h
     elseif w~=nil and (w~=width or h~=height) then
-      orion.error("Width/ height of all input images must match!")
+      darkroom.error("Width/ height of all input images must match!")
     end
   end
 
   if width==nil then
-    orion.error("Width/Height of output could not be deteremined! If no image inputs, it must be specified!")
+    darkroom.error("Width/Height of output could not be deteremined! If no image inputs, it must be specified!")
   end
 
   local ocallbackKernelGraph = options.callbackKernelGraph
@@ -295,7 +295,7 @@ function orionSimple.compile(outList, options)
     if ocallbackKernelGraph ~= nil then ocallbackKernelGraph(kernelGraph) end
   end
   
-  local fn = orion.compile( orionSimple.images, outList, orionSimple.taps, width, height, options)
+  local fn = darkroom.compile( orionSimple.images, outList, orionSimple.taps, width, height, options)
 
   options.callbackKernelGraph = ocallbackKernelGraph
 

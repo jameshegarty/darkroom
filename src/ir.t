@@ -1,6 +1,6 @@
 -- this is the base class for all our compiler IR
 
-orion.IR = {}
+darkroom.IR = {}
 
 IRFunctions = {}
 
@@ -9,12 +9,12 @@ local astQuery={}
 local astQueryMT = {__index=astQuery}
 
 function astQuery:check()
-  if orion.debug==false then return end
+  if darkroom.debug==false then return end
   -- let's check that each ast only appears once in the list
   local listcheck={}
 
   for _,v in ipairs(self.list) do
-    assert(orion.IR.isIR(v))
+    assert(darkroom.IR.isIR(v))
     assert(listcheck[v]==nil)
     assert(self.inList[v]~=nil)
     listcheck[v]=1
@@ -309,7 +309,7 @@ end
 -- this figures out what nodes in the DAG starting at root are _potentially_
 -- affected by a query. Essentially: all parents of nodes in the query
 -- list are potentially affected.
-function orion.IR.buildAffected(root,list)
+function darkroom.IR.buildAffected(root,list)
   local affected={}
 
   local function prop(ast)
@@ -337,7 +337,7 @@ function IRFunctions:matches(query)
   end
 
   if type(query)~="string" then
-    orion.error("Bad query type")  
+    darkroom.error("Bad query type")  
   end
 
   if query=="*" then 
@@ -381,7 +381,7 @@ end
 -- list: an array of ASTs in topological order
 -- visited : astPointer->1
 local function Sinternal(self, query, stopQuery, list, visited)
-  assert(orion.IR.isIR(self))
+  assert(darkroom.IR.isIR(self))
 
   if visited[self]==nil then
     -- mark as visited
@@ -414,7 +414,7 @@ function IRFunctions:S(query, stopQuery)
   return setmetatable({ast=self, 
                        list=list, 
                        inList=inList, 
-                       affected=orion.IR.buildAffected(self,list)},astQueryMT)
+                       affected=darkroom.IR.buildAffected(self,list)},astQueryMT)
 end
 
 -- this performs a query on the ast, where we pass ast to queryFunc, and if queryFunc
@@ -447,12 +447,12 @@ function IRFunctions:F(queryFunc)
   assert(#list==#flist)
   list = flist
 
-  return setmetatable({ast=self, list=list, inList=inList, affected=orion.IR.buildAffected(self,list)},astQueryMT)
+  return setmetatable({ast=self, list=list, inList=inList, affected=darkroom.IR.buildAffected(self,list)},astQueryMT)
 end
 
 function Finternal(self, queryFunc, list, visited)
   assert(type(queryFunc)=="function")
-  assert(orion.IR.isIR(self))
+  assert(darkroom.IR.isIR(self))
 
   if visited[self] == nil then
     -- mark as visited
@@ -520,7 +520,7 @@ end
 
 -- this basically only copies the actual entires of the table,
 -- but doesn't copy children/parents, so 
--- you still have to call orion.ast.new on it
+-- you still have to call darkroom.ast.new on it
 function IRFunctions:shallowcopy()
   local newir = {}
 
@@ -532,16 +532,16 @@ function IRFunctions:shallowcopy()
 end
 
 -- generic IR check code - check stuff that should apply to all IRs (parent and child validity for ex)
-function orion.IR.check(node)
+function darkroom.IR.check(node)
 
   -- check that table wasn't modified
-  assert(type(orion.IR._original[node])=="table")
-  for k,v in pairs(orion.IR._original[node]) do
+  assert(type(darkroom.IR._original[node])=="table")
+  for k,v in pairs(darkroom.IR._original[node]) do
     assert(node[k]==v)
   end
 
   for k,v in pairs(node) do
-    assert(orion.IR._original[node][k]==v)
+    assert(darkroom.IR._original[node][k]==v)
   end
 
   -- check that some necessary metadata is set
@@ -560,30 +560,30 @@ function IRFunctions:inputs()
       local k,v = f(s,var)
       var = k
       if k==nil then return nil,nil end
-      if orion.IR.isIR(v) and getmetatable(self)==getmetatable(v) then return k,v end
+      if darkroom.IR.isIR(v) and getmetatable(self)==getmetatable(v) then return k,v end
     end
   end
 
   return filteredF,s,var
 end
 
-orion.IR._parentsCache=setmetatable({}, {__mode="k"})
-function orion.IR.buildParentCache(root)
-  assert(orion.IR._parentsCache[root]==nil)
-  orion.IR._parentsCache[root]=setmetatable({}, {__mode="k"})
-  orion.IR._parentsCache[root][root]=setmetatable({}, {__mode="k"})
+darkroom.IR._parentsCache=setmetatable({}, {__mode="k"})
+function darkroom.IR.buildParentCache(root)
+  assert(darkroom.IR._parentsCache[root]==nil)
+  darkroom.IR._parentsCache[root]=setmetatable({}, {__mode="k"})
+  darkroom.IR._parentsCache[root][root]=setmetatable({}, {__mode="k"})
 
   local visited={}
   local function build(node)
     if visited[node]==nil then
       for k,child in node:inputs() do
-        if orion.IR._parentsCache[root][child]==nil then
-          orion.IR._parentsCache[root][child]={}
+        if darkroom.IR._parentsCache[root][child]==nil then
+          darkroom.IR._parentsCache[root][child]={}
         end
 
         -- notice that this is a multimap: node can occur
         -- multiple times with different keys
-        table.insert(orion.IR._parentsCache[root][child],setmetatable({node,k},{__mode="v"}))
+        table.insert(darkroom.IR._parentsCache[root][child],setmetatable({node,k},{__mode="v"}))
         build(child)
       end
       visited[node]=1
@@ -597,19 +597,19 @@ end
 -- NOTE: there may be multiple keys per parentNode! A node can hold
 -- the same AST multiple times with different keys.
 function IRFunctions:parents(root)
-  assert(orion.IR.isIR(root))
+  assert(darkroom.IR.isIR(root))
 
-  if orion.IR._parentsCache[root]==nil then
+  if darkroom.IR._parentsCache[root]==nil then
     -- need to build cache
-    orion.IR.buildParentCache(root)
+    darkroom.IR.buildParentCache(root)
   end
 
   -- maybe this node isn't reachable from the root?
-  assert(type(orion.IR._parentsCache[root][self])=="table")
+  assert(type(darkroom.IR._parentsCache[root][self])=="table")
 
   -- fixme: I probably didn't implement this correctly
 
-  local list = orion.IR._parentsCache[root][self]
+  local list = darkroom.IR._parentsCache[root][self]
 
   local function filteredF(s,var)
     assert(type(s)=="table")
@@ -665,19 +665,19 @@ function IRFunctions:maxDepth()
   return trav(self)
 end
 
-orion.IR._original=setmetatable({}, {__mode="k"})
+darkroom.IR._original=setmetatable({}, {__mode="k"})
 
-function orion.IR.new(node)
+function darkroom.IR.new(node)
   assert(getmetatable(node)==nil)
 
-  orion.IR._original[node]=setmetatable({}, {__mode="kv"})
+  darkroom.IR._original[node]=setmetatable({}, {__mode="kv"})
   for k,v in pairs(node) do
-    orion.IR._original[node][k]=v
+    darkroom.IR._original[node][k]=v
   end
 
 end
 
-function orion.IR.isIR(v)
+function darkroom.IR.isIR(v)
   local mt = getmetatable(v)
   if type(mt)~="table" then return false end
   if type(mt.__index)~="table" then return false end
@@ -703,7 +703,7 @@ end
 -- to the CSE algorithm. Various other bits that don't matter are stored off to the side.
 
 function IRFunctions:copyMetadataFrom(otherIR)
-  assert(orion.IR.isIR(otherIR))
+  assert(darkroom.IR.isIR(otherIR))
 
   local baseName = otherIR:baseName()
   if baseName~=nil then self:setName(baseName) end
@@ -714,78 +714,78 @@ function IRFunctions:copyMetadataFrom(otherIR)
   return self
 end
 
-orion.IR._filenames=setmetatable({}, {__mode="k"})
+darkroom.IR._filenames=setmetatable({}, {__mode="k"})
 function IRFunctions:setFilename(n)
   assert(type(n)=="string")
-  if orion.IR._filenames[getmetatable(self)] == nil then orion.IR._filenames[getmetatable(self)]=setmetatable({},{__mode="k"}) end
-  orion.IR._filenames[getmetatable(self)][self] = n
+  if darkroom.IR._filenames[getmetatable(self)] == nil then darkroom.IR._filenames[getmetatable(self)]=setmetatable({},{__mode="k"}) end
+  darkroom.IR._filenames[getmetatable(self)][self] = n
   return self
 end
 
 function IRFunctions:filename()
-  assert(type(orion.IR._filenames[getmetatable(self)])=="table")
+  assert(type(darkroom.IR._filenames[getmetatable(self)])=="table")
 
-  if type(orion.IR._filenames[getmetatable(self)][self])~="string" then
+  if type(darkroom.IR._filenames[getmetatable(self)][self])~="string" then
     print("filename missing",self.kind)
     self:printpretty()
   end
   
-  assert(type(orion.IR._filenames[getmetatable(self)][self])=="string")
-  return orion.IR._filenames[getmetatable(self)][self]
+  assert(type(darkroom.IR._filenames[getmetatable(self)][self])=="string")
+  return darkroom.IR._filenames[getmetatable(self)][self]
 end
 
-orion.IR._linenumbers=setmetatable({}, {__mode="k"})
+darkroom.IR._linenumbers=setmetatable({}, {__mode="k"})
 function IRFunctions:setLinenumber(n)
   assert(type(n)=="number")
-  if orion.IR._linenumbers[getmetatable(self)] == nil then orion.IR._linenumbers[getmetatable(self)]=setmetatable({},{__mode="k"}) end
-  orion.IR._linenumbers[getmetatable(self)][self] = n
+  if darkroom.IR._linenumbers[getmetatable(self)] == nil then darkroom.IR._linenumbers[getmetatable(self)]=setmetatable({},{__mode="k"}) end
+  darkroom.IR._linenumbers[getmetatable(self)][self] = n
   return self
 end
 
 function IRFunctions:linenumber()
-  assert(type(orion.IR._linenumbers[getmetatable(self)])=="table")
+  assert(type(darkroom.IR._linenumbers[getmetatable(self)])=="table")
 
-  if type(orion.IR._linenumbers[getmetatable(self)][self])~="number" then
+  if type(darkroom.IR._linenumbers[getmetatable(self)][self])~="number" then
     print("Line number missing")
     print(debug.traceback())
     self:printpretty()
   end
   
-  assert(type(orion.IR._linenumbers[getmetatable(self)][self])=="number")
-  return orion.IR._linenumbers[getmetatable(self)][self]
+  assert(type(darkroom.IR._linenumbers[getmetatable(self)][self])=="number")
+  return darkroom.IR._linenumbers[getmetatable(self)][self]
 end
 
-orion.IR._offsets=setmetatable({}, {__mode="k"})
+darkroom.IR._offsets=setmetatable({}, {__mode="k"})
 function IRFunctions:setOffset(n)
   assert(type(n)=="number")
-  if orion.IR._offsets[getmetatable(self)] == nil then orion.IR._offsets[getmetatable(self)]=setmetatable({},{__mode="k"}) end
-  orion.IR._offsets[getmetatable(self)][self] = n
+  if darkroom.IR._offsets[getmetatable(self)] == nil then darkroom.IR._offsets[getmetatable(self)]=setmetatable({},{__mode="k"}) end
+  darkroom.IR._offsets[getmetatable(self)][self] = n
   return self
 end
 
 function IRFunctions:offset()
-  assert(type(orion.IR._offsets[getmetatable(self)])=="table")
-  assert(type(orion.IR._offsets[getmetatable(self)][self])=="number")
-  return orion.IR._offsets[getmetatable(self)][self]
+  assert(type(darkroom.IR._offsets[getmetatable(self)])=="table")
+  assert(type(darkroom.IR._offsets[getmetatable(self)][self])=="number")
+  return darkroom.IR._offsets[getmetatable(self)][self]
 end
 
-orion.IR._names=setmetatable({}, {__mode="k"})  -- IR node -> string
-orion.IR._basenames=setmetatable({}, {__mode="k"})  -- IR node -> string. the name we requested. may be duplicated!
-orion.IR._usedNames=setmetatable({}, {__mode="k"})  -- string -> count of number of times it's been used
+darkroom.IR._names=setmetatable({}, {__mode="k"})  -- IR node -> string
+darkroom.IR._basenames=setmetatable({}, {__mode="k"})  -- IR node -> string. the name we requested. may be duplicated!
+darkroom.IR._usedNames=setmetatable({}, {__mode="k"})  -- string -> count of number of times it's been used
 function IRFunctions:name()
-  if orion.IR._names[getmetatable(self)] == nil then orion.IR._names[getmetatable(self)]=setmetatable({},{__mode="k"}) end
-  if orion.IR._basenames[getmetatable(self)] == nil then orion.IR._basenames[getmetatable(self)]=setmetatable({},{__mode="k"}) end
-  if orion.IR._usedNames[getmetatable(self)] == nil then orion.IR._usedNames[getmetatable(self)]=setmetatable({},{__mode="k"}) end
+  if darkroom.IR._names[getmetatable(self)] == nil then darkroom.IR._names[getmetatable(self)]=setmetatable({},{__mode="k"}) end
+  if darkroom.IR._basenames[getmetatable(self)] == nil then darkroom.IR._basenames[getmetatable(self)]=setmetatable({},{__mode="k"}) end
+  if darkroom.IR._usedNames[getmetatable(self)] == nil then darkroom.IR._usedNames[getmetatable(self)]=setmetatable({},{__mode="k"}) end
 
-  if orion.IR._names[getmetatable(self)][self]==nil then
+  if darkroom.IR._names[getmetatable(self)][self]==nil then
     -- we need to generate a new name
     local newname = self:makeNewName()
     self:setName(newname)
   end
 
-  if type(orion.IR._names[getmetatable(self)][self])=="string" then
+  if type(darkroom.IR._names[getmetatable(self)][self])=="string" then
     -- we already assigned this guy a name
-return orion.IR._names[getmetatable(self)][self]
+return darkroom.IR._names[getmetatable(self)][self]
   end
 
   assert(false)
@@ -793,34 +793,34 @@ end
 
 -- may return nil!
 function IRFunctions:baseName()
-  if orion.IR._basenames[getmetatable(self)] == nil then orion.IR._basenames[getmetatable(self)]=setmetatable({},{__mode="k"}) end
+  if darkroom.IR._basenames[getmetatable(self)] == nil then darkroom.IR._basenames[getmetatable(self)]=setmetatable({},{__mode="k"}) end
 
-  return orion.IR._basenames[getmetatable(self)][self]
+  return darkroom.IR._basenames[getmetatable(self)][self]
 end
 
 function IRFunctions:setName(newname)
   assert(type(newname)=="string")
 
-  if orion.IR._names[getmetatable(self)] == nil then orion.IR._names[getmetatable(self)]=setmetatable({},{__mode="k"}) end
-  if orion.IR._basenames[getmetatable(self)] == nil then orion.IR._basenames[getmetatable(self)]=setmetatable({},{__mode="k"}) end
-  if orion.IR._usedNames[getmetatable(self)] == nil then orion.IR._usedNames[getmetatable(self)]=setmetatable({},{__mode="k"}) end
+  if darkroom.IR._names[getmetatable(self)] == nil then darkroom.IR._names[getmetatable(self)]=setmetatable({},{__mode="k"}) end
+  if darkroom.IR._basenames[getmetatable(self)] == nil then darkroom.IR._basenames[getmetatable(self)]=setmetatable({},{__mode="k"}) end
+  if darkroom.IR._usedNames[getmetatable(self)] == nil then darkroom.IR._usedNames[getmetatable(self)]=setmetatable({},{__mode="k"}) end
 
-  orion.IR._basenames[getmetatable(self)][self] = newname
+  darkroom.IR._basenames[getmetatable(self)][self] = newname
 
   -- not used yet. can just return it
-  if orion.IR._usedNames[getmetatable(self)][newname]==nil then
-    orion.IR._usedNames[getmetatable(self)][newname] = 1
-    orion.IR._names[getmetatable(self)][self]=newname
+  if darkroom.IR._usedNames[getmetatable(self)][newname]==nil then
+    darkroom.IR._usedNames[getmetatable(self)][newname] = 1
+    darkroom.IR._names[getmetatable(self)][self]=newname
 return newname
   end
 
   -- need to add some extra junk to the end
-  assert(type(orion.IR._usedNames[getmetatable(self)][newname])=="number")
-  orion.IR._usedNames[getmetatable(self)][newname] = orion.IR._usedNames[getmetatable(self)][newname] + 1
-  newname = newname.."_"..orion.IR._usedNames[getmetatable(self)][newname]
-  assert(orion.IR._usedNames[getmetatable(self)][newname]==nil) -- dno why this would happen
-  orion.IR._usedNames[getmetatable(self)][newname] = 1
-  orion.IR._names[getmetatable(self)][self]=newname
+  assert(type(darkroom.IR._usedNames[getmetatable(self)][newname])=="number")
+  darkroom.IR._usedNames[getmetatable(self)][newname] = darkroom.IR._usedNames[getmetatable(self)][newname] + 1
+  newname = newname.."_"..darkroom.IR._usedNames[getmetatable(self)][newname]
+  assert(darkroom.IR._usedNames[getmetatable(self)][newname]==nil) -- dno why this would happen
+  darkroom.IR._usedNames[getmetatable(self)][newname] = 1
+  darkroom.IR._names[getmetatable(self)][self]=newname
 
   return newname
 

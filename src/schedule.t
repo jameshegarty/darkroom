@@ -5,7 +5,7 @@
 --
 -- It returns a map from node -> shift
 function schedule(graph)
-  assert(orion.kernelGraph.isKernelGraph(graph))
+  assert(darkroom.kernelGraph.isKernelGraph(graph))
 
   local shifts = {}
   graph:S("*"):traverse(
@@ -24,15 +24,15 @@ end
 
 local function synthRel(rel,t)
   if type(t)=="number" and type(rel)=="number" then
-    return orion.ast.new({kind="value",value=rel+t})
-  elseif type(rel)=="number" and orion.ast.isAST(t) then
-    local v = orion.ast.new({kind="value",value=rel}):copyMetadataFrom(t)
-    return orion.ast.new({kind="binop", lhs=t, rhs=v, op="+"}):copyMetadataFrom(t)
-  elseif orion.ast.isAST(rel) and type(t)=="number" then
-    local v = orion.ast.new({kind="value",value=t}):copyMetadataFrom(rel)
-    return orion.ast.new({kind="binop", lhs=rel, rhs=v, op="+"}):copyMetadataFrom(rel)
-  elseif orion.ast.isAST(rel) and orion.ast.isAST(t) then
-    return orion.ast.new({kind="binop", lhs=rel, rhs=t, op="+"}):copyMetadataFrom(rel)
+    return darkroom.ast.new({kind="value",value=rel+t})
+  elseif type(rel)=="number" and darkroom.ast.isAST(t) then
+    local v = darkroom.ast.new({kind="value",value=rel}):copyMetadataFrom(t)
+    return darkroom.ast.new({kind="binop", lhs=t, rhs=v, op="+"}):copyMetadataFrom(t)
+  elseif darkroom.ast.isAST(rel) and type(t)=="number" then
+    local v = darkroom.ast.new({kind="value",value=t}):copyMetadataFrom(rel)
+    return darkroom.ast.new({kind="binop", lhs=rel, rhs=v, op="+"}):copyMetadataFrom(rel)
+  elseif darkroom.ast.isAST(rel) and darkroom.ast.isAST(t) then
+    return darkroom.ast.new({kind="binop", lhs=rel, rhs=t, op="+"}):copyMetadataFrom(rel)
   else
     print(type(rel),type(t))
     assert(false)
@@ -40,7 +40,7 @@ local function synthRel(rel,t)
 end
 
 function shift(graph, shifts)
-  assert(orion.kernelGraph.isKernelGraph(graph))
+  assert(darkroom.kernelGraph.isKernelGraph(graph))
 
   local oldToNewRemap = {}
   local newToOldRemap = {}
@@ -64,20 +64,20 @@ function shift(graph, shifts)
                   r.relY = synthRel(r.relY, n.translate2):optimize()
 
                   if type(nn.from)=="table" then r.from = oldToNewRemap[nn.from]; assert(r.from~=nil) end
-                  return orion.typedAST.new(r):copyMetadataFrom(nn)
+                  return darkroom.typedAST.new(r):copyMetadataFrom(nn)
                 elseif nn.kind=="position" then
 
                   local res = {kind="binop", lhs=nn, type = nn.type, op="+"}
 
                   if nn.coord=="x" then
-                    res.rhs = orion.typedAST._toTypedAST(n.translate1)
+                    res.rhs = darkroom.typedAST._toTypedAST(n.translate1)
                   elseif nn.coord=="y" then
-                    res.rhs = orion.typedAST._toTypedAST(n.translate2)
+                    res.rhs = darkroom.typedAST._toTypedAST(n.translate2)
                   else
                     assert(false)
                   end
 
-                  return orion.typedAST.new(res):copyMetadataFrom(nn)
+                  return darkroom.typedAST.new(res):copyMetadataFrom(nn)
                 else
                   assert(false)
                 end
@@ -92,18 +92,18 @@ function shift(graph, shifts)
                 local r = nn:shallowcopy()
                 r.relY = synthRel(r.relY, shifts[newToOldRemap[nn.from]]-shifts[orig]):optimize()
                 if type(nn.from)=="table" then r.from = oldToNewRemap[nn.from]; assert(r.from~=nil) end
-                return orion.typedAST.new(r):copyMetadataFrom(nn)
+                return darkroom.typedAST.new(r):copyMetadataFrom(nn)
               end
             elseif nn.kind=="crop" then
               local r = nn:shallowcopy()
               r.shiftY = r.shiftY + shifts[orig]
-              return orion.typedAST.new(r):copyMetadataFrom(nn)
+              return darkroom.typedAST.new(r):copyMetadataFrom(nn)
             else
               assert(false)
             end
           end)
 
-        local res = orion.kernelGraph.new(newKernelGraphNode):copyMetadataFrom(kernelGraphNode)
+        local res = darkroom.kernelGraph.new(newKernelGraphNode):copyMetadataFrom(kernelGraphNode)
         oldToNewRemap[orig] = res
         oldToNewRemap[res] = res -- remember, we might touch nodes multiple times
         newToOldRemap[res] = orig

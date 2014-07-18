@@ -1,60 +1,60 @@
-orion._inputCount = 0
+darkroom._inputCount = 0
 
-function orion.input( imtype )
-  imtype = orion.type.fromTerraType(imtype)
+function darkroom.input( imtype )
+  imtype = darkroom.type.fromTerraType(imtype)
 
-  assert(orion.type.isType(imtype))
+  assert(darkroom.type.isType(imtype))
 
-  local res  = orion.ast.new({kind="load", type = imtype, relX=0, relY=0, from=orion._inputCount} ):setLinenumber(0):setOffset(0):setFilename("null_special")
-  res:setName("cropSpecial"..(orion._inputCount).."Node")
-  orion._inputCount = orion._inputCount + 1
+  local res  = darkroom.ast.new({kind="load", type = imtype, relX=0, relY=0, from=darkroom._inputCount} ):setLinenumber(0):setOffset(0):setFilename("null_special")
+  res:setName("cropSpecial"..(darkroom._inputCount).."Node")
+  darkroom._inputCount = darkroom._inputCount + 1
 
-  res = orion.ast.new({kind="crop", shiftY = 0, expr=res}):setLinenumber(0):setOffset(0):setFilename("null_special")
+  res = darkroom.ast.new({kind="crop", shiftY = 0, expr=res}):setLinenumber(0):setOffset(0):setFilename("null_special")
 
   return res
 end
 
-orion._tapcount = 0
-function orion.tap(ty, name)
-  ty = orion.type.fromTerraType(ty)
+darkroom._tapcount = 0
+function darkroom.tap(ty, name)
+  ty = darkroom.type.fromTerraType(ty)
 
-  assert(orion.type.isType(ty))
-  assert(orion.type.isArray(ty)==false)
+  assert(darkroom.type.isType(ty))
+  assert(darkroom.type.isArray(ty)==false)
 
-  orion._tapcount = orion._tapcount+1
-  return orion.ast.new({kind="tap", type=ty, tapname = name, id=orion._tapcount-1}):setLinenumber(0):setOffset(0):setFilename("null_tap")
+  darkroom._tapcount = darkroom._tapcount+1
+  return darkroom.ast.new({kind="tap", type=ty, tapname = name, id=darkroom._tapcount-1}):setLinenumber(0):setOffset(0):setFilename("null_tap")
 end
 
-function orion.tapLUT(ty, count, name)
-  ty = orion.type.fromTerraType(ty)
+function darkroom.tapLUT(ty, count, name)
+  ty = darkroom.type.fromTerraType(ty)
 
-  assert(orion.type.isArray(ty)==false)
+  assert(darkroom.type.isArray(ty)==false)
   assert(type(count)=="number")
   assert(type(name)=="string")
 
-  orion._tapcount = orion._tapcount+1
-  return orion.ast.new({kind="tap", type=orion.type.array(ty,count), count=count, tapname=name, id=orion._tapcount-1}):setLinenumber(0):setOffset(0):setFilename("null_tapLUT")
+  darkroom._tapcount = darkroom._tapcount+1
+  return darkroom.ast.new({kind="tap", type=darkroom.type.array(ty,count), count=count, tapname=name, id=darkroom._tapcount-1}):setLinenumber(0):setOffset(0):setFilename("null_tapLUT")
 end
 
-function orion.frontEnd(ast, options)
+function darkroom.frontEnd(ast, options)
   assert(type(options)=="table")
 
   if options.callbackAST~=nil then options.callbackAST(ast) end
 
-  local typedAST = orion.typedAST.astToTypedAST( ast, options )
+  local typedAST = darkroom.typedAST.astToTypedAST( ast, options )
   if options.callbackTypedAST~=nil then options.callbackTypedAST(typedAST) end
 
   -- optimize
-  local optimizedTypedAST = orion.optimize.optimize(typedAST, options)
+  local optimizedTypedAST = darkroom.optimize.optimize(typedAST, options)
 
   -- determine the set of nodes to make scheduling decisions on
-  local kernelGraph = orion.kernelGraph.typedASTToKernelGraph(optimizedTypedAST, options)
+  local kernelGraph = darkroom.kernelGraph.typedASTToKernelGraph(optimizedTypedAST, options)
   if options.callbackKernelGraph~=nil then options.callbackKernelGraph(kernelGraph) end
 
   return kernelGraph
 end
 
-function orion.backEnd( kernelGraph, inputImages, taps, options )
+function darkroom.backEnd( kernelGraph, inputImages, taps, options )
 
   assert(type(options)=="table")
   assert(type(inputImages)=="table")
@@ -66,7 +66,7 @@ function orion.backEnd( kernelGraph, inputImages, taps, options )
   
   if options.verbose then print("start compile") end
   
-  local res = orion.terracompiler.compile( 
+  local res = darkroom.terracompiler.compile( 
     kernelGraph, 
     inputImages, 
     taps,
@@ -78,9 +78,9 @@ function orion.backEnd( kernelGraph, inputImages, taps, options )
     print("mem",collectgarbage("count"))
   end
   
-  local start = orion.currentTimeInSeconds()
+  local start = darkroom.currentTimeInSeconds()
   res:compile() -- we may want to do this later (out of this scope), so that more stuff can be GCed?
-  local endt = orion.currentTimeInSeconds()
+  local endt = darkroom.currentTimeInSeconds()
   
   if options.printstage or options.verbose then
     print("Terra compile done, compile time",(endt-start))
@@ -89,16 +89,16 @@ function orion.backEnd( kernelGraph, inputImages, taps, options )
   return res
 end
 
-function orion.compile(inputImageFunctions, outputImageFunctions, tapInputs, inputWidth, inputHeight, options)
+function darkroom.compile(inputImageFunctions, outputImageFunctions, tapInputs, inputWidth, inputHeight, options)
 
   local function checkinput(tab,arg,argtype,minsize)
     if type(tab)~="table" or #tab<minsize then
-      orion.error("Error, "..arg.." orion.compile must be an array of "..argtype)
+      darkroom.error("Error, "..arg.." darkroom.compile must be an array of "..argtype)
     end
 
     for k,v in ipairs(tab) do
-      if tab[k]==nil or orion.ast.isAST(tab[k])==false then
-        orion.error("Error, "..arg.." orion.compile must be an array of "..argtype)
+      if tab[k]==nil or darkroom.ast.isAST(tab[k])==false then
+        darkroom.error("Error, "..arg.." darkroom.compile must be an array of "..argtype)
       end  
     end
   end
@@ -119,7 +119,7 @@ function orion.compile(inputImageFunctions, outputImageFunctions, tapInputs, inp
     if options.verbose ~= nil then assert(type(options.verbose)=="boolean") else options.verbose = false; end
     if options.printruntime ~= nil then assert(type(options.printruntime)=="boolean") else options.printruntime = false; end
     if options.looptimes ~= nil then assert(type(options.looptimes)=="number") else options.looptimes = 1; end
-    if options.printasm ~=nil then assert(type(options.printasm)=="boolean"); orion.printasm = options.printasm; end
+    if options.printasm ~=nil then assert(type(options.printasm)=="boolean"); darkroom.printasm = options.printasm; end
     if options.V == nil then options.V=4 end
     if options.cores == nil then options.cores=1 else assert(type(options.cores)=="number") end
     if options.stripcount == nil then options.stripcount=options.cores end
@@ -142,8 +142,8 @@ function orion.compile(inputImageFunctions, outputImageFunctions, tapInputs, inp
   for k,v in ipairs(outputImageFunctions) do
     newnode["expr"..k] = v
   end
-  local ast = orion.ast.new(newnode):setLinenumber(0):setOffset(0):setFilename("null_outputs")
+  local ast = darkroom.ast.new(newnode):setLinenumber(0):setOffset(0):setFilename("null_outputs")
 
-  local kernelGraph = orion.frontEnd( ast, options )
-  return orion.backEnd( kernelGraph, inputImageFunctions, tapInputs, options)
+  local kernelGraph = darkroom.frontEnd( ast, options )
+  return darkroom.backEnd( kernelGraph, inputImageFunctions, tapInputs, options)
 end

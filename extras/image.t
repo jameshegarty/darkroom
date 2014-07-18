@@ -337,61 +337,6 @@ int saveImageUC(
   return 0;
 }
 
-int saveBMPAutoLevels(const char *filename, int width, int height, int stride, int channels, float *data){
-  // convert float to unsigned char
-  assert(stride>=width);
-
-  unsigned char *temp = malloc(sizeof(unsigned char)*stride*height*channels);
-
-  float max = -1000000.f;
-  float min = 1000000.f;
-
-  float *idata = data;
-
-  for( int y=0; y<height; y++ ){
-    for( int x=0; x<width*channels; x++){
-      if(*idata<min){min=*idata;}
-      if(*idata>max){max=*idata;}
-      idata++;
-    }
-    idata = idata + (stride-width)*channels;
-  }
-
-  printf("w %d stride %d c %d\n",width,stride,channels);
-
-  printf("Auto Levels Max: %f\n", max);
-  printf("Auto Levels Min: %f\n", min);
-
-  idata = data;
-  unsigned char *itemp = temp;
-  for( int y=0; y<height; y++ ){
-    for( int x=0; x<width*channels; x++ ){
-      *itemp = (unsigned char)( ((*idata-min)/(max-min)) * 255.f );
-      idata++;
-      itemp++;
-    }
-    idata = idata + (stride-width)*channels;
-    itemp = itemp + (stride-width)*channels;
-  }
-
-
-  int res = saveBMP_UC(filename,width,height,stride,channels,temp);
-  free(temp);
-
-  return res;
-}
-
-int saveImageAutoLevels(const char *filename, int width, int height, int stride, int channels, float *data){
-  const char *ext = filename + strlen(filename) - 3;
-
-  if(strcmp(ext,"bmp")==0){
-    return saveBMPAutoLevels( filename, width, height, stride, channels, data );
-  }
-
-  printf("Couldn't save Auto Levels, bad ext %s\n", ext);
-  return 0;
-}
-
 #define TAG_FLOAT 202021.25  // check for this when READING the file
 #define TAG_STRING "PIEH"    // use this when WRITING the file
 
@@ -678,11 +623,11 @@ unsigned char* readRawImg(char* imgName,
 
 ]]
 
-orion.util={}
 
-terra orion.util.endian(x : uint32) return x; end
 
-terra orion.util.saveImageUC(
+local terra endian(x : uint32) return x; end
+
+local terra saveImageUC(
   filename : &int8, 
   width : int, 
   height : int,
@@ -693,7 +638,7 @@ terra orion.util.saveImageUC(
   return chack.saveImageUC( filename, width, height, stride, channels, data )
 end
 
-terra orion.util.saveImageF(
+local terra saveImageF(
   filename : &int8, 
   width : int, 
   height : int, 
@@ -705,7 +650,7 @@ terra orion.util.saveImageF(
   return chack.saveImageF( filename, width, height, stride, channels, data )
 end
 
-terra orion.util.saveImageI(
+local terra saveImageI(
   filename : &int8, 
   width : int, 
   height : int, 
@@ -717,19 +662,7 @@ terra orion.util.saveImageI(
   return chack.saveImageI( filename, width, height, stride, channels, data )
 end
 
-terra orion.util.saveImageAutoLevels(
-  filename : &int8, 
-  width : int, 
-  height : int, 
-  stride : int,
-  channels : int,
-  data : &float)
-
-  return chack.saveImageAutoLevels( filename, width, height, stride, channels, data )
-end
-
-
-terra orion.util.loadBMP_UC(filename : &int8, width : &int, height : &int, channels : &int) : &uint8
+local terra loadBMP_UC(filename : &int8, width : &int, height : &int, channels : &int) : &uint8
 
   var currentCurPos : uint = 0
 
@@ -756,7 +689,7 @@ terra orion.util.loadBMP_UC(filename : &int8, width : &int, height : &int, chann
   end
   currentCurPos = currentCurPos+sizeof(uint32);
 
-  totalsize=orion.util.endian(totalsize);
+  totalsize=endian(totalsize);
 
   -- seek through the bmp header, up to the width/height:
   cstdio.fseek(file, 4, chack.seek_cur());
@@ -769,7 +702,7 @@ terra orion.util.loadBMP_UC(filename : &int8, width : &int, height : &int, chann
     return nil;
   end
   currentCurPos = currentCurPos+sizeof(uint32);
-  headersize=orion.util.endian(headersize);
+  headersize=endian(headersize);
   
   cstdio.fseek(file, 4, chack.seek_cur());
   currentCurPos = currentCurPos+4;
@@ -781,7 +714,7 @@ terra orion.util.loadBMP_UC(filename : &int8, width : &int, height : &int, chann
   end
 
   currentCurPos = currentCurPos+4;
-  @width = orion.util.endian(@width);
+  @width = endian(@width);
   
   -- read the width
   if (i ~= 1) then
@@ -797,7 +730,7 @@ terra orion.util.loadBMP_UC(filename : &int8, width : &int, height : &int, chann
   end
 
   currentCurPos = currentCurPos+4;
-  @height = orion.util.endian(@height);
+  @height = endian(@height);
     
   if (i ~= 1) then
     cstdio.printf("Error reading height");
@@ -813,7 +746,7 @@ terra orion.util.loadBMP_UC(filename : &int8, width : &int, height : &int, chann
   end
 
   currentCurPos = currentCurPos+2;
-  planes=orion.util.endian(planes);
+  planes=endian(planes);
   
   if (i ~= 1) then
     cstdio.printf("Error reading planes");
@@ -833,7 +766,7 @@ terra orion.util.loadBMP_UC(filename : &int8, width : &int, height : &int, chann
     return nil;
   end
   currentCurPos = currentCurPos+2;
-  bpp=orion.util.endian(bpp);
+  bpp=endian(bpp);
 
   -- read compression
   var compression : uint32 =0;
@@ -844,7 +777,7 @@ terra orion.util.loadBMP_UC(filename : &int8, width : &int, height : &int, chann
     return nil;
   end
   currentCurPos = currentCurPos+sizeof(uint32);
-  compression=orion.util.endian(compression);
+  compression=endian(compression);
   
   -- read csize
   var csize : uint32=0;
@@ -855,7 +788,7 @@ terra orion.util.loadBMP_UC(filename : &int8, width : &int, height : &int, chann
     return nil;
   end
   currentCurPos = currentCurPos+sizeof(uint32);
-  csize=orion.util.endian(csize);
+  csize=endian(csize);
     
   if (bpp == 24) then
     @channels = 3;
@@ -943,7 +876,7 @@ terra orion.util.loadBMP_UC(filename : &int8, width : &int, height : &int, chann
   return data;
 end
 
-terra orion.util.saveImageJJM(filename : &int8, width : int, height : int, stride : int, channels: int, bits:int, floating:bool, isSigned:bool,data :&opaque) : bool
+local terra saveImageJJM(filename : &int8, width : int, height : int, stride : int, channels: int, bits:int, floating:bool, isSigned:bool,data :&opaque) : bool
   var ext : &int8 = filename + (cstring.strlen(filename) - 3)
   if cstring.strcmp(ext,"jjm")==0 then
     cstdio.printf("WRITE JJM %s\n",filename)
@@ -979,7 +912,7 @@ terra orion.util.saveImageJJM(filename : &int8, width : int, height : int, strid
   return false
 end
 
-terra orion.util.loadImageJJM(filename : &int8, width : &int, height : &int, channels: &int, bits:&int) : &opaque
+local terra loadImageJJM(filename : &int8, width : &int, height : &int, channels: &int, bits:&int) : &opaque
   var ext : &int8 = filename + (cstring.strlen(filename) - 3)
   if cstring.strcmp(ext,"jjm")==0 then
     var file = cstdio.fopen(filename, "rb")
@@ -996,30 +929,30 @@ terra orion.util.loadImageJJM(filename : &int8, width : &int, height : &int, cha
   return nil
 end
 
-terra orion.util.loadImageUC(filename : &int8, width : &int, height : &int, channels :&int, bits : &int)
+local terra loadImageUC(filename : &int8, width : &int, height : &int, channels :&int, bits : &int)
   var ext : &int8 = filename + (cstring.strlen(filename) - 3)
 
   if cstring.strcmp(ext,"bmp")==0 then
     @bits = 8
-    return orion.util.loadBMP_UC(filename,width,height,channels);
+    return loadBMP_UC(filename,width,height,channels);
   elseif (cstring.strcmp(ext,"ppm")==0) or cstring.strcmp(ext,"pgm")==0 then
     @bits = 8
     return chack.loadPPM_UC(filename,width,height,channels,bits);
   --elseif(cstring.strcmp(ext,"jjm")==0) then
   --  return chack.loadJJM_UC(filename,width,height,channels,bits);
   elseif(cstring.strcmp(ext,"jjm")==0) then
-    return [&uint8](orion.util.loadImageJJM(filename,width,height,channels,bits))
+    return [&uint8](loadImageJJM(filename,width,height,channels,bits))
   end
 
   cstdio.printf("unknown filetype %s\n",filename);
   return nil;
 end
 
-terra orion.util.loadRaw(filename : &int8, width : int, height : int, bits : int, header:int, flipEndian: bool, bytesOut: &int)
+local terra loadRaw(filename : &int8, width : int, height : int, bits : int, header:int, flipEndian: bool, bytesOut: &int)
   return chack.readRawImg(filename,width,height,bits,header,uint8(flipEndian),bytesOut)
 end
 
-terra orion.util.saveRaw(
+terra saveRaw(
   filename : &int8, 
   width : int, 
   height : int, 
@@ -1092,7 +1025,7 @@ terra Image:initWithFile(filename : &int8)
   var channels : int
   var bits : int
 
-  var data : &opaque = orion.util.loadImageUC(filename,&width,&height,&channels,&bits)
+  var data : &opaque = loadImageUC(filename,&width,&height,&channels,&bits)
 
   self:init(width,height,width,channels,bits,false,false,false,data,data)
 end
@@ -1100,7 +1033,7 @@ end
 terra Image:initWithRaw(filename : &int8, w:int, h:int, bits:int)
   -- loadRaw always returns an int32
   var outBytes : int
-  var data : &opaque = orion.util.loadRaw(filename,w,h,bits,0,false,&outBytes)
+  var data : &opaque = loadRaw(filename,w,h,bits,0,false,&outBytes)
 
   self:init(w,h,w,1,outBytes*8,false,false,false,data,data)
 end
@@ -1110,7 +1043,7 @@ end
 terra Image:initWithRaw(filename : &int8, w:int, h:int, bits:int, header : int, flipEndian : bool)
   -- loadRaw always returns an int32
   var bytesOut : int
-  var data : &opaque = orion.util.loadRaw(filename,w,h,bits, header, flipEndian,&bytesOut)
+  var data : &opaque = loadRaw(filename,w,h,bits, header, flipEndian,&bytesOut)
 
   self:init(w,h,w,1,bytesOut*8,false,false,false,data,data)
 end
@@ -1164,10 +1097,10 @@ terra Image:save(filename : &int8)
     if verbose then cstdio.printf("Assuming uint8\n") end
     if cstring.strcmp(ext,"jjm")==0 then
        var us = self:deepcopyUnstride()
-       orion.util.saveImageJJM( filename, self.width, self.height, self.width, self.channels, self.bits, self.floating, self.isSigned, us.data ) -- self.data )
+       saveImageJJM( filename, self.width, self.height, self.width, self.channels, self.bits, self.floating, self.isSigned, us.data ) -- self.data )
        us:free()
     else 
-       orion.util.saveImageUC(
+       saveImageUC(
 	  filename,
 	  self.width,
 	  self.height,
@@ -1176,17 +1109,13 @@ terra Image:save(filename : &int8)
 	  [&uint8](self.data))
     end 
     return true
-  elseif self.bits==32 and self.channels==1 and self.floating and self.SOA==false then
-    if verbose then cstdio.printf("saving a 32 bit 1 channel float\n") end
-    orion.util.saveImageAutoLevels( filename, self.width, self.height, self.stride, 1, [&float](self.data) )
-    return true
   elseif self.bits==32 and self.channels==1 and self.floating==false and cstring.strcmp(ext,"jjm")>0 and self.SOA==false then
     if verbose then cstdio.printf("saving a 32 bit 1 channel float\n") end
-    orion.util.saveImageI( filename, self.width, self.height, self.stride, 1, [&int](self.data) )
+    saveImageI( filename, self.width, self.height, self.stride, 1, [&int](self.data) )
     return true
   elseif self.bits==32 and (self.channels==2 or self.channels==3) and self.floating and self.SOA==false then
     --cstdio.printf("Assuming that a 32 bit 3 channel image is float!!!!!!!!!\n")
-    orion.util.saveImageF( filename, self.width, self.height, self.stride, self.channels, [&float](self.data) )
+    saveImageF( filename, self.width, self.height, self.stride, self.channels, [&float](self.data) )
     return true
   end
 
@@ -1195,7 +1124,7 @@ terra Image:save(filename : &int8)
   elseif cstring.strcmp(ext,"jjm")==0 then
 --    cstdio.printf("Error saving, unimplemented int type bits:%d channels:%d\n",self.bits,self.channels)
     var us =self:deepcopyUnstride()
-     orion.util.saveImageJJM( filename, self.width, self.height, self.width, self.channels, self.bits, self.floating, self.isSigned, us.data ) -- self.data )
+     saveImageJJM( filename, self.width, self.height, self.width, self.channels, self.bits, self.floating, self.isSigned, us.data ) -- self.data )
      us:free()
   else
     cstdio.printf("Error saving, unimplemented type float:%d signed:%d bits:%d channels:%d SOA:%d\n",self.floating,self.isSigned,self.bits,self.channels,self.SOA)
@@ -1210,7 +1139,7 @@ terra Image:saveRaw(filename : &int8, bits:int)
   orionAssert(self.bits == 32, "saveRaw only works on 32 bit images")
   orionAssert(self.floating == false, "saveRaw only works on int")
 
-  orion.util.saveRaw(
+  saveRaw(
     filename, 
     self.width, 
     self.height, 

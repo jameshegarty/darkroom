@@ -2,7 +2,7 @@ kernelGraphFunctions={}
 setmetatable(kernelGraphFunctions,{__index=IRFunctions})
 kernelGraphMT={__index=kernelGraphFunctions, 
   __newindex = function(table, key, value)
-                    orion.error("Attempt to modify ast node")
+                    darkroom.error("Attempt to modify ast node")
                   end
 }
 
@@ -13,11 +13,11 @@ kernelGraphMT={__index=kernelGraphFunctions,
 -- for inputs, kernel will be a number (the position of the input in the argument list), and children will be nil
 
 
-orion.kernelGraph = {}
+darkroom.kernelGraph = {}
 
 function kernelGraphFunctions:init()
   setmetatable(self,nil)
-  orion.kernelGraph.new(self)
+  darkroom.kernelGraph.new(self)
 end
 
 function kernelGraphFunctions:irType()
@@ -51,8 +51,8 @@ function kernelGraphFunctions:bufferSize(root)
   return bufferSize
 end
 
-function orion.kernelGraph.typedASTToKernelGraph(typedAST, options)
-  assert(orion.typedAST.isTypedAST(typedAST))
+function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
+  assert(darkroom.typedAST.isTypedAST(typedAST))
   assert(type(options)=="table")
 
   if options.verbose or options.printstage then 
@@ -69,7 +69,7 @@ function orion.kernelGraph.typedASTToKernelGraph(typedAST, options)
   local function multipleTransforms(node) 
     local transformCount = 0
     for v,k in node:parents(typedAST) do 
-      if v.kind=="transformBaked" and k=="expr" then transformCount = transformCount+orion.typedAST.transformArea(v.translate1,v.translate2):area() end
+      if v.kind=="transformBaked" and k=="expr" then transformCount = transformCount+darkroom.typedAST.transformArea(v.translate1,v.translate2):area() end
       if v.kind=="gather" and k=="input" then return true end end
     return transformCount > 1
   end
@@ -106,7 +106,7 @@ function orion.kernelGraph.typedASTToKernelGraph(typedAST, options)
           newnode["child"..childCount] = child
           childCount = childCount+1
           
-          local res = orion.typedAST.new({kind="load",from=child,type=n.type,relX=0,relY=0}):copyMetadataFrom(n)
+          local res = darkroom.typedAST.new({kind="load",from=child,type=n.type,relX=0,relY=0}):copyMetadataFrom(n)
           return res
         end)
       
@@ -117,7 +117,7 @@ function orion.kernelGraph.typedASTToKernelGraph(typedAST, options)
       end
 
       origKernel[kernel] = node
-      return orion.kernelGraph.new(newnode):copyMetadataFrom(node)
+      return darkroom.kernelGraph.new(newnode):copyMetadataFrom(node)
     end)
 
   -- our algorithm returns a list of nodes
@@ -132,15 +132,15 @@ function orion.kernelGraph.typedASTToKernelGraph(typedAST, options)
   return kernelGraph
 end
 
-function orion.kernelGraph.isKernelGraph(ast) return getmetatable(ast)==kernelGraphMT end
+function darkroom.kernelGraph.isKernelGraph(ast) return getmetatable(ast)==kernelGraphMT end
 
-function orion.kernelGraph.new(tab)
+function darkroom.kernelGraph.new(tab)
   assert(type(tab)=="table")
-  orion.IR.new(tab)
+  darkroom.IR.new(tab)
   return setmetatable(tab,kernelGraphMT)
 end
 
 -- collect all the output images, and apply fn to them as a map, and return result
-function orion.kernelGraph.outputImageMap(kernelGraph, fn)
+function darkroom.kernelGraph.outputImageMap(kernelGraph, fn)
   return {}
 end

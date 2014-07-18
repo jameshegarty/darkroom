@@ -1,16 +1,16 @@
-orion.optimize={}
+darkroom.optimize={}
 
 -- I don't trust these optimizations, so make sure we print out exactly what we're doing
-orion.optimize.verbose = true
+darkroom.optimize.verbose = true
 
 -- lua doesn't iterate over keys in a consistant order
-orion.optimize._keyOrderCache = {}
-function orion.optimize.keyOrder(ast)
+darkroom.optimize._keyOrderCache = {}
+function darkroom.optimize.keyOrder(ast)
   assert(type(ast.kind)=="string")
 
   local mt = getmetatable(ast)
-  if orion.optimize._keyOrderCache[mt]==nil then
-    orion.optimize._keyOrderCache[mt] = setmetatable({}, {__mode="k"})
+  if darkroom.optimize._keyOrderCache[mt]==nil then
+    darkroom.optimize._keyOrderCache[mt] = setmetatable({}, {__mode="k"})
   end
 
   local aCnt = 0
@@ -18,26 +18,26 @@ function orion.optimize.keyOrder(ast)
     aCnt = aCnt+1
   end
 
-  if orion.optimize._keyOrderCache[mt][ast.kind]==nil then
-    orion.optimize._keyOrderCache[mt][ast.kind]={}
+  if darkroom.optimize._keyOrderCache[mt][ast.kind]==nil then
+    darkroom.optimize._keyOrderCache[mt][ast.kind]={}
   end
 
-  if orion.optimize._keyOrderCache[mt][ast.kind][aCnt] == nil then
-    orion.optimize._keyOrderCache[mt][ast.kind][aCnt] = {}
+  if darkroom.optimize._keyOrderCache[mt][ast.kind][aCnt] == nil then
+    darkroom.optimize._keyOrderCache[mt][ast.kind][aCnt] = {}
 
     for k,_ in pairs(ast) do
-      table.insert(orion.optimize._keyOrderCache[mt][ast.kind][aCnt],k)
+      table.insert(darkroom.optimize._keyOrderCache[mt][ast.kind][aCnt],k)
     end
   end
 
-  return orion.optimize._keyOrderCache[mt][ast.kind][aCnt]
+  return darkroom.optimize._keyOrderCache[mt][ast.kind][aCnt]
 end
 
-function orion.optimize.CSEHash(ast)
+function darkroom.optimize.CSEHash(ast)
 
   local hash = ""
   
-  local keyOrder = orion.optimize.keyOrder(ast)
+  local keyOrder = darkroom.optimize.keyOrder(ast)
 
   for _,k in ipairs(keyOrder) do
 
@@ -55,16 +55,16 @@ function orion.optimize.CSEHash(ast)
   return hash
 end
 
-function orion.optimize.CSE(inast, hashRepo)
+function darkroom.optimize.CSE(inast, hashRepo)
   assert(type(hashRepo)=="table")
 
-  if orion.verbose or orion.printstage then 
+  if darkroom.verbose or darkroom.printstage then 
     print("run CSE") 
     print(debug.traceback())
   end
 
   local outast = inast:S("*"):process(function(ast)
-    local hash = orion.optimize.CSEHash(ast)
+    local hash = darkroom.optimize.CSEHash(ast)
     --print("hash",hash)
 
     if hashRepo[hash]~=nil then
@@ -83,16 +83,16 @@ function orion.optimize.CSE(inast, hashRepo)
   return outast
 end
 
-function orion.optimize.optimizeMath(ast)
+function darkroom.optimize.optimizeMath(ast)
 
   -- remove identity ops. ie x+0, x*1
   ast = ast:S("binop"):process(function(ast)
-    local lhs = orion.optimize.constantFoldCasts(ast.lhs)
-    local rhs = orion.optimize.constantFoldCasts(ast.rhs)
+    local lhs = darkroom.optimize.constantFoldCasts(ast.lhs)
+    local rhs = darkroom.optimize.constantFoldCasts(ast.rhs)
 
-    if ast.op=="+" and lhs.kind=="value" and orion.optimize.isZero(lhs.value) then
+    if ast.op=="+" and lhs.kind=="value" and darkroom.optimize.isZero(lhs.value) then
       return ast.rhs
-    elseif ast.op=="+" and rhs.kind=="value" and orion.optimize.isZero(rhs.value) then
+    elseif ast.op=="+" and rhs.kind=="value" and darkroom.optimize.isZero(rhs.value) then
       return ast.lhs
     end
 
@@ -112,10 +112,10 @@ function orion.optimize.optimizeMath(ast)
        ast.lhs.kind=="binop" and 
        ast.lhs.op=="+" then
       print("DISTRIBUTE")
-      local lhsdivop = orion.ast.binop("/",ast.lhs.lhs,ast.rhs)
-      local rhsdivop = orion.ast.binop("/",ast.lhs.rhs,ast.rhs)
-      local resast=orion.ast.binop("+",lhsdivop,rhsdivop)
-      return orion._toTypedAST(resast)
+      local lhsdivop = darkroom.ast.binop("/",ast.lhs.lhs,ast.rhs)
+      local rhsdivop = darkroom.ast.binop("/",ast.lhs.rhs,ast.rhs)
+      local resast=darkroom.ast.binop("+",lhsdivop,rhsdivop)
+      return darkroom._toTypedAST(resast)
     end
     return ast
   end)
@@ -123,7 +123,7 @@ function orion.optimize.optimizeMath(ast)
   return ast	 
 end
 
-function orion.optimize.performOp(op, lhs, rhs)
+function darkroom.optimize.performOp(op, lhs, rhs)
   if op=="+" then
     return lhs+rhs
   elseif op=="/" then
@@ -145,18 +145,18 @@ function orion.optimize.performOp(op, lhs, rhs)
   assert(false)
 end
 
-function orion.optimize.constantFold(ast)
+function darkroom.optimize.constantFold(ast)
 
   ast = ast:S("binop"):process(function(ast)
     if ast.lhs.kind=="value" and ast.rhs.kind=="value" then
-      local outval = orion.optimize.performOp(ast.op, ast.lhs.value, ast.rhs.value)
-      if orion.optimize.verbose then
+      local outval = darkroom.optimize.performOp(ast.op, ast.lhs.value, ast.rhs.value)
+      if darkroom.optimize.verbose then
         print("Constant fold: "..ast.lhs.value.." "..ast.op.." "..ast.rhs.value,outval)
       end
 
---      return orion.ast.value(outval, orion.type.valueToType(outval))
+--      return darkroom.ast.value(outval, darkroom.type.valueToType(outval))
       local res = {kind="value", value=outval, type=ast.type}
-      return orion.internalIR.new(res):copyMetadataFrom(ast)
+      return darkroom.internalIR.new(res):copyMetadataFrom(ast)
     end
 
     return ast
@@ -165,19 +165,19 @@ function orion.optimize.constantFold(ast)
   return ast
 end
 
-function orion.optimize.constantFoldCasts(ast)
+function darkroom.optimize.constantFoldCasts(ast)
   -- do casts of constants
   ast = ast:S("cast"):process(function(ast)
     if ast.expr.kind=="value" then
-      if orion.type.isArray(ast.type) and 
-         orion.type.isNumber(ast.type.over) and
-	 orion.type.isArray(ast.expr.type)==false and
-	 orion.type.isNumber(ast.expr.type) then
+      if darkroom.type.isArray(ast.type) and 
+         darkroom.type.isNumber(ast.type.over) and
+	 darkroom.type.isArray(ast.expr.type)==false and
+	 darkroom.type.isNumber(ast.expr.type) then
 	 
 	 local newval = {}
-	 for i=1,orion.type.arrayLength(ast.type) do newval[i] = ast.expr.value end
+	 for i=1,darkroom.type.arrayLength(ast.type) do newval[i] = ast.expr.value end
 
-	 local oast = orion.ast.value(newval, ast.type)
+	 local oast = darkroom.ast.value(newval, ast.type)
 	 oast.name = ast.name
 	 return oast
       end
@@ -189,7 +189,7 @@ function orion.optimize.constantFoldCasts(ast)
   return ast
 end
 
-function orion.optimize.isZero(val)
+function darkroom.optimize.isZero(val)
   if type(val)=="number" and val==0 then 
     return true 
   end
@@ -210,8 +210,8 @@ function orion.optimize.isZero(val)
 end
 
 -- ast should be a typed ast
-function orion.optimize.optimize(ast, options)
-  assert(orion.typedAST.isTypedAST(ast))
+function darkroom.optimize.optimize(ast, options)
+  assert(darkroom.typedAST.isTypedAST(ast))
   assert(type(options)=="table")
 
   if options.printstage then
@@ -231,25 +231,25 @@ function orion.optimize.optimize(ast, options)
         local vi, vf = math.modf(ast.expr.value)
 
         -- only do the optimization if the value isn't modified by it
-        if (vf==0 and n.type==orion.type.uint(8) and ast.expr.value >=0 and ast.expr.value <256) or
-          (vf==0 and n.type==orion.type.uint(16) and ast.expr.value >=0 and ast.expr.value < math.pow(2,16)) or
-          (vf==0 and n.type==orion.type.uint(32) and ast.expr.value >=0 and ast.expr.value < math.pow(2,32)) then
-          return orion.typedAST.new(n):copyMetadataFrom(ast.expr)
+        if (vf==0 and n.type==darkroom.type.uint(8) and ast.expr.value >=0 and ast.expr.value <256) or
+          (vf==0 and n.type==darkroom.type.uint(16) and ast.expr.value >=0 and ast.expr.value < math.pow(2,16)) or
+          (vf==0 and n.type==darkroom.type.uint(32) and ast.expr.value >=0 and ast.expr.value < math.pow(2,32)) then
+          return darkroom.typedAST.new(n):copyMetadataFrom(ast.expr)
         end
       end
     end)
 
   if options.fastmath then
 
-    ast = orion.optimize.constantFold(ast)
+    ast = darkroom.optimize.constantFold(ast)
 
     -- getting rid of unnecessary mults/ divides is important for conv engine
     -- prob doesn't help on cpu though
     ast = ast:S("binop"):process(
       function(ast) 
         if ast.op=="/" and ast.rhs.kind=="value" and ast.lhs.kind~="value" and
-          (orion.type.isUint(ast.lhs.type) or orion.type.isInt(ast.lhs.type)) and
-          (orion.type.isUint(ast.rhs.type) or orion.type.isInt(ast.rhs.type)) and
+          (darkroom.type.isUint(ast.lhs.type) or darkroom.type.isInt(ast.lhs.type)) and
+          (darkroom.type.isUint(ast.rhs.type) or darkroom.type.isInt(ast.rhs.type)) and
           ast.rhs.value > 0
         then
           
@@ -261,14 +261,14 @@ function orion.optimize.optimize(ast, options)
           local pow2 = math.floor(math.log(ast.rhs.value)/math.log(2))
           
           if ast.rhs.value==math.pow(2,pow2) then
-            if orion.optimize.verbose then
+            if darkroom.optimize.verbose then
               print("divok",ast.translate1_lhs, ast.translate2_lhs,ast.translate1_rhs, ast.translate2_rhs)
             end
 
             -- we can turn this into a right shift
             local nn = ast:shallowcopy()
-            local nv = {kind="value",value=pow2,type=orion.type.uint(32)}
-            nv = orion.internalIR.new(nv):copyMetadataFrom(ast.rhs)
+            local nv = {kind="value",value=pow2,type=darkroom.type.uint(32)}
+            nv = darkroom.internalIR.new(nv):copyMetadataFrom(ast.rhs)
             nn.rhs = nv
             nn.translate1_rhs = 0
             nn.translate2_rhs = 0
@@ -277,26 +277,26 @@ function orion.optimize.optimize(ast, options)
 
 
             nn.op=">>"
-            local res = orion.internalIR.new(nn):copyMetadataFrom(ast)
+            local res = darkroom.internalIR.new(nn):copyMetadataFrom(ast)
 
             if false then -- for debugging
-              local cond = {kind="binop",op="==",lhs=ast,rhs=res,type=orion.type.bool(),
+              local cond = {kind="binop",op="==",lhs=ast,rhs=res,type=darkroom.type.bool(),
                             translate1_lhs=0,translate2_lhs=0,scale1_lhs=1,scale2_lhs=1,
                             translate1_rhs=0,translate2_rhs=0,scale1_rhs=1,scale2_rhs=1}
-              cond = orion.internalIR.new(cond):copyMetadataFrom(ast)
+              cond = darkroom.internalIR.new(cond):copyMetadataFrom(ast)
               local asrt = {kind="assert",expr=res,printval=ast.lhs,cond=cond,type=res.type,
                             translate1_expr=0,translate2_expr=0,scale1_expr=1,scale2_expr=1,
                             translate1_cond=0,translate2_cond=0,scale1_cond=1,scale2_cond=1,
                             translate1_printval=0,translate2_printval=0,scale1_printval=1,scale2_printval=1}
               
-              orion.internalIR.new(asrt):copyMetadataFrom(ast)
+              darkroom.internalIR.new(asrt):copyMetadataFrom(ast)
 
               return asrt
             end
 
             return res
           else
-            if orion.optimize.verbose then
+            if darkroom.optimize.verbose then
               print("divfail",ast.rhs.value,ast.translate1_rhs,ast.translate2_rhs,ast:filename(),"line",ast:linenumber())
               print(ast.translate1_lhs, ast.translate2_lhs)
             end
@@ -312,8 +312,8 @@ function orion.optimize.optimize(ast, options)
         elseif ast.op=="*" and 
           ((ast.rhs.kind=="value" and ast.lhs.kind~="value" and ast.rhs.value>1) or 
            (ast.lhs.kind=="value" and ast.rhs.kind~="value" and ast.lhs.value>1)) and
-          (orion.type.isUint(ast.lhs.type) or orion.type.isInt(ast.lhs.type)) and
-          (orion.type.isUint(ast.rhs.type) or orion.type.isInt(ast.rhs.type)) then
+          (darkroom.type.isUint(ast.lhs.type) or darkroom.type.isInt(ast.lhs.type)) and
+          (darkroom.type.isUint(ast.rhs.type) or darkroom.type.isInt(ast.rhs.type)) then
 
           --
 
@@ -333,14 +333,14 @@ function orion.optimize.optimize(ast, options)
           assert(pow2>0)
 
           if valueOp.value==math.pow(2,pow2) then
-            if orion.optimize.verbose then
+            if darkroom.optimize.verbose then
               print("mulok",valueOp.value,pow2,math.pow(2,pow2),valueOp.value==math.pow(2,pow2))
             end
 
             -- we can turn this into a left shift
             local nn = ast:shallowcopy()
-            local nv = {kind="value",value=pow2,type=orion.type.uint(32)}
-            nv = orion.internalIR.new(nv):copyMetadataFrom(ast.rhs)
+            local nv = {kind="value",value=pow2,type=darkroom.type.uint(32)}
+            nv = darkroom.internalIR.new(nv):copyMetadataFrom(ast.rhs)
             nn.rhs = nv
             nn.lhs = otherOp
             nn.op="<<"
@@ -358,30 +358,30 @@ function orion.optimize.optimize(ast, options)
             nn.scale1_rhs = 1
             nn.scale2_rhs = 1
 
-            local res = orion.internalIR.new(nn):copyMetadataFrom(ast)
+            local res = darkroom.internalIR.new(nn):copyMetadataFrom(ast)
 
             if false then
-              local cond = {kind="binop",op="==",lhs=ast,rhs=res,type=orion.type.bool(),
+              local cond = {kind="binop",op="==",lhs=ast,rhs=res,type=darkroom.type.bool(),
                             translate1_lhs=0,translate2_lhs=0,scale1_lhs=1,scale2_lhs=1,
                             translate1_rhs=0,translate2_rhs=0,scale1_rhs=1,scale2_rhs=1}
-              cond = orion.internalIR.new(cond):copyMetadataFrom(ast)
+              cond = darkroom.internalIR.new(cond):copyMetadataFrom(ast)
               local asrt = {kind="assert",expr=res,printval=otherOp,cond=cond,type=res.type,
                             translate1_expr=0,translate2_expr=0,scale1_expr=1,scale2_expr=1,
                             translate1_cond=0,translate2_cond=0,scale1_cond=1,scale2_cond=1,
                             translate1_printval=0,translate2_printval=0,scale1_printval=1,scale2_printval=1}
               
-              orion.internalIR.new(asrt):copyMetadataFrom(ast)
+              darkroom.internalIR.new(asrt):copyMetadataFrom(ast)
               return asrt
             end
 
             return res
           else
-            if orion.optimize.verbose then
+            if darkroom.optimize.verbose then
               print("mulfail",valueOp.value,valueT1,valueT2,ast:filename(),"line",ast:linenumber())
             end
           end
         elseif ast.op=="*" and  (ast.rhs.kind=="value" or ast.lhs.kind=="value") then
-          if orion.optimize.verbose then
+          if darkroom.optimize.verbose then
             print("fastmath FAIL")
           end
         end
@@ -389,7 +389,7 @@ function orion.optimize.optimize(ast, options)
   end
   
   local cseRepo={}
-  ast = orion.optimize.CSE(ast, cseRepo)
+  ast = darkroom.optimize.CSE(ast, cseRepo)
 
   if options.verbose then
     print("Optimizations Done --------------------------")

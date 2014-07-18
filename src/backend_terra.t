@@ -4,7 +4,7 @@ cassert = terralib.includec("assert.h")
 cstdlib = terralib.includec("stdlib.h")
 cpthread = terralib.includec("pthread.h")
 
-orion.terracompiler = {}
+darkroom.terracompiler = {}
 
 -- This is basically Array<T>. If you call a method on an table with this MT, it dispatches the method to each element in the table.
 -- This is used for the input/output image lists. One bit of shenanigans: if one of the arguments is an array, it is indexed by the
@@ -91,7 +91,7 @@ function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightS
   assert(type(stripWidth)=="number")
   assert(type(rightStencil)=="number")
   assert(type(debug)=="boolean")
-  assert(orion.type.isType(orionType))
+  assert(darkroom.type.isType(orionType))
 
   local tab = {lines=lines, 
                id = linebufferCount, -- for debugging
@@ -312,7 +312,7 @@ function isImageWrapper(b) return getmetatable(b)==ImageWrapperMT end
 -- tab.terraType should be the base type of the data stored in this image
 -- ie, if it's a floating point image, tab.terraType should be float
 function newImageWrapper( basePtr, orionType, stride, debug )
-  assert(orion.type.isType(orionType))
+  assert(darkroom.type.isType(orionType))
   assert(type(stride)=="number")
   assert(type(debug) == "boolean")
 
@@ -405,14 +405,14 @@ end
 -- this is the source for the terra compiler for orion
 
 -- if pointer is true, generate a pointer instead of a value
-function orion.terracompiler.symbol(_type,pointer,vectorN)
-  assert(orion.type.isType(_type))
+function darkroom.terracompiler.symbol(_type,pointer,vectorN)
+  assert(darkroom.type.isType(_type))
   assert(vectorN==nil or type(vectorN)=="number")
   
-  return symbol(orion.type.toTerraType(_type,pointer,vectorN))
+  return symbol(darkroom.type.toTerraType(_type,pointer,vectorN))
 end
 
-function orion.terracompiler.vectorizeBinaryPointwise(func,lhs,rhs,V)
+function darkroom.terracompiler.vectorizeBinaryPointwise(func,lhs,rhs,V)
   assert(terralib.isfunction(func))
   assert(terralib.isquote(lhs))
   assert(terralib.isquote(rhs))
@@ -431,7 +431,7 @@ function orion.terracompiler.vectorizeBinaryPointwise(func,lhs,rhs,V)
   return `vector(q)
 end
 
-orion.terracompiler.numberBinops={
+darkroom.terracompiler.numberBinops={
   ["+"]=function(lhs,rhs) return `lhs+rhs end,
   ["-"]=function(lhs,rhs) return `lhs-rhs end,
   ["/"]=function(lhs,rhs) return `lhs/rhs end,
@@ -449,13 +449,13 @@ orion.terracompiler.numberBinops={
   ["min"]=function(lhs,rhs) return `terralib.select(lhs<rhs,lhs,rhs) end,
   ["max"]=function(lhs,rhs) return `terralib.select(lhs>rhs,lhs,rhs) end,
   ["pow"]=function(lhs,rhs,V)
-    return orion.terracompiler.vectorizeBinaryPointwise(cmath.pow,lhs,rhs,V)
+    return darkroom.terracompiler.vectorizeBinaryPointwise(cmath.pow,lhs,rhs,V)
   end
 }
 
 
 -- func should take a single scalar value, and return a single scalar value
-function orion.terracompiler.vectorizeUnaryPointwise(func,expr,V)
+function darkroom.terracompiler.vectorizeUnaryPointwise(func,expr,V)
   assert(terralib.isfunction(func))
   assert(terralib.isquote(expr))
   assert(type(V)=="number")
@@ -469,44 +469,44 @@ function orion.terracompiler.vectorizeUnaryPointwise(func,expr,V)
   return `vector(q)
 end
 
-orion.terracompiler.numberUnary={
+darkroom.terracompiler.numberUnary={
   ["floor"] = function(expr,ast,V)
-    return orion.terracompiler.vectorizeUnaryPointwise(cmath.floor,expr,V)
+    return darkroom.terracompiler.vectorizeUnaryPointwise(cmath.floor,expr,V)
   end,
   ["-"] = function(expr,ast,V) return `-expr end,
   ["not"] = function(expr,ast,V) return `not expr end,
   ["abs"] = function(expr,ast,V)
-    if ast.type==orion.type.float(32) then
-      return orion.terracompiler.vectorizeUnaryPointwise(cmath.fabs,expr,V)
-    elseif orion.type.isUint(ast.type) then
+    if ast.type==darkroom.type.float(32) then
+      return darkroom.terracompiler.vectorizeUnaryPointwise(cmath.fabs,expr,V)
+    elseif darkroom.type.isUint(ast.type) then
       -- a uint is always positive
       return expr
-    elseif ast.type==orion.type.int(32) or 
-      ast.type==orion.type.int(64) or 
-      ast.type==orion.type.int(16) then
-      return orion.terracompiler.vectorizeUnaryPointwise(cstdlib.abs,expr,V)
+    elseif ast.type==darkroom.type.int(32) or 
+      ast.type==darkroom.type.int(64) or 
+      ast.type==darkroom.type.int(16) then
+      return darkroom.terracompiler.vectorizeUnaryPointwise(cstdlib.abs,expr,V)
     else
       ast.type:print()
       assert(false)
     end
   end,
   ["sin"] = function(expr,ast,V)
-    if ast.type==orion.type.float(32) then
-      return orion.terracompiler.vectorizeUnaryPointwise(cmath.sin,expr,V)
+    if ast.type==darkroom.type.float(32) then
+      return darkroom.terracompiler.vectorizeUnaryPointwise(cmath.sin,expr,V)
     else
       assert(false)
     end
   end,
   ["cos"] = function(expr,ast,V)
-    if ast.type==orion.type.float(32) then
-      return orion.terracompiler.vectorizeUnaryPointwise(  cmath.cos, expr, V )
+    if ast.type==darkroom.type.float(32) then
+      return darkroom.terracompiler.vectorizeUnaryPointwise(  cmath.cos, expr, V )
     else
       assert(false)
     end
   end,
   ["exp"] = function(expr,ast,V)
-    if ast.type==orion.type.float(32) then
-      return orion.terracompiler.vectorizeUnaryPointwise(  cmath.exp, expr, V )
+    if ast.type==darkroom.type.float(32) then
+      return darkroom.terracompiler.vectorizeUnaryPointwise(  cmath.exp, expr, V )
     else
       assert(false)
     end
@@ -515,25 +515,25 @@ orion.terracompiler.numberUnary={
     if V>1 then
       assert(false)
     else
-      if node.expr.type==orion.type.float(32) then
-        table.insert(stat,quote cstdio.printf("orion.printf:%f\n",expr) end)
-      elseif node.expr.type==orion.type.uint(8) then
-        table.insert(stat,quote cstdio.printf("orion.printd:%d\n",expr) end)
+      if node.expr.type==darkroom.type.float(32) then
+        table.insert(stat,quote cstdio.printf("darkroom.printf:%f\n",expr) end)
+      elseif node.expr.type==darkroom.type.uint(8) then
+        table.insert(stat,quote cstdio.printf("darkroom.printd:%d\n",expr) end)
       else
-        print(orion.type.typeToString(node.expr.type))
+        print(darkroom.type.typeToString(node.expr.type))
         assert(false)
       end
    end
   end
 }
 
-orion.terracompiler.boolBinops={
+darkroom.terracompiler.boolBinops={
   ["and"]=function(lhs,rhs) return `lhs and rhs end,
   ["or"]=function(lhs,rhs) return `lhs or rhs end
 }
 
 mapreducevarSymbols = {}
-function orion.terracompiler.codegen(
+function darkroom.terracompiler.codegen(
   inkernel, V, xsymb, ysymb, loopid, stripCount, kernelNode, inputImages, outputs, taps, TapStruct, validLeft, validRight)
 
   assert(type(loopid)=="number")
@@ -575,7 +575,7 @@ function orion.terracompiler.codegen(
           local statOut = {}
 
           for c = 1, node.type:channels() do
-            local sum = symbol(orion.type.toTerraType(node.type:baseType(),false,V), node.reduceop)
+            local sum = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V), node.reduceop)
 
             local out = quote stat; sum = sum + [inputs["expr"][c]] end
           
@@ -593,7 +593,7 @@ function orion.terracompiler.codegen(
             table.insert(finalOut, sum)
           end
 
-          local packedSymbol = symbol(orion.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
+          local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
           table.insert(statOut, quote var [packedSymbol] = array(finalOut) end)
           for c=0,node.type:channels()-1 do finalOut[c+1] = `[packedSymbol][c] end
           return {finalOut, `[packedSymbol], statOut}
@@ -603,7 +603,7 @@ function orion.terracompiler.codegen(
           -- (they are the mapreducevars that yield the smallest value)
 
           local set = symbol(bool, "set")
-          local minValue = symbol(orion.type.toTerraType(node.type:baseType(),false,V), node.reduceop.."Value")
+          local minValue = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V), node.reduceop.."Value")
           local results = {}
           local declareResults = {}
           local assign = {}
@@ -635,7 +635,7 @@ function orion.terracompiler.codegen(
           end
 
           local statOut = {quote var [set] = false; var [minValue] = 0; declareResults; out end}
-          local packedSymbol = symbol(orion.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
+          local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
           
           table.insert(statOut, quote var [packedSymbol] = array(results) end)
           local finalOut = {}
@@ -650,7 +650,7 @@ function orion.terracompiler.codegen(
 
       for c=1,node.type:channels() do
         local out
-        local resultSymbol = orion.terracompiler.symbol(node.type:baseType(), false, V)
+        local resultSymbol = darkroom.terracompiler.symbol(node.type:baseType(), false, V)
 
         if node.kind=="load" then
           local relX, relY
@@ -666,7 +666,7 @@ function orion.terracompiler.codegen(
             relY = node.relY:codegen()
           end
 
-          assert(orion.kernelGraph.isKernelGraph(node.from) or type(node.from)=="number")
+          assert(darkroom.kernelGraph.isKernelGraph(node.from) or type(node.from)=="number")
           out = inputImages[kernelNode][node.from][c]:get(loopid, false, relX, relY,  V, validLeft, validRight);
         elseif node.kind=="binop" then
           local lhs = inputs["lhs"][c]
@@ -685,18 +685,18 @@ function orion.terracompiler.codegen(
 
           elseif node.lhs.type:baseType():isNumber() and node.rhs.type:baseType():isNumber() then
           
-            if orion.terracompiler.numberBinops[node.op]==nil then
-              orion.error("Unknown scalar op "..node.op)
+            if darkroom.terracompiler.numberBinops[node.op]==nil then
+              darkroom.error("Unknown scalar op "..node.op)
             end
           
-            out = orion.terracompiler.numberBinops[node.op](lhs,rhs,V)
+            out = darkroom.terracompiler.numberBinops[node.op](lhs,rhs,V)
           elseif node.lhs.type:baseType():isBool() and node.rhs.type:baseType():isBool() then
             
-            if orion.terracompiler.boolBinops[node.op]==nil then
-              orion.error("Unknown scalar bool op "..node.op)
+            if darkroom.terracompiler.boolBinops[node.op]==nil then
+              darkroom.error("Unknown scalar bool op "..node.op)
             end
             
-            out = orion.terracompiler.boolBinops[node.op](lhs,rhs)
+            out = darkroom.terracompiler.boolBinops[node.op](lhs,rhs)
           else
             print("Unknown/bad type to binop", node.lhs.type:toString(), node.rhs.type:toString() )
             os.exit()
@@ -715,10 +715,10 @@ function orion.terracompiler.codegen(
               i = i + 1
             end
 
-          elseif orion.terracompiler.numberUnary[node.op]==nil then
-            orion.error("Unknown unary op "..node.op)
+          elseif darkroom.terracompiler.numberUnary[node.op]==nil then
+            darkroom.error("Unknown unary op "..node.op)
           else
-            out = orion.terracompiler.numberUnary[node.op](expr,node.expr,V)
+            out = darkroom.terracompiler.numberUnary[node.op](expr,node.expr,V)
           end
 
         elseif node.kind=="value" then
@@ -728,7 +728,7 @@ function orion.terracompiler.codegen(
             val = node.value[c]
           end
 
-          out = `[orion.type.toTerraType(node.type:baseType(),false,V)](val)
+          out = `[darkroom.type.toTerraType(node.type:baseType(),false,V)](val)
         elseif node.kind=="tap" then
           -- kind of a cheap hack to save threading around some state
           local entry
@@ -753,11 +753,11 @@ function orion.terracompiler.codegen(
         elseif node.kind=="cast" then
 
           if node.type:baseType():toTerraType()==nil then
-            orion.error("Cast to "..orion.type.typeToString(node.type:baseType()).." not implemented!")
+            darkroom.error("Cast to "..darkroom.type.typeToString(node.type:baseType()).." not implemented!")
             assert(false)
           end
 
-          local ttype = orion.type.toTerraType(node.type:baseType(),false, V)
+          local ttype = darkroom.type.toTerraType(node.type:baseType(),false, V)
 
           local expr
           if node.type:isArray() and node.expr.type:isArray()==false then
@@ -800,18 +800,18 @@ function orion.terracompiler.codegen(
         elseif node.kind=="assert" then
           local expr = inputs["expr"][c]
 
-          if orion.debug then
+          if darkroom.debug then
             local cond = inputs["cond"][c]
             local printval = inputs["printval"][c]
       
-            if node.printval.type==orion.type.float(32) then
+            if node.printval.type==darkroom.type.float(32) then
               for i = 1,V do
               table.insert(stat,quote if cond[i-1]==false then 
                                cstdio.printf("ASSERT FAILED, value %f line %d x:%d y:%d\n",printval[i-1],[node:linenumber()],xsymb,ysymb);
                              cstdlib.exit(1); 
                                       end end)
               end
-            elseif node.printval.type==orion.type.int(32) then
+            elseif node.printval.type==darkroom.type.int(32) then
               for i = 1,V do
               table.insert(stat,quote if cond[i-1]==false then 
                                cstdio.printf("ASSERT FAILED, value %d file %s line %d x:%d y:%d\n",printval[i-1],[node:filename()],[node:linenumber()],xsymb,ysymb);
@@ -829,7 +829,7 @@ function orion.terracompiler.codegen(
           local inpY = inputs["y"][1] -- should be scalar
 
           assert(node.input.kind=="load")
-          assert(orion.kernelGraph.isKernelGraph(node.input.from) or type(node.input.from)=="number")
+          assert(darkroom.kernelGraph.isKernelGraph(node.input.from) or type(node.input.from)=="number")
 
           local relX, relY
           if type(node.input.relX)=="number" then 
@@ -909,14 +909,14 @@ function orion.terracompiler.codegen(
 
           out = foldt(list,1,#list)
         else
-          orion.error("Internal error, unknown ast kind "..node.kind)
+          darkroom.error("Internal error, unknown ast kind "..node.kind)
         end
 
         --print(node.kind)
         assert(terralib.isquote(out))
 
         -- make absolutely sure that we end up with the type we expect
-        out = `[orion.type.toTerraType(node.type:baseType(),false,V)](out)
+        out = `[darkroom.type.toTerraType(node.type:baseType(),false,V)](out)
 
         -- only make a statement if necessary
         if node:parentCount(inkernel)==1 then
@@ -929,7 +929,7 @@ function orion.terracompiler.codegen(
       end
 
       -- if this is an array and we index into it, pack it into a terra array
-      local packedSymbol = symbol(orion.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
+      local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
       table.insert(stat,quote var [packedSymbol] = array(finalOut) end)
 
       for c=0,node.type:channels()-1 do
@@ -941,7 +941,7 @@ function orion.terracompiler.codegen(
 
   for k,v in ipairs(res[1]) do assert(terralib.isquote(res[1][k])) end
   
-  if orion.printstage then
+  if darkroom.printstage then
     print("terracompiler.codegen astNodes:",inkernel:S("*"):count()," statements:",#res[3],inkernel:name())
   end
 
@@ -1044,7 +1044,7 @@ function memo(name, t)
 end
 
 -- codegen all the stuff in the inner loop
-function orion.terracompiler.codegenInnerLoop(
+function darkroom.terracompiler.codegenInnerLoop(
     core, 
     strip, 
     kernelGraph,
@@ -1105,7 +1105,7 @@ return
           end
         end)
 
-      local expr,statements=orion.terracompiler.codegen( n.kernel,  options.V, x, clock, loopid, options.stripcount, n, inputs, outputs, taps, TapStruct, valid.left, valid.right)
+      local expr,statements=darkroom.terracompiler.codegen( n.kernel,  options.V, x, clock, loopid, options.stripcount, n, inputs, outputs, taps, TapStruct, valid.left, valid.right)
 
       table.insert(loopCode,
         quote
@@ -1164,8 +1164,8 @@ return
 end
 
 -- codegen all the code that runs per thread (and preamble)
-function orion.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, shifts, options)
-  assert(orion.kernelGraph.isKernelGraph(kernelGraph))
+function darkroom.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, shifts, options)
+  assert(darkroom.kernelGraph.isKernelGraph(kernelGraph))
   assert(type(inputs)=="table")
   assert(type(shifts)=="table")
   assert(type(options)=="table")
@@ -1194,7 +1194,7 @@ function orion.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, shift
   end
 
   -- add the input lists and output to the kernelGraph
-  local inputs, outputs, linebufferSize = orion.terracompiler.allocateImageWrappers(kernelGraph, inputImageSymbolMap, outputImageSymbolMap, shifts, options)
+  local inputs, outputs, linebufferSize = darkroom.terracompiler.allocateImageWrappers(kernelGraph, inputImageSymbolMap, outputImageSymbolMap, shifts, options)
 
   local loopCode = {}
   assert(options.stripcount % options.cores == 0)
@@ -1205,7 +1205,7 @@ function orion.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, shift
   local taps = symbol(&TapStruct,"taps")
 
   local linebufferBase = symbol(&opaque,"linebufferBase")
-  local thisLoopStartCode, thisLoopCode = orion.terracompiler.codegenInnerLoop(
+  local thisLoopStartCode, thisLoopCode = darkroom.terracompiler.codegenInnerLoop(
     core,
     strip,
     kernelGraph,
@@ -1248,7 +1248,7 @@ function orion.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, shift
     -- allocate line buffer for this thread
     var linebuffers : &opaque = vmIV.allocateCircular([linebufferSize])
 
-    var start = orion.currentTimeInSeconds()
+    var start = darkroom.currentTimeInSeconds()
     for i=0,stripsPerCore do
 
       var [strip] = core*stripsPerCore+i
@@ -1261,20 +1261,20 @@ function orion.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, shift
       end
 
     end
-    var endt = orion.currentTimeInSeconds()
+    var endt = darkroom.currentTimeInSeconds()
   end
 
 end
 
 
-function orion.terracompiler.allocateImageWrappers(
+function darkroom.terracompiler.allocateImageWrappers(
     kernelGraph, 
     inputImageSymbolMap, 
     outputImageSymbolMap, 
     shifts,
     options)
 
-  assert(orion.IR.isIR(kernelGraph))
+  assert(darkroom.IR.isIR(kernelGraph))
   assert(type(shifts)=="table")
   assert(type(options)=="table")
 
@@ -1349,15 +1349,15 @@ function orion.terracompiler.allocateImageWrappers(
 end
 
 -- this should return a terra function that when called executes the pipeline
-function orion.terracompiler.compile(
+function darkroom.terracompiler.compile(
     kernelGraph, 
     inputImages,
     taps,
     shifts,
     options)
 
-  if orion.verbose then print("compile") end
-  assert(orion.kernelGraph.isKernelGraph(kernelGraph))
+  if darkroom.verbose then print("compile") end
+  assert(darkroom.kernelGraph.isKernelGraph(kernelGraph))
   assert(type(inputImages)=="table")
   assert(type(taps)=="table")
   assert(type(options)=="table")
@@ -1395,11 +1395,11 @@ function orion.terracompiler.compile(
   end
   marshalBytes = marshalBytes + terralib.sizeof(TapStruct)
 
-  local threadCode = orion.terracompiler.codegenThread( kernelGraph, inputImages, TapStruct, shifts, options )
+  local threadCode = darkroom.terracompiler.codegenThread( kernelGraph, inputImages, TapStruct, shifts, options )
   --threadCode:printpretty(false)
 
   local fin = terra([inputImageSymbolTable], [outputImageSymbolTable], tapsIn : &opaque)
-    var start = orion.currentTimeInSeconds()
+    var start = darkroom.currentTimeInSeconds()
     
     var taps : &TapStruct = [&TapStruct](tapsIn)
     var threads : cpthread.pthread_t[options.cores]
@@ -1432,7 +1432,7 @@ function orion.terracompiler.compile(
     end
     
     if options.printruntime then
-      var len : double = (orion.currentTimeInSeconds()-start)/options.looptimes
+      var len : double = (darkroom.currentTimeInSeconds()-start)/options.looptimes
       var bytes :double= 0
       var gbps :double= (bytes/len)/(1024*1024*1024)
       var gb :double= bytes / (1024*1024*1024)

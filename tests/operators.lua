@@ -21,7 +21,13 @@ function gen(T,a)
   im a(x,y) [T](a << 2) end
   im a(x,y) [T](a and (a+1)) end
   im a(x,y) [T](a or (a+1)) end
+  im a(x,y) [T](a ^ (a+1)) end -- xor
   if drt:isArray() then im a(x,y) [T](orion.dot(a,a)) end end
+
+  -- logical
+  im la(x,y) (a < 4) and (a > 3) end
+  im lb(x,y) not (a > 3) end
+  im a(x,y) [T](if la or lb then a else a+1 end) end
 
   -- unary
   im a(x,y) [T](orion.floor(a)) end
@@ -38,6 +44,20 @@ function gen(T,a)
   im a(x,y) [T](orion.vectorSelect(a==3,a+1,a+2)) end
 
   im a(x,y) [T](map i=-1,1 reduce(sum) a(x,y)/3 end) end -- mapreduce var unused
+  im a(x,y) [T](map i=-1,1 reduce(max) a(x,y)/3 end) end -- mapreduce var unused
+  im a(x,y) [T](map i=-1,1 reduce(min) a(x,y)/3 end) end -- mapreduce var unused
+  im a(x,y) [T](map i=-1,1 reduce(argmin) a(x,y)/3 end) end -- mapreduce var unused
+  im a(x,y) [T](map i=-1,1 reduce(argmax) a(x,y)/3 end) end -- mapreduce var unused
+
+  im a(x,y) [T]( switch A
+                 case 45 -> 46
+                 case 47 -> 32
+                 default -> A+1
+                 end) end
+
+  im a(x,y) darkroom.print(a) end
+
+  im a(x,y) darkroom.assert(a, 42, a > 512) end
 
   if drt:isArray() then
     return im(x,y) [uint8[3]](a) end

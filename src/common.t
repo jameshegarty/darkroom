@@ -236,7 +236,7 @@ local Ctmp = terralib.includecstring [[
 
                                    ]]
 
-orion.currentTimeInSeconds = Ctmp.CurrentTimeInSeconds
+darkroom.currentTimeInSeconds = Ctmp.CurrentTimeInSeconds
 
 terra orionAssert(cond : bool, str : &int8)
   if cond==false then

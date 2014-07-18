@@ -56,21 +56,21 @@ You can either run this tutorial from the Terra REPL or by creating and running 
 
 Before we can perform any image processing, we need to load an input image. DarkroomSimple provides a function that will load simple image formats (bmp, ppm):
 
-    inputImage = darkroomSimple.load("test.bmp")
+    inputImage = darkroomSimple.load("examples/color.bmp")
 
 You can also create 'image functions' that perform calculations to compute an image. Describing an image processing pipeline will consist of writing a number of these 'image functions'.
 
-Let's start by writing an image function that increases the brightness of the input by 10%:
+Let's start by writing an image function that decreases the brightness of the input by 10%:
 
-    im increaseBrightness(x,y)
-      inputImage(x,y) * 1.10
+    im decreaseBrightness(x,y)
+      [uint8[3]](inputImage(x,y) * 0.9)
     end
 
-The keyword `im` indicates that we are creating an image function. It is similar to Lua's function definition syntax, but unlike Lua the last expression is the return value. `return` doesn't need to be specified.
+The keyword `im` indicates that we are creating an image function. It is similar to Lua's function definition syntax, but unlike Lua the last expression is the return value. `return` doesn't need to be specified. The `[uint8[3]]` casts the output to a format that our image saving library supports (24 bit color).
 
-The Lua variable `increaseBrightness` now contains a description of an image processing pipeline. We now need to compile and run this pipeline:
+The Lua variable `decreaseBrightness` now contains a description of an image processing pipeline. We now need to compile and run this pipeline:
 
-    increaseBrightness:save("output.bmp")
+    decreaseBrightness:save("output.bmp")
 
 DarkroomSimple provides the `:save` function, that will compile and run the image function using default settings and save it to a file. Commands for compiling the pipeline with custom settings or generating an ASIC will be discussed later.
 
@@ -79,40 +79,40 @@ You are now ready to explore some of the more advanced features of Darkroom!
 Image Functions in Depth
 ------------------------
 
-In general, Darkroom image functions can be regarded as a subset of Lua functions: They have similar syntax and behavior, but we will restrict the functions that can be written to only those that will yield good performance. This section will cover the restrictions.
+In general, Darkroom image functions can be regarded as a subset of Terra functions: They have similar syntax and behavior, but we will restrict the functions that can be written to only those that will yield good performance. This section will cover the restrictions.
 
-Like in Lua, the image function syntax shown earlier is just syntax sugar for creating a lambda function and assigning it to a lua variable:
+Like in Terra/Lua, the image function syntax shown earlier is just syntax sugar for creating a lambda function and assigning it to a lua variable:
 
-    im increaseBrightness(x,y) inputImage(x,y) * 1.10 end
+    im decreaseBrightness(x,y) inputImage(x,y) * 0.9 end
 
 Is the same as:
 
-    increaseBrightness = im(x,y) inputImage(x,y) * 1.10 end
+    decreaseBrightness = im(x,y) inputImage(x,y) * 0.9 end
 
-It's possible to string together image functions, creating an image processing pipeline. For example, we may want to adjust the gamma of the image after we increase brightness. This works the same as before when we read from `inputImage`:
+It's possible to string together image functions, creating an image processing pipeline. For example, we may want to adjust the gamma of the image after we decrease brightness. This works the same as before when we read from `inputImage`:
 
-    increaseBrightness = im(x,y) inputImage(x,y) * 1.10 end
-    im gammaCorrected(x,y) darkroom.pow(inputBrightness(x,y), 2.4) end
+    decreaseBrightness = im(x,y) inputImage(x,y) * 0.9 end
+    im gammaCorrected(x,y) [uint8[3]](darkroom.pow(decreaseBrightness(x,y)/255, 2.4)*255) end
     gammaCorrected:save("gamma.bmp")
 
-Notice that `increaseBrightness` is stored in a lua variable, but is being accessed in Darkroom. Similar to Terra, it's possible to use image functions stored anywhere in Lua (i.e. in globals, tables, etc):
+Notice that `decreaseBrightness` is stored in a lua variable, but is being accessed in Darkroom. Similar to Terra, it's possible to use image functions stored anywhere in Lua (i.e. in globals, tables, etc):
 
     mytable={}
-    mytable.fn = im(x,y) inputImage(x,y)+10 end
-    im output(x,y) mytable.fn(x,y)*2 end
+    mytable.fn = im(x,y) inputImage(x,y)*0.9 end
+    im output(x,y) [uint8[3]](mytable.fn(x,y)+10) end
 
 ### Stencils ###
 
 So far, we have only shown pointwise image functions. But it's also possible to perform 'stencil' accesses into another image. Stencil access means that we only access a local, shift invariant neighborhood of the (x,y) position. In Darkroom, this means that we can only access constant integer offsets of the (x,y) argument:
 
     im areaFilterX(x,y)
-      (input(x-1,y)+input(x,y)+input(x+1,y))/3
+      [uint8[3]](inputImage(x-1,y)/3+inputImage(x,y)/3+inputImage(x+1,y)/3)
     end
 
 If you index into an image in a non-stencil way, it will cause a compile error:
 
-    im fn(x,y) input(x+y,y) end -- compile error: no general affine transforms allowed
-    im fn2(x,y) input1( input2(x,y), y) -- compile error: no dependent reads allowed
+    im fn(x,y) inputImage(x+y,y) end -- compile error: no general affine transforms allowed
+    im fn2(x,y) inputImage( input2(x,y), y) -- compile error: no dependent reads allowed
 
 > Tip: The stencil restriction forces you to write efficient code, because it always yields a small, statically-analyzable working set. Many image processing algorithms can be fit into the stencil model. In general, you will get higher performance if you keep your stencils small - e.g. accessing `input(x,y-10)+input(x,y+10)` may perform poorly because it uses a large working set, 20 lines of the image.
 
@@ -141,26 +141,17 @@ Darkroom supports fixed length arrays over primitive types, using the syntax `pr
 
 Array types support the same set of operators as primitive types: with arrays, these operators act elementwise. Darkroom also supports a number of array-specific operators like dot products, discussed later in the 'Standard Library' section.
 
-In image processing, array types are typically used to represent color channels. Darkroom supports syntax sugar for typical use cases, e.g. `rgb8` produces a `uint8[3]`, indexing `a.r` is the same as `a[0]`. The full set of syntax sugar is as follows:
-
-* `rgbN` === `uintN[3]`
-* `rgbaN` === `uintN[4]`
-* `e.r` === `e.x` === `e[0]`
-* `e.g` === `e.y` === `e[1]`
-* `e.b` === `e.z` === `e[2]`
-* `e.a` === `e.w` === `e[3]`
-
 Operators
 ---------
 
 Darkroom supports standard operators, similar to C/Terra:
 
-* Unary: `-`
+* Unary: `-` 
 * Binary: `- + * / %`
 * Comparison: `< <= > >= == ~=` (returns bool)
 * Conditional: `if switch`
 * Logical: `and or not` (bool argument, bool result)
-* Bitwise: `& | ! ^ << >>`
+* Bitwise: `and or not ^ << >>`
 
 The `if` operator behaves like the ternary operator in C (an expression), not like an `if` statement. The condition of the select must be a scalar boolean, the results can be vector, but the lengths must match.
 
@@ -214,7 +205,7 @@ Darkroom contains a combined map-reduce operator that provides this functionalit
 For example, the convolution above would be written as:
 
     return map i=-1,1 j=-1,1 reduce(sum)
-      input(x+i,y+j)*[tap[(j+1)*3+(i+1)]]
+      input(x+i,y+j)*taps[(j+1)*3+(i+1)]
     end
 
 The syntax is meant to be evocative of a for loop.
@@ -223,7 +214,7 @@ The syntax is meant to be evocative of a for loop.
 
 Supported reduce operators are: `sum min max argmin argmax`
 
-> Tip: Notice that an important feature of our map-reduce operator is that it doesn't imply an order for the reduction operator (it's commutative and associative). Darkroom exploits this to reduce the expression in the order that has the highest performance. While you could write out a similar expression by hand, Darkroom's operators aren't associative and commutative, and it's possible you will choose an inefficient order.
+> Tip: Notice that an important feature of our map-reduce operator is that it doesn't imply an order for the reduction operator (it's associative). Darkroom exploits this to reduce the expression in the order that has the highest performance. While you could write out a similar expression by hand, Darkroom's operators aren't associative and commutative, and it's possible you will choose an inefficient order.
 
 `sum min max` evaluate to the type of the `[expression]`. `argmin argmax` return the variable values that attained the highest or lowest expression value. They evalute to the type `int[N]`, where N is the number of variables.
 
@@ -237,14 +228,14 @@ Darkroom is designed to facilitate the design of hardware image processing pipel
 Consider the design for a pipeline that performs convolution:
 
     im convolve(x,y)
-      map i=-1,1 j=-1,1 reduce(sum) input(x+i, y+j)*tap[i][j] end
+      map i=-1,1 j=-1,1 reduce(sum) input(x+i, y+j)*taps[(j+1)*3+(i+1)] end
     end
 
 But you might decide that you need a 5x5 or 6x6 convolution instead of a 3x3 convolution. Instead of implementing convolve multiple times, we can use Lua to parameterize the design:
 
     function makeConvolve(N)
       return im(x,y)
-        map i=-N,N j=-N,N reduce(sum) input(x+i, y+j)*tap[i][j] end
+        map i=-N,N j=-N,N reduce(sum) input(x+i, y+j)*taps[(j+N)*(2*N+1)+(i+N)] end
       end
     end
 
@@ -255,23 +246,15 @@ Notice the behavior of the variable `N` referenced by the image function in `mak
 
 We can also parameterize other things, like types:
 
-    for i=1,32 do
-      local imtype = orion.type.uint(i)
-      local im tmp(x,y) : imtype input(x,y) end
+    for i in pairs({uint8, uint16, uint32}) do
+      local im tmp(x,y) [i](input(x,y)) end
       local im blurX(x,y) (tmp(x-1,y)+tmp(x,y)+tmp(x+1,y))/3 end
       blurX:save("blur"..i..".bmp")      
     end
 
-<!---
-we maybe need to explain this earlier, b/c we've already been using lua variables in orion code since the start of the document (except these lua variables held orion types). Maybe we should just explain this specific thing earlier: "lua variables that hold orion types can be accessed"
--->
+### Escapes ###
 
-
-### Unquotes and Macros ###
-
-Sometimes it's convenient to call Lua code while compiling a Darkroom image function. This can be accomplished with the unquote operator `[]` and macros. 
-
-The unquote operator `[e]` evaluates `e` as a lua expression and returns the Lua result converted to an Darkroom type using the 'Conversion Rules' below. One example where this might be useful is table lookup:
+The escape operator `[e]` evaluates `e` as a lua expression and returns the Lua result converted to an Darkroom type using the 'Conversion Rules' below. One example where this might be useful is table lookup:
 
     luatable = {1,2,3,4,5,6,7,8,9}
     
@@ -304,23 +287,15 @@ When using a Lua value in Darkroom:
     Lua number -> Darkroom constant
     Lua string -> error
     Lua nil -> error
-    Lua function -> macro
     Lua array -> Darkroom array (table with dense integer keys)
     Non-array Lua Table -> error
-
-When passing an Darkroom value to Lua:
-
-    Darkroom image function -> Darkroom image function object
-    Darkroom number -> Lua number
-    Darkroom array -> Lua array
 
 Boundary Conditions
 -------------------
 
+
 Standard Library
 ----------------
-
-This section lists Darkroom functions for a number of standard operations. It typically only makes sense to call these from within Darkroom!
 
 `darkroom.crop(x)` Apply a 0 boundry condition to `x`.
 
@@ -352,7 +327,7 @@ This section lists Darkroom functions for a number of standard operations. It ty
 
 `darkroom.vectorSelect(cond,a,b)` Does an elementwise select. cond, a, and b must be arrays of the same length.
 
-`darkroom.gather( input, X, Y, xRange, yRange )` Performs a gather on the argument `input`. This is essentially equivilant to writing `im(x,y) input(x+X,y+Y) end`, however `X` and `Y` can be arbitrary darkroom expressions instead of constants, which is not typically allowed. `X` must be within the range `[-xRange, xRange]` and Y within the range `[-yRange,yRange]`, and they both must be integers.  `clamp` is true, `X` and `Y` are clamped to the range. If `clamp` is false, darkroom throws an assert if `X` or `Y` are out of the range.
+`darkroom.gather( input, X, Y, xRange, yRange )` Performs a gather on the argument `input`. This is essentially equivilant to writing `im(x,y) input(x+X,y+Y) end`, however `X` and `Y` can be arbitrary darkroom expressions instead of constants, which is not typically allowed. `X` must be within the range `[-xRange, xRange]` and Y within the range `[-yRange,yRange]`, and they both must be integers. if `X` or `Y` are outside of the specified range, then behaviour is undefined (potentially could segfault). If the `debug` compile option is enabled than the darkroom raises an error if `X` and `Y` are outside of the specified range.
 
 ### Debugging functions ###
 
@@ -377,13 +352,13 @@ Returns an image function for an input that will be bound at runtime (e.g. the i
 
 Image processing pipelines typically have a number of runtime configurable parameters, called 'taps' in the image processing community. Examples include the color correction matrix (CCM) or gamma. These are values you want to change every run without recompiling. To create a tap in Darkroom call `darkroom.tap` from Lua:
 
-    theTap = darkroom.tap(tapType, name)
+    theTap = darkroom.tap( tapType )
 
-`tapType` is an type, e.g. `uint8`. `name` is a string that will identify the tap.
+`tapType` is an type, e.g. `uint8`.
 
 Example code for using a tap to control gamma correction:
 
-     gammaTap = orion.tap( float32, 'gammatap')
+     gammaTap = orion.tap( float32 )
      im gammaCorrected(x,y) orion.pow( input(x,y), gammaTap) end
 
 Tap values are passed as arguments to the compiled pipeline.
@@ -392,11 +367,11 @@ Tap values are passed as arguments to the compiled pipeline.
 
 Recall that Darkroom image functions and arrays cannot be indexed with values calculated at runtime (they can only be indexed with constants). Lookup tables (LUTs) are an array of taps that can be indexed using runtime-calculated values, but their values can't change, and they can only have a compile-time determinable set of entries.
 
-    orion.tapLUT(tapType, count, name)
+    orion.tapLUT( tapType, count )
 
 A typical use of this functionality would be to implement 'tone mapping', which remaps output pixel values of a pipeline based on a given tone curve (typically includes gamma and contrast). In 8bit, we can implement this with a 256 entry lookup table:
 
-    tonemap = orion.tapLUT(uint8, 256, "tonemap")
+    tonemap = orion.tapLUT( uint8, 256 )
     im finalImage(x,y) tonemap[input(x,y)] end
 
 > Tip: if your lookup tables start to have a large number of entries, it may be more efficient to just calculate their value at runtime from a reduced set of parameters.
@@ -408,7 +383,7 @@ Compile takes a lua array of input image functions (returned from `darkroom.inpu
 
   compiledPipeline( input0 : &opaque, input1 : &opaque, ... output1 : &opaque, output2 : &opaque, taps : TapStruct )
 
-Where inputs, outputs, and taps are in the same order as passed to `darkroom.compile`, and `TapStruct` is a struct with entries in the same order as the `tapsArray`. All input and output images must be pointers stored in 'darkroom format'. First, the data must match the type of the darkroom input or output. Second, the stride of the input must be `width` rounded up to the nearest vector width `V` passed in the compile options. For example if `width=63` and `V=4` then the stride must be 64. Finally, multi-channel images must be in struct of array form (i.e. all red pixels come before all blue pixels etc).
+Where inputs, outputs, and taps are in the same order as passed to `darkroom.compile`, and `TapStruct` is a struct with entries in the same order and types as the `tapsArray`. All input and output images must be pointers stored in 'darkroom format'. First, the data must match the type of the darkroom input or output. Second, the stride of the input must be `width` rounded up to the nearest vector width `V` passed in the compile options. For example if `width=63` and `V=4` then the stride must be 64. Finally, multi-channel images must be in struct of array form (i.e. all red pixels come before all blue pixels etc).
 
 For convenience, you can use [extras/darkroomSimple.t](#extrasdarkroomsimplet), which provides an abstraction on top of this that doesn't require loading images, or use the [extras/image.t](#extrasimaget) class:
 
@@ -454,12 +429,6 @@ Run a number of extra runtime and compile time checks to make sure the compiler 
 `verbose = [false] true`
 Print out a lot of intermediate compiler state.
 
-`printruntime = [false] true`
-Print runtime statistics.
-
-`looptimes = [1] number`
-number of times to run the inner loop of each kernel. Used to make runtime statistics more accurate.
-
 extras/darkroomSimple.t
 -----------------------
 
@@ -493,6 +462,9 @@ extras/image.t
 `SOA` true if the data is stored is struct-of-arrays form. eg, each channel is stored contiguously... all red pixels come before all blue pixels, etc. If false, the image is stored in array-of-structs form (channels interleaved). Typical image formats (eg bmp) store their data in array of structs form.
 `data` is a pointer to the first valid pixel in the image. `dataPtr` is a pointer to the data structure that should be freed to free the image. Note that `image.t` takes ownership of the `dataPtr` pointer. Some of its operators can not be done in place, so the original pointer will be freed, so do not expect the original image to remain.
 
+`Image:allocateDarkroomFormat( width : int, height : int, channels : int, bits : int, floating : bool, isSigned : bool )`
+Allocates  memory for the given type in the format that darkroom expects. Useful for allocating space for the output images.
+
 `Image:load(filename : &int8)` load an image file in a supported format
 
 `Image:loadRaw(filename : &int8, width : int, height : int, bits : int, header : int, flipEndian : bool)` Load any file, and treat it as raw data. `header` is the number of bits at the top of the file to skip before the image data starts. `flipEndian` flips the endianness, if `bits` > 8. Assumes single channel, unsigned integer.
@@ -519,6 +491,8 @@ extras/image.t
 
 extras/dpda.t
 -------------
+
+`dpda.compile( , outputImageFunction, tapsArray )`
 
 extras/darkroomDebug.t
 ----------------------

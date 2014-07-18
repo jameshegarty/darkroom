@@ -31,9 +31,9 @@ function bilinearDemosaic(in1)
     r_tl = (r_tl_a+r_tl_b+r_tl_c+r_tl_d)/[uint8](4)
 
     phase = {x+xoff,y+yoff}%2
-    out_r = if orion.arrayAnd(phase=={1,1}) then in1(x,y) else
-      if orion.arrayAnd(phase=={0,1}) then r_bl else
-      if orion.arrayAnd(phase=={1,0}) then r_tr else
+    out_r = if darkroom.arrayAnd(phase=={1,1}) then in1(x,y) else
+      if darkroom.arrayAnd(phase=={0,1}) then r_bl else
+      if darkroom.arrayAnd(phase=={1,0}) then r_tr else
       r_tl end end end
 
     -- build green
@@ -50,8 +50,8 @@ function bilinearDemosaic(in1)
     g_br_d = in1(x,y-1)
     g_br = (g_br_a+g_br_b+g_br_c+g_br_d)/[uint8](4)
 
-    out_g = if orion.arrayAnd(phase=={0,0}) then g_tl else
-      if orion.arrayAnd(phase=={1,1}) then g_br else
+    out_g = if darkroom.arrayAnd(phase=={0,0}) then g_tl else
+      if darkroom.arrayAnd(phase=={1,1}) then g_br else
         in1(x,y) end end
 
     -- build blue
@@ -69,9 +69,9 @@ function bilinearDemosaic(in1)
     b_br_d = in1(x+1,y-1)
     b_br = (b_br_a+b_br_b+b_br_c+b_br_d)/[uint8](4)
 
-    out_b = if orion.arrayAnd(phase=={0,0}) then in1(x,y) else
-      if orion.arrayAnd(phase=={0,1}) then b_bl else
-      if orion.arrayAnd(phase=={1,0}) then b_tr else
+    out_b = if darkroom.arrayAnd(phase=={0,0}) then in1(x,y) else
+      if darkroom.arrayAnd(phase=={0,1}) then b_bl else
+      if darkroom.arrayAnd(phase=={1,0}) then b_tr else
         b_br end end end;
 
     in {out_r, out_g, out_b}
@@ -86,16 +86,16 @@ ccm={ {255/142,0,0},
 
 function doccm(in1)
   return im(x,y)
-  { orion.dot(in1(x,y),[ccm[1]]),
-    orion.dot(in1(x,y),[ccm[2]]),
-    orion.dot(in1(x,y),[ccm[3]])}
+  { darkroom.dot(in1(x,y),[ccm[1]]),
+    darkroom.dot(in1(x,y),[ccm[2]]),
+    darkroom.dot(in1(x,y),[ccm[3]])}
   end
 end
 
 function tonemap(in1)
 
   return im(x,y)
-  orion.pow((in1(x,y)/255),0.5)*255
+  darkroom.pow((in1(x,y)/255),0.5)*255
   end
 
 end
