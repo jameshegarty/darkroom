@@ -126,38 +126,33 @@ end
 
 orionSimple._usedTapNames={}
 
-function orionSimple.tap(ty)
-  local r = darkroom.tap(ty)
+function orionSimple.tap( ty, value )
+  if terralib.types.istype(ty)==false then
+    darkroom.error("First argument to orionSimple.tap must be a type")
+  end
+
+  if type(value)~="number" and type(value)~="table" then
+    darkroom.error("Second argument to orionSimple.tap must be a value")
+  end
+
+  local r = darkroom.tap( ty )
   if #orionSimple.taps ~= r.id then 
     darkroom.error("If you use the simple interface, you must use to for _all_ taps "..#orionSimple.taps.." "..r.id)
   end
 
   orionSimple.taps[r.id+1] = r
-  return r
-end
 
-function orionSimple.setTap( ast, value )
-  assert(darkroom.ast.isAST(ast))
-  assert(ast.kind=="tap")
+  if r.type:isArray() then
+    if darkroom.type.arrayLength(r.type)~=#value then
+      darkroom.error("Number of elements in tap value doesn't match type")
+    end
 
-  if ast.type:isArray() then
-    assert(darkroom.type.arrayLength(ast.type)==#value)
-    orionSimple.tapInputs[ast.id+1] = `arrayof([darkroom.type.arrayOver(ast.type):toTerraType()],value)
+    orionSimple.tapInputs[r.id+1] = `arrayof([darkroom.type.arrayOver(r.type):toTerraType()],value)
   else
-    orionSimple.tapInputs[ast.id+1] = value
-  end
-end
-
-function orionSimple.getTap(ast)
---  assert(darkroom.ast.isAST(ast) or darkroom.convIR.isConvIR(ast))
-  local terraType = darkroom.type.toTerraType(ast.type)
-
-  local terra getit(id:int) : terraType
-    var v : &terraType = [&terraType](darkroom.runtime.getTap(id))
-    return @v
+    orionSimple.tapInputs[r.id+1] = value
   end
 
-  return getit(ast.id)
+  return r
 end
 
 function orionSimple.tapLUT(ty, entries, name)

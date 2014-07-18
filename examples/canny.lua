@@ -125,20 +125,8 @@ function convertTo3Char( T , in1  )
 end
 
 
-function convertToPeakImage( in1P , in1H )
-  return im(x,y) [uint8[3]] ( { if in1P(x,y) then 255 else 0 end ,  if in1H(x,y) then 255 else 0 end , 0 }) end
-   --return im(x,y) : uint8[3]   ({ in1(x,y)[0] ,  in1(x,y)[1] , 0 }) end
-   --return im(x,y) : uint8  if in1P(x,y) then 255 else 0 end end
-end
 function convertToPeakImage3( in1 )
   return im convertToPeakImage3(x,y) darkroom.crop([uint8[3]] ( { if in1(x,y)[0] then 255 else 0 end ,  if in1(x,y)[1] then 255 else 0 end , 0 })) end
-   --return im(x,y) : uint8[3]   ({ in1(x,y)[0] ,  in1(x,y)[1] , 0 }) end
-   --return im(x,y) : uint8  if in1P(x,y) then 255 else 0 end end
-end
-function convertToPeakImage2( in1P )
-   --return im(x,y) : uint8[3] ( { if in1P(x,y) then 255 else 0 end ,  if in1H(x,y) then 255 else 0 end , 0 }) end
-   --return im(x,y) : uint8[3]   ({ in1(x,y)[0] ,  in1(x,y)[1] , 0 }) end
-  return im(x,y) [uint8](if in1P(x,y) then 255 else 0 end) end
 end
 
 
@@ -152,9 +140,8 @@ function canny(in1)
 
    local in1P,in1H
 
-   local P = darkroomSimple.tap( int32, "Peak", 3000)
-   local H = darkroomSimple.tap( int32, "Hyst", 1000)
-
+   local P = darkroomSimple.tap( int32, 3000)
+   local H = darkroomSimple.tap( int32, 1000)
 
    in1 = convertToIllum( I , in1 )            -- Convert to illuminance, Implied up shift by 8 bits 
    in1 = convolve_1_5_( G , 8 , in1 ) -- 1x5 Gauss
@@ -166,17 +153,8 @@ function canny(in1)
       in1 = hyst( in1 , true )
    end
 
-   --Convert to single kernel that calculates magnitude as well
 
-   -- in1 = convertToChar( 8 , in1 )  -- Down shift by 8 bits and convert to uint8
-   -- in1 = convertTo3Char( 8 , in1_t )
-   -- in1 = convertToPeakImage( in1P , in1H  )
-   -- in1 = convertToPeakImage2( in1P )
-   -- in1 = convertToPeakImage2( in1 )
-
-   in1 = convertToPeakImage3( in1 )
-
-   return in1 
+   return convertToPeakImage3( in1 )
 end
 
 canny(darkroomSimple.load("color.bmp")):save("out/canny.bmp")

@@ -1043,6 +1043,14 @@ function memo(name, t)
   return symbs, stats
 end
 
+local function boundary(n)
+  if n.kernel.type:baseType():isBool() then
+    return `false
+  else
+    return `0
+  end
+end
+
 -- codegen all the stuff in the inner loop
 function darkroom.terracompiler.codegenInnerLoop(
     core, 
@@ -1115,7 +1123,7 @@ return
               -- theoretically we could do some of this vectorized, but it shouldn't really matter
 
               for [x] = [needed.left], [needed.right] do
-                [outputs[n]:set( loopid, `0, 1 )];
+                [outputs[n]:set( loopid, boundary(n), 1 )];
                 [outputs[n]:next( loopid, 1 )];
                 [inputs[n]:next( loopid, 1 )];
               end
@@ -1139,7 +1147,7 @@ return
               
               -- these need to happen out of order b/c we may _overwrite_ sections of the array that were written by the loop above
               for [x] = needed.left, valid.left do
-                [outputs[n]:set( loopid, `0, 1 )];
+                [outputs[n]:set( loopid, boundary(n), 1 )];
                 [outputs[n]:next( loopid, 1 )];
                 [inputs[n]:next( loopid, 1 )];
               end
@@ -1148,7 +1156,7 @@ return
               [inputs[n]:next( loopid, `valid.right-valid.left )];
               
               for [x] = valid.right, needed.right do
-                [outputs[n]:set( loopid, `0, 1 )];
+                [outputs[n]:set( loopid, boundary(n), 1 )];
                 [outputs[n]:next( loopid, 1 )];
                 [inputs[n]:next( loopid, 1 )];
               end
