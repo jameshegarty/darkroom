@@ -1,4 +1,4 @@
-terralib.require "test"
+(terralib.loadfile("test.t"))()
 import "darkroom"
 
 local targetX = darkroomSimple.tap( int32, 5 )

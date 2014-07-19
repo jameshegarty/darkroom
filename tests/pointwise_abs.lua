@@ -1,4 +1,4 @@
-terralib.require "test"
+(terralib.loadfile("test.t"))()
 import "darkroom"
 
 im in1(x,y) [float](testinput(x,y)) end

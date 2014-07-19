@@ -1,4 +1,4 @@
-terralib.require("test")
+(terralib.loadfile("test.t"))()
 import "darkroom"
 
 local T = {1,2,1, --4

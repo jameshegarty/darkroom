@@ -1,4 +1,4 @@
-terralib.require("test")
+(terralib.loadfile("test.t"))()
 import "darkroom"
 
 -- test that non-vector sized images work

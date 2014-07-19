@@ -397,7 +397,7 @@ For convenience, you can use [extras/darkroomSimple.t](#extrasdarkroomsimplet), 
       inp:load("myfile.bmp"):toDarkroomFormat()
 
       var out : Image
-      out:allocateDarkroomFormat( 128, 128, 1, 8, false, false )
+      out:allocateDarkroomFormat( 128, 128, 4, 1, 8, false, false )
 
       terraPipe( inp.data, out.data, {3} ) -- run pipeline
 
@@ -462,8 +462,8 @@ extras/image.t
 `SOA` true if the data is stored is struct-of-arrays form. eg, each channel is stored contiguously... all red pixels come before all blue pixels, etc. If false, the image is stored in array-of-structs form (channels interleaved). Typical image formats (eg bmp) store their data in array of structs form.
 `data` is a pointer to the first valid pixel in the image. `dataPtr` is a pointer to the data structure that should be freed to free the image. Note that `image.t` takes ownership of the `dataPtr` pointer. Some of its operators can not be done in place, so the original pointer will be freed, so do not expect the original image to remain.
 
-`Image:allocateDarkroomFormat( width : int, height : int, channels : int, bits : int, floating : bool, isSigned : bool )`
-Allocates  memory for the given type in the format that darkroom expects. Useful for allocating space for the output images.
+`Image:allocateDarkroomFormat( width : int, height : int, V : int, channels : int, bits : int, floating : bool, isSigned : bool )`
+Allocates  memory for the given type in the format that darkroom expects. `V` is the vector width the darkroom function was compiled with (default is 4). Useful for allocating space for the output images.
 
 `Image:load(filename : &int8)` load an image file in a supported format
 

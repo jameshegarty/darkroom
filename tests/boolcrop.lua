@@ -1,4 +1,4 @@
-terralib.require("test")
+(terralib.loadfile("test.t"))()
 import "darkroom"
 
 im stripe(x,y) darkroom.crop((x%4)==0) end

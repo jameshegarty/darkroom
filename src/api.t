@@ -105,9 +105,11 @@ function darkroom.compile(inputImageFunctions, outputImageFunctions, tapInputs, 
   checkinput(inputImageFunctions,"input to","image functions",1)
   checkinput(outputImageFunctions,"output from","image functions",1)
   checkinput(tapInputs,"tap inputs to","tap image functions",0)
-  assert(type(inputWidth)=="number")
-  assert(type(inputHeight)=="number")
-  assert(type(options)=="table" or options==nil)
+
+  if type(inputWidth)~="number" then darkroom.error("forth argument to darkroom.compile must be image width") end
+  if type(inputHeight)~="number" then darkroom.error("fifth argument to darkroom.compile must be image width") end
+
+  if type(options)~="table" and options~=nil then darkroom.error("sixth argument to darkroom.compile must be options table or nil") end
 
   -- make it so that we can pipe stdout to a file and 
   -- see results before the compile is totally complete

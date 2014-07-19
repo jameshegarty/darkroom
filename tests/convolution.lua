@@ -1,4 +1,4 @@
-terralib.require "test"
+(terralib.loadfile("test.t"))()
 import "darkroom"
 
 function convolution(N,K,in1)

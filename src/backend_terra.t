@@ -1226,9 +1226,6 @@ function darkroom.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, sh
     shifts,
     options)
 
-  if options.printstage then
-    print("strip list count",#stripList)
-  end
 
   -- The multiple outputs might be shifted relative to each other.
   -- make sure we run enough clock cycles that we compute the whole image for the user

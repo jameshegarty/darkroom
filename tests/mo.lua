@@ -1,5 +1,5 @@
 import "darkroom"
-terralib.require("test")
+(terralib.loadfile("test.t"))()
 
 width = 584
 height = 388

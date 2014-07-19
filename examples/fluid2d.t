@@ -1,57 +1,27 @@
-import "orion"
+import "darkroom"
+terralib.require "bilinear"
+terralib.require "image"
 
--- test the perf model instead of actually runing the sim
-perfModelTest = false
-looptimes = 20
-
-seed = 0
-if perfModelTest then
-  -- make the random scheduler do different stuff each runtime
-  seed = math.floor(os.time())
-  math.randomseed( seed )
-  math.random(); math.random(); math.random()
-end
-
-terralib.require "common"
-
-ffi = require "ffi"
+cstdlib = terralib.includec("stdlib.h")
+cstdio = terralib.includec("stdio.h")
 
 N = 256
 iter = 3
 timestep = 0.1
 maxv = 3
 
-local C = terralib.includecstring [[
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/time.h>
-#include <assert.h>
-#include <pthread.h>
-#include <stdint.h>
-#include <inttypes.h>
-
-double CurrentTimeInSecondsT() {
-  struct timeval tv;
-  gettimeofday(&tv, NULL);
-  return tv.tv_sec + tv.tv_usec / 1000000.0;
-}
-
-]]
-
 function add_source ( input_x, s, dt )
-
-  assert(orion.ast.isAST(input_x))
-  assert(orion.ast.isAST(s))
+  assert(darkroom.ast.isAST(input_x))
+  assert(darkroom.ast.isAST(s))
   assert(type(dt)=="number")
---  int i, size=(N+2)*(N+2);
---  for ( i=0 ; i<size ; i++ ) x[i] += dt*s[i]; 
+
   local im add_source(x,y) input_x(x,y)+dt*s(x,y) end
   return add_source, s
 end
 
 function diffuse ( input_x, input_x0, diff, dt )
-  assert(orion.ast.isAST(input_x))
-  assert(orion.ast.isAST(input_x0))
+  assert(darkroom.ast.isAST(input_x))
+  assert(darkroom.ast.isAST(input_x0))
   assert(type(diff)=="number")
   assert(type(dt)=="number")
 
@@ -67,57 +37,11 @@ function diffuse ( input_x, input_x0, diff, dt )
   return input_x,input_x0
 end
 
---[[
--- need to figure out how to get rid of the select here
 function advect (d, d0, u, v, dt )
-  assert(orion.ast.isAST(d))
-  assert(orion.ast.isAST(d0))
-  assert(orion.ast.isAST(u))
-  assert(orion.ast.isAST(v))
-  assert(type(dt)=="number")
-
-  -- a technical limitation
-  d0:materialize()
-  u:materialize()
-  v:materialize()
-
-  return orion.call(
-    terra(out:&float, dd:&float, uu:&float, vv:&float)
-      for j = 0,N do
-        for i = 0,N do
-          
-          var offx : float = dt*N*uu[j*width:as(int)+i];
-          var offy : float = dt*N*vv[j*width:as(int)+i];
-          var x : float= i-offx; 
-          var y : float = j-offy;
-          
-          if(x<0 or x>=width-1 or y < 0 or y>=height-1) then
-            out[j*width:as(int)+i] = 0
-          else
-            var i0:int=cmath.floor(x);
-            var i1:int=i0+1; 
-            var j0:int=cmath.floor(y);
-            var j1:int=j0+1;
-            
-            var s1 = x-i0; 
-            var s0 = 1-s1; 
-            var t1 = y-j0; 
-            var t0 = 1-t1;
-            
-            out[j*width:as(int)+i] = t0*(s0*dd[i0+j0*width:as(int)]+s1*dd[i1+j0*width:as(int)])+
-              t1*(s0*dd[i0+j1*width:as(int)]+s1*dd[i1+j1*width:as(int)]);
-          end
-        end
-      end
-    end, orion.type.float(32), {d0, u, v}), d0
-end
-]]
-
-function advect (d, d0, u, v, dt )
-  assert(orion.ast.isAST(d))
-  assert(orion.ast.isAST(d0))
-  assert(orion.ast.isAST(u))
-  assert(orion.ast.isAST(v))
+  assert(darkroom.ast.isAST(d))
+  assert(darkroom.ast.isAST(d0))
+  assert(darkroom.ast.isAST(u))
+  assert(darkroom.ast.isAST(v))
   assert(type(dt)=="number")
 
   local adv = resampleBilinear(
@@ -128,15 +52,14 @@ function advect (d, d0, u, v, dt )
     im(x,y) -dt*u(x,y)*N end,
     im(x,y) -dt*v(x,y)*N end)
 
-  -- by default, resample Bilinear has cropNone
   return im(x,y) adv(x,y) end, d0
 end
 
 function project ( u, v, p, div )
-  assert(orion.ast.isAST(u))
-  assert(orion.ast.isAST(v))
-  assert(orion.ast.isAST(p))
-  assert(orion.ast.isAST(div))
+  assert(darkroom.ast.isAST(u))
+  assert(darkroom.ast.isAST(v))
+  assert(darkroom.ast.isAST(p))
+  assert(darkroom.ast.isAST(div))
 
   local h = 1.0/N
 
@@ -156,22 +79,22 @@ end
 
 function dens_step ( x, x0, u, v, diff, dt )
 
-  assert(orion.ast.isAST(u))
-  assert(orion.ast.isAST(v))
+  assert(darkroom.ast.isAST(u))
+  assert(darkroom.ast.isAST(v))
 
-  assert(orion.ast.isAST(x))
-  assert(orion.ast.isAST(x0))
+  assert(darkroom.ast.isAST(x))
+  assert(darkroom.ast.isAST(x0))
   x,x0 = add_source ( x, x0, dt )
   x,x0 = x0,x
-  assert(orion.ast.isAST(x))
-  assert(orion.ast.isAST(x0))
+  assert(darkroom.ast.isAST(x))
+  assert(darkroom.ast.isAST(x0))
   x,x0 = diffuse ( x, x0, diff, dt )
   x,x0 = x0,x
-  assert(orion.ast.isAST(x))
-  assert(orion.ast.isAST(x0))
+  assert(darkroom.ast.isAST(x))
+  assert(darkroom.ast.isAST(x0))
   x,x0 = advect ( x, x0, u, v, dt )
-  assert(orion.ast.isAST(x))
-  assert(orion.ast.isAST(x0))
+  assert(darkroom.ast.isAST(x))
+  assert(darkroom.ast.isAST(x0))
   
   return x,x0,u,v
 end
@@ -191,128 +114,69 @@ function vel_step ( u, v, u0, v0, visc, dt )
   u,u0 = advect ( u, u0, u0, v0, dt )
   v,v0 = advect ( v, v0, u0, v0, dt )
   u,v,u0,v0 = project ( u, v, u0, v0 )
-  assert(orion.ast.isAST(u))
-  assert(orion.ast.isAST(v))
-  assert(orion.ast.isAST(u0))
-  assert(orion.ast.isAST(v0))
+  assert(darkroom.ast.isAST(u))
+  assert(darkroom.ast.isAST(v))
+  assert(darkroom.ast.isAST(u0))
+  assert(darkroom.ast.isAST(v0))
   
   return u,v,u0,v0
 end
 
-u_orig = {}
-v_orig = {}
-d_orig = {}
-
 function setupAndCompile()
-  local u = orion.constant( orion.type.float(32), N, N, 0 )
-  u_orig = u
-  local v = orion.constant( orion.type.float(32), N, N, 0 )
-  v_orig = v
-  local d = orion.constant( orion.type.float(32), N, N, 0 )
-  d_orig = d
+  local u_in = darkroom.input( float )
+  local v_in = darkroom.input( float )
+  local d_in = darkroom.input( float )
 
-  local terra init()
-    var u_delta_im_data = [&float](C.malloc(N*N*sizeof(float)))
-    var v_delta_im_data = [&float](C.malloc(N*N*sizeof(float)))
-    var d_delta_im_data = [&float](C.malloc(N*N*sizeof(float)))
+  -- fluid source
+  local im u_delta(x,y) [float](if x>11 and x<14 and y>11 and y<14 then 1 else 0 end) end
+  local im v_delta(x,y) [float](0) end
+  local im d_delta(x,y) [float](if x>11 and x<14 and y>11 and y<14 then 1 else 0 end) end
+
+  local u,v,u_delta,v_delta = vel_step(u_in,v_in,u_delta,v_delta, 0, timestep)
+  local d,d_delta,u,v = dens_step(d_in,d_delta,u,v,0,timestep)
   
-    for i=0,N do
-      for j=0,N do
-        if i>11 and i<14 and j>11 and j<14 then 
-          d_delta_im_data[N*j+i] = 1
-          u_delta_im_data[N*j+i] = 1
-          v_delta_im_data[N*j+i] = 0
-        else
-          d_delta_im_data[N*j+i] = 0
-          u_delta_im_data[N*j+i] = 0
-          v_delta_im_data[N*j+i] = 0
-        end
-      end
-    end
-    
-    return u_delta_im_data, v_delta_im_data, d_delta_im_data
-  end
-
-  local u_delta_im_data, v_delta_im_data, d_delta_im_data = unpacktuple(init())
-
-  local terra makeIm(data : &float, str : &int8)
-    var img : Image
-    img:initSimple(N,N,1,32,true,false,data)
-    img:save(str)
-    return img
-  end
-
-  local u_delta_im = makeIm(u_delta_im_data, "u_delta.bmp")
-  local u_delta = orion.image(orion.type.float(32),N,N)
-  orion.bindImage(u_delta:id(), u_delta_im)
-  
-  local v_delta_im = makeIm(v_delta_im_data, "v_delta.bmp")
-  local v_delta = orion.image(orion.type.float(32),N,N)
-  orion.bindImage(v_delta:id(), v_delta_im)
-
-  local d_delta_im = makeIm(d_delta_im_data, "d_delta.bmp")
-  local d_delta = orion.image(orion.type.float(32),N,N)
-  orion.bindImage(d_delta:id(), d_delta_im)
-
-  u,v,u_delta,v_delta = vel_step(u,v,u_delta,v_delta, 0, timestep)
-  d,d_delta,u,v = dens_step(d,d_delta,u,v,0,timestep)
-  
-  local calcFluid, model = orion.compile(
-    {u,v,d},
-    {
---      schedule="random15", 
-      calcPerfModel = false,
---     schedule="materialize", 
-      verbose = false, debug = false, printruntime=(perfModelTest==false), looptimes=looptimes})
-
-  return calcFluid, model
+  return darkroom.compile( {u_in,v_in,d_in}, {u,v,d}, {}, N, N, {printstage=true} )
 end
 
-calcFluid, model = setupAndCompile()
+calcFluid = setupAndCompile()
 
-if perfModelTest==false and false then
-  for k,v in pairs(model.nodes) do
-    print(k,v, model.compute[k], model.memory[k], model.latency[k])
-  end
+struct TapStruct {}
+
+terra swap( a : &&opaque, b : &&opaque )
+  var t = @a
+  @a = @b
+  @b = t
 end
 
-terra runIters()
-  var uoutStr : int8[100]
-  var voutStr : int8[100]
-  var doutStr : int8[100]
+floatIm = darkroom.input(float)
+im floatToUint8(x,y) [uint8](floatIm*255) end
+floatToUint8 = darkroom.compile( {floatIm}, {floatToUint8}, {}, N, N )
 
-  var iterations = 5
-  if perfModelTest then iterations=1 end
+terra run()
+  var u_in = cstdlib.calloc( 1, N*N*sizeof(float) )
+  var v_in = cstdlib.calloc( 1, N*N*sizeof(float) )
+  var d_in = cstdlib.calloc( 1, N*N*sizeof(float) )
 
+  var u_out = cstdlib.malloc( N*N*sizeof(float) )
+  var v_out = cstdlib.malloc( N*N*sizeof(float) )
+  var d_out = cstdlib.malloc( N*N*sizeof(float) )
+
+  var tapStruct : TapStruct
+
+  var iterations = 1
   for i=0,iterations do
-
-    var start = C.CurrentTimeInSecondsT()
-    var uout,vout,dout = calcFluid()
-    var endt = C.CurrentTimeInSecondsT()
-
---    C.printf("%d %f %f\n", seed, (endt-start)/looptimes, model.total)
-    C.printf("%d %f\n", seed, (endt-start)/looptimes)
-
-    C.snprintf(uoutStr,100,"out/u%d.bmp",i)
-    uout:save(uoutStr)
-    C.snprintf(voutStr,100,"out/v%d.bmp",i)
-    vout:save(voutStr)
-    C.snprintf(doutStr,100,"out/d%d.bmp",i)
-    dout:save(doutStr)
-
-    -- make a copy of the final image
-    if i==iterations-1 then
-      C.snprintf(doutStr,100,"out/fluid2d.bmp",i)
-      dout:save(doutStr)
-    end
-
-    orion.bindImage( [u_orig:id()], &uout )
-    orion.bindImage( [v_orig:id()], &vout )
-    orion.bindImage( [d_orig:id()], &dout )
-    uout:free()
-    vout:free()
-    dout:free()
+    cstdio.printf("Do Iteration %d/50\n",i)
+    calcFluid( u_in, v_in, d_in, u_out, v_out, d_out, &tapStruct )
+    if i<iterations-1 then swap(&u_in, &u_out); swap(&v_in, &v_out); swap(&d_in, &d_out) end
   end
+  
+  var output : Image
+  output:allocateDarkroomFormat(N,N,4,1,8,false,false)
+  floatToUint8( d_out, output.data, &tapStruct )
+  output:save("out/fluid2d.bmp")
+
+  cstdlib.free(u_in); cstdlib.free(v_in); cstdlib.free(d_in)
+  cstdlib.free(u_out); cstdlib.free(v_out); cstdlib.free(d_out)
 end
 
-runIters()
+run()

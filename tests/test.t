@@ -1,5 +1,3 @@
-package.path = package.path .. ";../src/?.lua;../src/?.t"
-
 local ffi = require("ffi")
 
 -- LINE COVERAGE INFORMATION                                                                                                                              

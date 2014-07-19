@@ -1,4 +1,4 @@
-terralib.require "test"
+(terralib.loadfile("test.t"))()
 import "darkroom"
 
 im out1(x,y)  testinput(x,y)/[uint8](2) end

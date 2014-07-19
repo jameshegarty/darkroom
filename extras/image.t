@@ -1048,6 +1048,28 @@ terra Image:initWithRaw(filename : &int8, w:int, h:int, bits:int, header : int, 
   self:init(w,h,w,1,bytesOut*8,false,false,false,data,data)
 end
 
+terra Image:allocateDarkroomFormat(
+  width : int,
+  height : int,
+  V : int,
+  channels : int,
+  bits : int,
+  floating : bool,
+  isSigned : bool)
+  
+  self.width = width
+  self.height = height
+  self.stride = upToNearestTerra(V, width)
+  self.channels = channels
+  self.bits = bits
+  self.floating = floating
+  self.isSigned = isSigned
+  self.SOA = true
+  
+  self.dataPtr = cstdlib.malloc(self.height*self.stride*(bits/8)*channels)
+  self.data = self.dataPtr
+end
+
 terra Image:free()
   cstdlib.free(self.dataPtr)
 end
@@ -1093,7 +1115,7 @@ terra Image:save(filename : &int8)
   var ext = filename + cstring.strlen(filename) - 3
   --cstdio.printf("EXT %s\n",ext)
 
-  if self.bits==8 and (self.channels==1 or self.channels==3) and self.floating==false and self.isSigned==false and self.SOA==false then
+  if self.bits==8 and (self.channels==1 or self.channels==3) and self.floating==false and self.isSigned==false and (self.SOA==false or self.channels==1) then
     if verbose then cstdio.printf("Assuming uint8\n") end
     if cstring.strcmp(ext,"jjm")==0 then
        var us = self:deepcopyUnstride()

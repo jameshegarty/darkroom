@@ -1,4 +1,4 @@
-terralib.require("test")
+(terralib.loadfile("test.t"))()
 import "darkroom"
 
 darkroomSimple.setImageSize(128,64)

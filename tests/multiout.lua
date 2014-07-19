@@ -1,4 +1,4 @@
-terralib.require("test")
+(terralib.loadfile("test.t"))()
 import "darkroom"
 
 im inp(x,y)  [int32](testinput(x,y)) end

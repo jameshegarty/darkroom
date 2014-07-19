@@ -1,6 +1,6 @@
 ffi = require "ffi"
 
-terralib.require("test")
+(terralib.loadfile("test.t"))()
 terralib.require("bilinear")
 import "darkroom"
 
