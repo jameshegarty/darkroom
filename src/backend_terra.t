@@ -534,11 +534,12 @@ darkroom.terracompiler.boolBinops={
 
 mapreducevarSymbols = {}
 function darkroom.terracompiler.codegen(
-  inkernel, V, xsymb, ysymb, loopid, stripCount, kernelNode, inputImages, outputs, taps, TapStruct, validLeft, validRight)
+  inkernel, V, xsymb, ysymb, loopid, stripCount, kernelNode, inputImages, outputs, taps, TapStruct, validLeft, validRight, debug)
 
   assert(type(loopid)=="number")
   assert(type(stripCount)=="number")
   assert(type(TapStruct)=="table")
+  assert(type(debug)=="boolean")
 
   local res = inkernel:visitEach(
     function(node,args)
@@ -844,21 +845,23 @@ function darkroom.terracompiler.codegen(
             relY = node.input.relY:codegen()
           end
 
-          out = quote
-            for i = 0,V do
-              if inpX[i] > node.maxX or inpX[i] < -node.maxX then
-                cstdio.printf("error, gathered outside of stencil X %d (max %d)\n",inpX[i], node.maxX)
-                orionAssert(false,"gathered outside of stencil")
-              end
+          out = `[inputImages[kernelNode][node.input.from][c]:get(loopid, true, `inpX+relX, `inpY+relY,  V, validLeft, validRight)]
 
-              if inpY[i] > node.maxY or inpY[i] < -node.maxY then
-                cstdio.printf("error, gathered outside of stencil Y %d (max %d)\n",inpY[i], node.maxY)
-                orionAssert(false,"gathered outside of stencil")
+          if debug then
+            out = quote
+              for i = 0,V do
+                if inpX[i] > node.maxX or inpX[i] < -node.maxX then
+                  cstdio.printf("error, gathered outside of stencil X %d (max %d)\n",inpX[i], node.maxX)
+                  orionAssert(false,"gathered outside of stencil")
+                end
+                
+                if inpY[i] > node.maxY or inpY[i] < -node.maxY then
+                  cstdio.printf("error, gathered outside of stencil Y %d (max %d)\n",inpY[i], node.maxY)
+                  orionAssert(false,"gathered outside of stencil")
+                end
               end
-            end
-
-            in [inputImages[kernelNode][node.input.from][c]:get(loopid, true, `inpX+relX, `inpY+relY,  V, validLeft, validRight)]
-            end
+            in out end
+          end
         elseif node.kind=="crop" then
           -- just pass through, crop only affects loop iteration space
           out = inputs["expr"][c]
@@ -1113,7 +1116,7 @@ return
           end
         end)
 
-      local expr,statements=darkroom.terracompiler.codegen( n.kernel,  options.V, x, clock, loopid, options.stripcount, n, inputs, outputs, taps, TapStruct, valid.left, valid.right)
+      local expr,statements=darkroom.terracompiler.codegen( n.kernel,  options.V, x, clock, loopid, options.stripcount, n, inputs, outputs, taps, TapStruct, valid.left, valid.right, options.debug)
 
       table.insert(loopCode,
         quote

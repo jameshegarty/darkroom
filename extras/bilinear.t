@@ -5,7 +5,13 @@
 
 import "darkroom"
 
-function resampleBilinear(clamp,input, maxX, maxY, offsetX, offsetY)
+local function doclamp(img, max)
+  return im(x,y) 
+    if img>max then max else (if img<-max then -max else img end) end
+  end
+end
+
+function resampleBilinear( clamp, input, maxX, maxY, offsetX, offsetY )
   if maxX==nil then darkroom.error("maxX is nil") end
   if maxY==nil then darkroom.error("maxY is nil") end
   if type(maxX)~="number" then darkroom.error("maxX must be a number") end
@@ -18,16 +24,22 @@ function resampleBilinear(clamp,input, maxX, maxY, offsetX, offsetY)
   im offsetX(x,y) [float]( offsetX(x,y) ) end
   im offsetY(x,y) [float]( offsetY(x,y) ) end
 
-  
   local im targetX(x,y) [int32]( darkroom.floor(offsetX(x,y)) ) end
   local im targetXp1(x,y) [int32]( darkroom.floor(offsetX(x,y))+1 ) end
   local im targetY(x,y) [int32]( darkroom.floor(offsetY(x,y)) ) end  
   local im targetYp1(x,y) [int32]( darkroom.floor(offsetY(x,y))+1 ) end
 
-  local im valueXY(x,y)  darkroom.gather(input(x,y), targetX(x,y), targetY(x,y), maxX, maxY, clamp) end
-  local im valueXp1Y(x,y)  darkroom.gather(input(x,y), targetXp1(x,y), targetY(x,y), maxX, maxY, clamp) end
-  local im valueXYp1(x,y)  darkroom.gather(input(x,y), targetX(x,y), targetYp1(x,y), maxX, maxY, clamp) end
-  local im valueXp1Yp1(x,y)  darkroom.gather(input(x,y), targetXp1(x,y), targetYp1(x,y), maxX, maxY, clamp) end
+  if clamp then
+    targetX = doclamp(targetX,maxX)
+    targetXp1 = doclamp(targetXp1,maxX)
+    targetY = doclamp(targetY,maxY)
+    targetYp1 = doclamp(targetYp1,maxY)
+  end
+
+  local im valueXY(x,y)  darkroom.gather(input(x,y), targetX(x,y), targetY(x,y), maxX, maxY ) end
+  local im valueXp1Y(x,y)  darkroom.gather(input(x,y), targetXp1(x,y), targetY(x,y), maxX, maxY ) end
+  local im valueXYp1(x,y)  darkroom.gather(input(x,y), targetX(x,y), targetYp1(x,y), maxX, maxY ) end
+  local im valueXp1Yp1(x,y)  darkroom.gather(input(x,y), targetXp1(x,y), targetYp1(x,y), maxX, maxY ) end
 
   local im wx(x,y) [float]( offsetX(x,y) - targetX(x,y) ) end
   local im wy(x,y) [float]( offsetY(x,y) - targetY(x,y) ) end

@@ -5,9 +5,9 @@ terralib.require "image"
 cstdlib = terralib.includec("stdlib.h")
 cstdio = terralib.includec("stdio.h")
 
-N = 256
+N = 64
 iter = 3
-timestep = 0.1
+timestep = 0.02
 maxv = 3
 
 function add_source ( input_x, s, dt )
@@ -15,7 +15,7 @@ function add_source ( input_x, s, dt )
   assert(darkroom.ast.isAST(s))
   assert(type(dt)=="number")
 
-  local im add_source(x,y) input_x(x,y)+dt*s(x,y) end
+  local im add_source(x,y) darkroom.crop(input_x(x,y)+dt*s(x,y)) end
   return add_source, s
 end
 
@@ -30,7 +30,7 @@ function diffuse ( input_x, input_x0, diff, dt )
 
   for k=0,iter do
     im input_x(x,y) 
-      (input_x0(x,y) + a*(input_x(x-1,y)+input_x(x+1,y)+input_x(x,y-1)+input_x(x,y+1)) )*b
+      darkroom.crop((input_x0(x,y) + a*(input_x(x-1,y)+input_x(x+1,y)+input_x(x,y-1)+input_x(x,y+1)) )*b)
     end
   end
 
@@ -49,10 +49,10 @@ function advect (d, d0, u, v, dt )
     d0,
     maxv,
     maxv,
-    im(x,y) -dt*u(x,y)*N end,
-    im(x,y) -dt*v(x,y)*N end)
+    im(x,y) darkroom.crop(-dt*u(x,y)*N) end,
+    im(x,y) darkroom.crop(-dt*v(x,y)*N) end)
 
-  return im(x,y) adv(x,y) end, d0
+  return im(x,y) darkroom.crop(adv(x,y)) end, d0
 end
 
 function project ( u, v, p, div )
@@ -63,16 +63,16 @@ function project ( u, v, p, div )
 
   local h = 1.0/N
 
-  im div(x,y) -0.5*h*(u(x+1,y)-u(x-1,y)+v(x,y+1)-v(x,y-1)) end
+  im div(x,y) darkroom.crop(-0.5*h*(u(x+1,y)-u(x-1,y)+v(x,y+1)-v(x,y-1))) end
   im p(x,y) 0 end
 
   local a = 1/4
   for k=0,iter do
-    im p(x,y) (div(x,y)+p(x-1,y)+p(x+1,y)+p(x,y-1)+p(x,y+1))*a end
+    im p(x,y) darkroom.crop((div(x,y)+p(x-1,y)+p(x+1,y)+p(x,y-1)+p(x,y+1))*a) end
   end
   
-  im u(x,y) u(x,y) - 0.5*(p(x+1,y)-p(x-1,y))*N end
-  im v(x,y) v(x,y) - 0.5*(p(x,y+1)-p(x,y-1))*N end
+  im u(x,y) darkroom.crop(u(x,y) - 0.5*(p(x+1,y)-p(x-1,y))*N) end
+  im v(x,y) darkroom.crop(v(x,y) - 0.5*(p(x,y+1)-p(x,y-1))*N) end
 
   return u, v, p, div
 end
@@ -128,9 +128,9 @@ function setupAndCompile()
   local d_in = darkroom.input( float )
 
   -- fluid source
-  local im u_delta(x,y) [float](if x>11 and x<14 and y>11 and y<14 then 1 else 0 end) end
+  local im u_delta(x,y) [float](if x>8 and x<12 and y>26 and y<38 then 1 else 0 end) end
   local im v_delta(x,y) [float](0) end
-  local im d_delta(x,y) [float](if x>11 and x<14 and y>11 and y<14 then 1 else 0 end) end
+  local d_delta = u_delta
 
   local u,v,u_delta,v_delta = vel_step(u_in,v_in,u_delta,v_delta, 0, timestep)
   local d,d_delta,u,v = dens_step(d_in,d_delta,u,v,0,timestep)
@@ -149,8 +149,11 @@ terra swap( a : &&opaque, b : &&opaque )
 end
 
 floatIm = darkroom.input(float)
-im floatToUint8(x,y) [uint8](floatIm*255) end
-floatToUint8 = darkroom.compile( {floatIm}, {floatToUint8}, {}, N, N )
+ftumin = darkroom.tap(float)
+ftumax = darkroom.tap(float)
+im floatToUint8(x,y) [uint8](((floatIm-ftumin)/(ftumax-ftumin))*255) end
+floatToUint8 = darkroom.compile( {floatIm}, {floatToUint8}, {ftumin,ftumax}, N, N )
+struct ftuStruct {min:float, max:float}
 
 terra run()
   var u_in = cstdlib.calloc( 1, N*N*sizeof(float) )
@@ -161,18 +164,39 @@ terra run()
   var v_out = cstdlib.malloc( N*N*sizeof(float) )
   var d_out = cstdlib.malloc( N*N*sizeof(float) )
 
+  for y=0,N do
+  for x=0,N do
+    ([&float](u_in))[y*N+x] = 0
+    ([&float](v_in))[y*N+x] = 0
+    ([&float](d_in))[y*N+x] = 0
+  end
+  end
+
   var tapStruct : TapStruct
 
-  var iterations = 1
+  var iterations = 300
   for i=0,iterations do
     cstdio.printf("Do Iteration %d/50\n",i)
     calcFluid( u_in, v_in, d_in, u_out, v_out, d_out, &tapStruct )
     if i<iterations-1 then swap(&u_in, &u_out); swap(&v_in, &v_out); swap(&d_in, &d_out) end
   end
-  
+
+  var max = -20000000.0
+  var min = 20000000.0
+
+  for y=0,N do
+  for x=0,N do
+    var dv = ([&float](d_out))[y*N+x]
+    if dv > max then max = dv end
+    if dv < min then min = dv end
+  end
+  end
+
+  cstdio.printf("%f %f\n",min, max)
   var output : Image
   output:allocateDarkroomFormat(N,N,4,1,8,false,false)
-  floatToUint8( d_out, output.data, &tapStruct )
+  var ts = ftuStruct {min,max}
+  floatToUint8( d_out, output.data,&ts)
   output:save("out/fluid2d.bmp")
 
   cstdlib.free(u_in); cstdlib.free(v_in); cstdlib.free(d_in)
