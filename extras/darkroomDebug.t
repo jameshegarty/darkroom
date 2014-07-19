@@ -259,10 +259,15 @@ function darkroom.ast.check(node,options)
   return astFunctions.check(node,options)
 end
 
-function astPrintPrettys(self)
-  if type(self)=="number" then return tostring(self) end
+function astPrintPrettys(root)
+  if type(root)=="number" then return tostring(root) end
 
-  local out
+  local assignments = {}
+
+  local res = root:visitEach(
+    function( self, inputs)
+
+      local out
 
   if self.kind=="func" then
     local i=1
@@ -277,7 +282,7 @@ function astPrintPrettys(self)
       out = out.."("
       local i=1
       while self["arg"..i] do
-        out = out..astPrintPrettys(self["arg"..i])
+        out = out..inputs["arg"..i]
         if self["arg"..(i+1)] then out=out.."," end
         i=i+1
       end
@@ -285,9 +290,9 @@ function astPrintPrettys(self)
     end
 
   elseif self.kind=="binop" then
-    out="("..astPrintPrettys(self.lhs)..")"..self.op.."("..astPrintPrettys(self.rhs)..")"
+    out="("..inputs.lhs..")"..self.op.."("..inputs.rhs..")"
   elseif self.kind=="unary" then
-    out=self.op.."("..astPrintPrettys(self.expr)..")"
+    out=self.op.."("..inputs.expr..")"
   elseif self.kind=="value" then
     out=tostring(self.value)
   elseif self.kind=="load" then
@@ -295,12 +300,12 @@ function astPrintPrettys(self)
   elseif self.kind=="mapreduce" then
     local vars,i = "",1
     while self["varname"..i] do
-      vars = vars.."_mr_"..self["varname"..i]..tostring(self["varid"..i]).."="..astPrintPrettys(self["varlow"..i])..","..astPrintPrettys(self["varhigh"..i]).." "
+      vars = vars.."_mr_"..self["varname"..i]..tostring(self["varid"..i]).."="..inputs["varlow"..i]..","..inputs["varhigh"..i].." "
       i=i+1
     end
-    out="map "..vars.." reduce("..self.reduceop..") "..astPrintPrettys(self.expr).." end"
+    out="map "..vars.." reduce("..self.reduceop..") "..inputs.expr.." end"
   elseif self.kind=="mapreducevar" then
-    out="_mr_"..self.variable..tostring(self.id).."["..astPrintPrettys(self.low).." to "..astPrintPrettys(self.high).."]"
+    out="_mr_"..self.variable..tostring(self.id).."["..inputs.low.." to "..inputs.high.."]"
   elseif self.kind=="letvar" then
     out="_letvar_"..self.variable
   elseif self.kind=="reduce" then
@@ -312,27 +317,27 @@ function astPrintPrettys(self)
   elseif self.kind=="tapLUT" then
     out="_tapLUT_"..self.id
   elseif self.kind=="tapLUTLookup" then
-    out="_tapLUT_"..self.id.."["..astPrintPrettys(self.index).."]"
+    out="_tapLUT_"..self.id.."["..inputs.index.."]"
   elseif self.kind=="transform" then
-    out= astPrintPrettys(self.expr)
+    out= inputs.expr
     if self.arg1~=nil then
       out = out.."("
       local i=1
       while self["arg"..i] do
-        out = out..astPrintPrettys(self["arg"..i])..","
+        out = out..inputs["arg"..i]..","
         i=i+1
       end
       out = out..")"
     end
 
   elseif self.kind=="select" or self.kind=="vectorSelect" then
-    out="if "..astPrintPrettys(self.cond).." then "..astPrintPrettys(self.a).." else "..astPrintPrettys(self.b).." end"
+    out="if "..inputs.cond.." then "..inputs.a.." else "..inputs.b.." end"
   elseif self.kind=="lua" then
     out = "luaexpr"
   elseif self.kind=="crop" then
-    out = "crop("..astPrintPrettys(self.expr)..", shiftY=" .. self.shiftY .. ")"
+    out = "crop("..inputs.expr..", shiftY=" .. self.shiftY .. ")"
   elseif self.kind=="cast" then
-    out = "cast("..astPrintPrettys(self.expr)..","..self.type:str()..")"
+    out = "cast("..inputs.expr..","..self.type:str()..")"
   elseif self.kind=="type" then
     out = self.type:str()
   elseif self.kind=="let" then
@@ -340,45 +345,45 @@ function astPrintPrettys(self)
     
     local cnt = 1
     while self["expr"..cnt] do
-      out = out .. self["exprname"..cnt] .. " = " .. astPrintPrettys(self["expr"..cnt]) .. "\n"
+      out = out .. self["exprname"..cnt] .. " = " .. inputs["expr"..cnt] .. "\n"
       cnt = cnt + 1
     end
 
-    out = out .. "in " .. astPrintPrettys(self.res)
+    out = out .. "in " .. inputs.res
   elseif self.kind=="array" then
     out = "{"
     local cnt = 1
     while self["expr"..cnt] do
-      out = out .. astPrintPrettys(self["expr"..cnt]) .. ","
+      out = out .. inputs["expr"..cnt] .. ","
       cnt = cnt + 1
     end
     out = out .. "}"
   elseif self.kind=="assert" then
-    out = "assert("..astPrintPrettys(self.expr)..","..self.printval:printprettys()..","..self.cond:printprettys()..")"
+    out = "assert("..inputs.expr..","..inputs.printval..","..inputs.cond..")"
   elseif self.kind=="outputs" then
     out = "outputs("
 
     local cnt = 1
     while self["expr"..cnt] do
-      out = out .. astPrintPrettys(self["expr"..cnt]) .. ","
+      out = out .. inputs["expr"..cnt] .. ","
       cnt = cnt + 1
     end
 
     out = out .. ")"
   elseif self.kind=="switch" then
-    out = "switch "..astPrintPrettys(self.controlExpr).."\n"
+    out = "switch "..inputs.controlExpr.."\n"
     self:map("expr",function(n,idx)
-               out = out .. astPrintPrettys(self["val"..idx]) .. " => "..astPrintPrettys(n).."\n"
+               out = out .. inputs["val"..idx] .. " => ".. inputs["expr"..idx].."\n"
                     end)
-    out = out.."default => "..astPrintPrettys(self.default).."\n"
+    out = out.."default => "..inputs.default.."\n"
     out = out.."end"
   elseif self.kind=="gather" then
-    out = "gather(\n"..astPrintPrettys(self.input)..",\n"
-    out = out..astPrintPrettys(self.x)..",\n"
-    out = out..astPrintPrettys(self.y)..",\n"
+    out = "gather(\n"..inputs.input..",\n"
+    out = out..inputs.x..",\n"
+    out = out..inputs.y..",\n"
     out = out..tostring(self.maxX)..", "..tostring(self.maxY)..", "..tostring(self.clamp)..")"
   elseif self.kind=="index" then
-    out = astPrintPrettys(self.expr).."["..astPrintPrettys(self.index).."]"
+    out = inputs.expr.."["..inputs.index.."]"
   elseif self.kind=="var" then
 --    out = self.name
     out = "VAR"..self.name
@@ -387,7 +392,19 @@ function astPrintPrettys(self)
     assert(false)
   end
 
+  local displayInVar = (self:parentCount(root)>1)
+
+  if displayInVar then
+    assignments[self:name()] = out
+    return self:name()
+  end
+
   return out
+    end)
+
+  local fres = ""
+  for k,v in pairs(assignments) do fres = fres..k.." = "..v.."\n" end
+  return fres..res
 end
 
 function typedASTFunctions:expectedKeycount()
@@ -492,12 +509,12 @@ end
 
 -- assignments is used to store variables we've assigned to
 -- assignments: varname -> string
-function typedASTPrintPrettys(self,root,assignments)
-  if type(self)=="number" then return tostring(self) end
+function typedASTPrintPrettys(root)
+  if type(root)=="number" then return tostring(root) end
 
-  assert(darkroom.typedAST.isTypedAST(self))
-  assert(darkroom.typedAST.isTypedAST(root))
-  assert(type(assignments)=="table")
+  local assignments = {}
+  local res = root:visitEach(
+    function( self, inputs )
 
   local out = "["..darkroom.type.typeToString(self.type).."]"
 
@@ -510,8 +527,8 @@ function typedASTPrintPrettys(self,root,assignments)
     end
 
   elseif self.kind=="binop" then
-    out = out.."("..typedASTPrintPrettys(self.lhs,root,assignments)..")"
-    out = out..self.op.."("..typedASTPrintPrettys(self.rhs,root,assignments)..")"
+    out = out.."("..inputs.lhs..")"
+    out = out..self.op.."("..inputs.rhs..")"
   elseif self.kind=="multibinop" then
     out = out.."("
     self:map("lhs",
@@ -535,7 +552,7 @@ function typedASTPrintPrettys(self,root,assignments)
     out = out..")"
 
   elseif self.kind=="unary" then
-    out=out..self.op.."("..typedASTPrintPrettys(self.expr,root,assignments)..")"
+    out=out..self.op.."("..inputs.expr..")"
   elseif self.kind=="value" then
     out=out..tostring(self.value)
   elseif self.kind=="input" then
@@ -543,13 +560,13 @@ function typedASTPrintPrettys(self,root,assignments)
   elseif self.kind=="position" then
     out=out..self.coord
   elseif self.kind=="cast" then
-    out = out..typedASTPrintPrettys(self.expr,root,assignments)
+    out = out..inputs.expr
   elseif self.kind=="tap" then
     out=out.."_tap_"..self.id
   elseif self.kind=="tapLUTLookup" then
-    out=out.."_tapLUT_"..self.id.."["..typedASTPrintPrettys(self.index,root,assignments).."]"
+    out=out.."_tapLUT_"..self.id.."["..inputs.index.."]"
   elseif self.kind=="transformBaked" then
-    out = out..typedASTPrintPrettys(self.expr,root,assignments).."("
+    out = out..inputs.expr.."("
 
     local i=1
     while self["translate"..i] do
@@ -565,18 +582,18 @@ function typedASTPrintPrettys(self,root,assignments)
 
     local i=1
     while self["expr"..i] do
-      out = out..typedASTPrintPrettys(self["expr"..i],root,assignments)
+      out = out..inputs["expr"..i]
       if self["expr"..(i+1)] then out = out..",\n" end
       i=i+1
     end
     
     out = out  .. ")"
   elseif self.kind=="select" then
-    out=out.."if "..typedASTPrintPrettys(self.cond,root,assignments).." then "..typedASTPrintPrettys(self.a,root,assignments).." else "..typedASTPrintPrettys(self.b,root,assignments).." end"
+    out=out.."if "..inputs.cond.." then "..inputs.a.." else "..inputs.b.." end"
   elseif self.kind=="vectorSelect" then
-    out=out.."vectorSelect("..typedASTPrintPrettys(self.cond,root,assignments)..","..typedASTPrintPrettys(self.a,root,assignments)..","..typedASTPrintPrettys(self.b,root,assignments)..")"
+    out=out.."vectorSelect("..inputs.cond..","..inputs.a..","..inputs.b..")"
   elseif self.kind=="crop" then
-    out = out.."crop("..typedASTPrintPrettys(self.expr,root,assignments)..", shiftY=" .. self.shiftY .. ")"
+    out = out.."crop("..inputs.expr..", shiftY=" .. self.shiftY .. ")"
   elseif self.kind=="array" or
     self.kind=="toAOS" then
 
@@ -585,7 +602,7 @@ function typedASTPrintPrettys(self,root,assignments)
     self:map("expr", 
              function(n,index)
                
-               out = out .. typedASTPrintPrettys(self["expr"..index],root,assignments)..", "
+               out = out .. inputs["expr"..index]..", "
              end)
 
     out = out..")"
@@ -597,16 +614,16 @@ function typedASTPrintPrettys(self,root,assignments)
 
     self:map("expr", 
              function(n,index)
-               out = out..typedASTPrintPrettys(n,root,assignments)..", "
+               out = out..inputs["expr"..index]..", "
              end)
 
     out = out..")"
   elseif self.kind=="index" then
-    out = out.."("..typedASTPrintPrettys(self.expr, root, assignments)..")["..astPrintPrettys(self.index).."]"
+    out = out.."("..inputs.expr..")["..astPrintPrettys(self.index).."]"
   elseif self.kind=="gather" then
-    out = "gather(\n"..typedASTPrintPrettys(self.input, root, assignments)..",\n"
-    out = out..typedASTPrintPrettys(self.x,root, assignments)..",\n"
-    out = out..typedASTPrintPrettys(self.y,root, assignments)..",\n"
+    out = "gather(\n"..inputs.input..",\n"
+    out = out..inputs.x..",\n"
+    out = out..inputs.y..",\n"
     out = out..tostring(self.maxX)..", "..tostring(self.maxY)..", "..tostring(self.clamp)..")"
   elseif self.kind=="load" then
     local n = self.from
@@ -618,7 +635,7 @@ function typedASTPrintPrettys(self,root,assignments)
       vars = vars.."_mr_"..self["varname"..i]..tostring(self["varid"..i]).."="..self["varlow"..i]..","..self["varhigh"..i].." "
       i=i+1
     end
-    out="map "..vars.." reduce("..self.reduceop..") "..typedASTPrintPrettys(self.expr, root, assignments).." end"
+    out="map "..vars.." reduce("..self.reduceop..") "..inputs.expr.." end"
   elseif self.kind=="mapreducevar" then
     out="_mr_"..self.variable..tostring(self.id).."["..self.low.." to "..self.high.."]"
   else
@@ -641,13 +658,15 @@ function typedASTPrintPrettys(self,root,assignments)
   end
 
   return out
+  end)
+
+  local fres = ""
+  for k,v in pairs(assignments) do fres = fres..k.." = "..v.."\n" end
+  return fres..res
 end
 
 function typedASTPrintPretty(root)
-  local assignments = {}
-  local out = typedASTPrintPrettys(root,root,assignments)
-  for k,v in pairs(assignments) do print(k,"=",v) end
-  print(out)
+  print(typedASTPrintPrettys(root))
 end
 
 
@@ -692,6 +711,7 @@ end
 -- install debug hooks
 local origCompile = darkroom.compile
 function darkroom.compile(inputImageFunctions, outputImageFunctions, tapInputs, inputWidth, inputHeight, options)
+  if options==nil then options={} end
   print("debug darkroom.compile")
   options.callbackAST = function(node) print(astPrintPrettys(node)) end
   options.callbackTypedAST = function(node) typedASTPrintPretty(node) end

@@ -2,6 +2,8 @@ import "darkroom"
 terralib.require "bilinear"
 terralib.require "image"
 
+terralib.require "darkroomDebug"
+
 cstdlib = terralib.includec("stdlib.h")
 cstdio = terralib.includec("stdio.h")
 
@@ -50,7 +52,10 @@ function advect (d, d0, u, v, dt )
     maxv,
     maxv,
     im(x,y) darkroom.crop(-dt*u(x,y)*N) end,
-    im(x,y) darkroom.crop(-dt*v(x,y)*N) end)
+im(x,y) darkroom.crop(-dt*v(x,y)*N) end
+--    im(x,y) -dt*u(x,y)*N end,
+--im(x,y) -dt*v(x,y)*N end
+)
 
   return im(x,y) darkroom.crop(adv(x,y)) end, d0
 end
