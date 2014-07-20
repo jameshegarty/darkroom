@@ -325,32 +325,37 @@ local function codegenReduce( kernelGraph, centroidX, centroidY, reduce_specialS
         end
       elseif n.kind=="index" then
         local outname = n:name()
+
+        local range = n.index:eval(1)
+        print("RA",range:area())
+        assert(range:area()==1)
+
         table.insert(stat, declareVar(outname, n.type))
-        table.insert(stat, "mv "..outname.." "..inputs.expr.."["..n.index.."] #index")
+        table.insert(stat, "mv "..outname.." "..inputs.expr.."["..range:min(1).."] #index")
 
         out = outname
       elseif n.kind=="tap" then
         if tapSeen[n]==nil then
-          table.insert(stat, declareVar("tap_"..n.tapname, n.type))
+          table.insert(stat, declareVar("tap_"..n.id, n.type))
           tapSeen[n] = 1
         end
 
-        out = "tap_"..n.tapname
+        out = "tap_"..n.id
       elseif n.kind=="tapLUTLookup" then
         if tapLUTSeen[n]==nil then
-          table.insert(stat,"KLM "..declareVar("tapLUT_"..n.tapname, n.type,{n.count}))
+          table.insert(stat,"KLM "..declareVar("tapLUT_"..n.id, n.type,{n.count}))
           tapLUTSeen[n] = 1
         end
 
         local outname = n:name()
         table.insert(stat, declareVar(outname, n.type))
-        table.insert(stat,"lookup "..outname.." tapLUT_"..n.tapname.." "..inputs["index"])
+        table.insert(stat,"lookup "..outname.." tapLUT_"..n.id.." "..inputs["index"])
         out = outname
       elseif n.kind=="gather" then
         out = n:name()
 
-        assert(n.input.kind=="loadConv")
-        local conv = n.input.from["conv"..n.input.index]
+        assert(n.input.kind=="load")
+        local conv = n.input.from
         local gatherFrom = conv.kernel:name().."_pp"
 
         table.insert(stat, declareVar(out.."_index", n.x.type, {2}))
@@ -509,8 +514,8 @@ local function synthSingle(
   kernelGraph.kernel:S("tap"):traverse(
     function(n)
       if tapsSeen[n.tapname]==nil then
-        table.insert(tapList, declareVar("tap_"..n.tapname, n.type)) 
-        tapsSeen[n.tapname] = 1
+        table.insert(tapList, declareVar("tap_"..n.id, n.type)) 
+        tapsSeen[n.id] = 1
       end
     end)
   
@@ -656,8 +661,8 @@ local function synth( inputs, kernelGraph )
     function(node)
             kernelGraph.kernel:S("tap"):traverse(
               function(n)
-                local name = "tap_"..n.tapname.."_"..node:name()
-                local value = darkroom.getTap(n)
+                local name = "tap_"..n.id.."_"..node:name()
+                local value = 0
                 runconfig.test_top.taps[name] = value
               end)
     end)
@@ -669,7 +674,14 @@ local function synth( inputs, kernelGraph )
   return writeYAML(config), writeYAML(runconfig)
 end
 
-function dpda.compile( inputs, output, taps )
+function dpda.compile( inputs, outputs, taps )
+
+  if #outputs > 1 then
+    darkroom.error("multiple outputs not supported by dpda")
+  end
+
+  local output = outputs[1]
+
   local kernelGraph = darkroom.frontEnd( output, {} )
 
   local oldToNewRemap = {}

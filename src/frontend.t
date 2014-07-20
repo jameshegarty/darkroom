@@ -122,7 +122,7 @@ function darkroom.assert( thisast, expr, printval, cond )
 end
 
 function darkroom.print( thisast, exp)
-  return darkroom.ast.unary("print",exp)
+  return darkroom.ast.new({kind="unary",op="print",expr=exp}):copyMetadataFrom(thisast)
 end
 
 -- input: the input image to gather from
@@ -252,6 +252,8 @@ local function binary(p,lhs,fixity)
   return darkroom.ast.new({kind="binop", op=op, lhs=lhs, rhs=rhs}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
 end
 local leftbinary = binary
+local function rightbinary(P,lhs,fixity) return binary(P,lhs,"right") end
+
 ----------------------------------------------------------
 darkroom.lang.expr = darkroom.Parser.Pratt()
 :prefix("-", unary)
@@ -274,6 +276,7 @@ darkroom.lang.expr = darkroom.Parser.Pratt()
 :infix("*", 4, leftbinary)
 :infix('/', 4, leftbinary)
 :infix('%', 4, leftbinary)
+:infix('^', 6, rightbinary)
 :infix('.', 7, function(p,lhs)
          p:next()
          return darkroom.ast.new({kind="fieldselect", expr = lhs, field = p:expect(p.name).value}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)

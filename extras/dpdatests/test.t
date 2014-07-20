@@ -10,7 +10,10 @@ assert(#arg>0)
 testinput = darkroomSimple.load(arg[1])
 
 function test(inast)
-  assert(darkroom.ast.isAST(inast))
+  if darkroom.ast.isAST(inast) then
+    inast = {inast}
+  end
+
   
   local inputs = {}
   local taps = {}

@@ -255,6 +255,8 @@ function darkroom.typedAST._toTypedAST(inast)
           else
             darkroom.error("vectorAnd only works on arrays of bools",origast:linenumber(), origast:offset())
           end
+        elseif ast.op=="print" then
+          ast.type = ast.expr.type
         else
           print(ast.op)
           assert(false)
@@ -544,7 +546,7 @@ function darkroom.typedAST._toTypedAST(inast)
       elseif ast.kind=="load" then
         -- already has a type
       elseif ast.kind=="mapreduce" then
-        if ast.reduceop=="sum" then
+        if ast.reduceop=="sum" or ast.reduceop=="max" or ast.reduceop=="min" then
           ast.type = inputs.expr[1].type
         elseif ast.reduceop=="argmin" or ast.reduceop=="argmax" then
           if inputs.expr[1].type:isArray()==true then
