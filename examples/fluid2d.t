@@ -2,8 +2,6 @@ import "darkroom"
 terralib.require "bilinear"
 terralib.require "image"
 
-terralib.require "darkroomDebug"
-
 cstdlib = terralib.includec("stdlib.h")
 cstdio = terralib.includec("stdio.h")
 
@@ -51,11 +49,8 @@ function advect (d, d0, u, v, dt )
     d0,
     maxv,
     maxv,
-    im(x,y) darkroom.crop(-dt*u(x,y)*N) end,
-im(x,y) darkroom.crop(-dt*v(x,y)*N) end
---    im(x,y) -dt*u(x,y)*N end,
---im(x,y) -dt*v(x,y)*N end
-)
+    im(x,y) -dt*u(x,y)*N end,
+    im(x,y) -dt*v(x,y)*N end)
 
   return im(x,y) darkroom.crop(adv(x,y)) end, d0
 end
@@ -140,6 +135,10 @@ function setupAndCompile()
   local u,v,u_delta,v_delta = vel_step(u_in,v_in,u_delta,v_delta, 0, timestep)
   local d,d_delta,u,v = dens_step(d_in,d_delta,u,v,0,timestep)
   
+  -- work around the current limitation that outputs can't also be intermediates
+  im u(x,y) darkroom.crop(u) end
+  im v(x,y) darkroom.crop(v) end
+
   return darkroom.compile( {u_in,v_in,d_in}, {u,v,d}, {}, N, N, {printstage=true} )
 end
 
@@ -153,12 +152,31 @@ terra swap( a : &&opaque, b : &&opaque )
   @b = t
 end
 
+-- use darkroom to normalize float output image and convert to uint8
 floatIm = darkroom.input(float)
 ftumin = darkroom.tap(float)
 ftumax = darkroom.tap(float)
 im floatToUint8(x,y) [uint8](((floatIm-ftumin)/(ftumax-ftumin))*255) end
 floatToUint8 = darkroom.compile( {floatIm}, {floatToUint8}, {ftumin,ftumax}, N, N )
 struct ftuStruct {min:float, max:float}
+
+terra normalizeAndSave( img : &opaque, filename : &int8 )
+  var max = -20000000.0
+  var min = 20000000.0
+
+  for y=0,N do for x=0,N do
+    var dv = ([&float](img))[y*N+x]
+    if dv > max then max = dv end
+    if dv < min then min = dv end
+  end end
+
+  var output : Image
+  output:allocateDarkroomFormat(N,N,4,1,8,false,false)
+  var ts = ftuStruct {min,max}
+  floatToUint8( img, output.data, &ts )
+  output:save("out/fluid2d.bmp")
+  output:free()
+end
 
 terra run()
   var u_in = cstdlib.calloc( 1, N*N*sizeof(float) )
@@ -169,40 +187,16 @@ terra run()
   var v_out = cstdlib.malloc( N*N*sizeof(float) )
   var d_out = cstdlib.malloc( N*N*sizeof(float) )
 
-  for y=0,N do
-  for x=0,N do
-    ([&float](u_in))[y*N+x] = 0
-    ([&float](v_in))[y*N+x] = 0
-    ([&float](d_in))[y*N+x] = 0
-  end
-  end
-
   var tapStruct : TapStruct
 
   var iterations = 300
   for i=0,iterations do
-    cstdio.printf("Do Iteration %d/50\n",i)
+    cstdio.printf("Do Iteration %d/%d\n",i,iterations)
     calcFluid( u_in, v_in, d_in, u_out, v_out, d_out, &tapStruct )
     if i<iterations-1 then swap(&u_in, &u_out); swap(&v_in, &v_out); swap(&d_in, &d_out) end
   end
 
-  var max = -20000000.0
-  var min = 20000000.0
-
-  for y=0,N do
-  for x=0,N do
-    var dv = ([&float](d_out))[y*N+x]
-    if dv > max then max = dv end
-    if dv < min then min = dv end
-  end
-  end
-
-  cstdio.printf("%f %f\n",min, max)
-  var output : Image
-  output:allocateDarkroomFormat(N,N,4,1,8,false,false)
-  var ts = ftuStruct {min,max}
-  floatToUint8( d_out, output.data,&ts)
-  output:save("out/fluid2d.bmp")
+  normalizeAndSave(d_out, "out/fluid2d.bmp")
 
   cstdlib.free(u_in); cstdlib.free(v_in); cstdlib.free(d_in)
   cstdlib.free(u_out); cstdlib.free(v_out); cstdlib.free(d_out)

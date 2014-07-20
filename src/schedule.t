@@ -22,7 +22,7 @@ function schedule(graph)
   return shifts
 end
 
-local function synthRel(rel,t)
+function synthRel(rel,t)
   if type(t)=="number" and type(rel)=="number" then
     return darkroom.ast.new({kind="value",value=rel+t})
   elseif type(rel)=="number" and darkroom.ast.isAST(t) then
