@@ -146,6 +146,12 @@ function darkroom.compile(inputImageFunctions, outputImageFunctions, tapInputs, 
   end
   local ast = darkroom.ast.new(newnode):setLinenumber(0):setOffset(0):setFilename("null_outputs")
 
+  for k,v in ipairs(outputImageFunctions) do
+    if v:parentCount(ast)~=1 then
+      darkroom.error("Using image functions as both outputs and intermediates is not currently supported. Output #"..k)
+    end
+  end
+
   local kernelGraph = darkroom.frontEnd( ast, options )
   return darkroom.backEnd( kernelGraph, inputImageFunctions, tapInputs, options)
 end

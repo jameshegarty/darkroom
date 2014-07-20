@@ -368,20 +368,32 @@ function ImageWrapperFunctions:get(loopid, gather, relX, relY, V)
 
   if gather then
     local res = {}
-    for i=0,V-1 do table.insert(res, `@([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]] + relY[i]*[self.stride] + relX[i])) ) end
+    for i=0,V-1 do table.insert(res, `@([&self.orionType:toTerraType()]([self.data[loopid]] + relY[i]*[self.stride] + relX[i])) ) end
     expr = `vectorof([self.orionType:toTerraType()], res)
   else
     expr = `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]] + relY*[self.stride] + relX),{align=V})
   end
 
   if self.debug then
+    local i = symbol(int,"lbGetDebugI")
+
+    local lrelX = relX
+    local lrelY = relY
+    
+    if gather then
+      lrelX = `relX[i]
+      lrelY = `relY[i]
+    end
+
     return quote
-      var this = [self.data[loopid]] + relY*[self.stride] + relX
+      for [i]=0,[V-1] do
+        var this = [self.data[loopid]] + lrelY*[self.stride] + lrelX
       
-      if (this-[self.basePtr])<0 then cstdio.printf("this:%d start:%d self.data:%d relY:%d stride:%d relX%d\n",
-                                                    this,[self.basePtr],[self.data[loopid]],relY,[self.stride],relX) 
+        if (this-[self.basePtr])<0 then cstdio.printf("i:%d this:%d start:%d self.data:%d relY:%d stride:%d relX%d\n",
+                                                     i,this,[self.basePtr],[self.data[loopid]],lrelY,[self.stride],lrelX) 
+        end
+        orionAssert( (this-[self.basePtr])>=0,"read before start of array")
       end
-      orionAssert( (this-[self.basePtr])>=0,"read before start of array")
       in expr end
   end
 

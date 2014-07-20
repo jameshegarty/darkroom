@@ -16,7 +16,7 @@ im bruteofVectorField(x,y)
   map i=-searchWindowRadius, searchWindowRadius j=-searchWindowRadius, searchWindowRadius reduce(argmin)
     -- sum of absolute differences (SAD)
     map ii=-SADWindowRadius, SADWindowRadius jj=-SADWindowRadius, SADWindowRadius reduce(sum)
-      orion.abs(frame1(x+ii,y+jj)-frame2(x+i+ii,y+j+jj))
+      darkroom.abs(frame1(x+ii,y+jj)-frame2(x+i+ii,y+j+jj))
     end
   end
 end
