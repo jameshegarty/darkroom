@@ -173,7 +173,7 @@ function typedASTFunctions:stencil(input)
     return Stencil.new()
   end
 
-  print(self.kind)
+  print(self.kind, debug.traceback())
   assert(false)
 end
 

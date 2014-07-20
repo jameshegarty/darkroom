@@ -102,7 +102,7 @@ function darkroom.compile(inputImageFunctions, outputImageFunctions, tapInputs, 
     end
   end
 
-  checkinput(inputImageFunctions,"input to","image functions",1)
+  checkinput(inputImageFunctions,"input to","image functions",0)
   checkinput(outputImageFunctions,"output from","image functions",1)
   checkinput(tapInputs,"tap inputs to","tap image functions",0)
 

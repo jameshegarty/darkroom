@@ -111,6 +111,9 @@ function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
         end)
       
       if kernel.kind=="outputs" then
+        if kernel:arraySize("expr")~=childCount-1 then
+          darkroom.error("Duplicate outputs are not allowed! each output must be a unique image function. This may have been caused by common subexpression elimination")
+        end
         newnode.kernel = nil
       else
         newnode.kernel = kernel
