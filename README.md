@@ -48,9 +48,8 @@ Darkroom is embedded in Lua. While it is possible to write Darkroom code without
 Hello World
 -----------
 
-You can either run this tutorial from the Terra REPL or by creating and running a .lua script file. For now, run these commands from inside the `darkroom` directory. Recall that you need to include Darkroom with 'import "darkroom"'. The darkroomSimple library provides convenience functions for loading and saving images - we will use it for now to make these examples cleaner.
+Run this tutorial by creating and running a .t terra file. Darkroom is not supported in the Terra REPL. For now, run these commands from inside the `darkroom` directory. Recall that you need to include Darkroom with 'import "darkroom"'. The darkroomSimple library provides convenience functions for loading and saving images - we will use it for now to make these examples cleaner.
 
-    terra
     import "darkroom"
     darkroomSimple = terralib.require("darkroomSimple")
 
@@ -204,8 +203,10 @@ Darkroom contains a combined map-reduce operator that provides this functionalit
 
 For example, the convolution above would be written as:
 
-    return map i=-1,1 j=-1,1 reduce(sum)
-      input(x+i,y+j)*taps[(j+1)*3+(i+1)]
+    im convolve(x,y)
+      map i=-1,1 j=-1,1 reduce(sum)
+        input(x+i,y+j)*taps[(j+1)*3+(i+1)]
+      end
     end
 
 The syntax is meant to be evocative of a for loop.
@@ -254,30 +255,23 @@ We can also parameterize other things, like types:
 
 ### Escapes ###
 
-The escape operator `[e]` evaluates `e` as a lua expression and returns the Lua result converted to an Darkroom type using the 'Conversion Rules' below. One example where this might be useful is table lookup:
+The escape operator `[e]` evaluates `e` as a lua expression and returns the Lua result converted to an Darkroom type using the 'Conversion Rules' below. For example, you could use this to derive parameters for your algorithm based on user input:
 
-    luatable = {1,2,3,4,5,6,7,8,9}
+    sumArea = 16
     
-    im lookup(x,y)
-      i = 2
-      j = 3
-      fail = luatable[i+j] -- fails, (i+j) isn't a constant
-      works = [luatable[i+j]] -- works, i+j calculated by Lua
+    im sum(x,y)
+      map i=[-math.sqrt(convArea)],[math.sqrt(convArea)] j=[-math.sqrt(convArea)],[math.sqrt(convArea)] reduce(sum)
+        input(x,y)
+      end
     end
 
-In the example above, `i` and `j` hold Darkroom numbers, which get converted to Lua values in the unquoted code.
+All escapes are evaluated before the Darkroom code is typechecked. So, as far as darkroom is concerned, `i` and `j` have the range `-4,4`. No square roots will be executed by Darkroom.
 
-Similar to Terra, there are a number of situations where you can omit an explicit unquote. One example that we've already been using is variable lookup:
+Similar to Terra, there are a number of situations where you can omit an explicit unquote. One example that we've already been using throughout this tutorial is variable lookup:
 
     a = 42 -- lua value
     im test(x,y) input(x,y)*[a] end
     im test(x,y) input(x,y)*a end  -- same as above
-
-Another automatic unquote happens when you call a Lua function. This is typically called 'macros':
-
-    function double(v) return v*2 end
-    im doubleim(x,y) tmp = [double(21)]; input(x,y)*tmp end
-    im doubleim(x,y) tmp = double(21); input(x,y)*tmp end   -- same as above
 
 ### Conversion Rules ###
 
@@ -290,9 +284,22 @@ When using a Lua value in Darkroom:
     Lua array -> Darkroom array (table with dense integer keys)
     Non-array Lua Table -> error
 
+Darkroom values used in Lua are always Darkroom quotes.
+
 Boundary Conditions
 -------------------
 
+While all images in Darkroom are definited on an infinite domain, in practice we are only ever calculating images on a finite domain. It is common in image processing to define behaviour if you read outside the boundaries of the image you are calculating (boundary conditions) to maintain fidelity on the edges.
+
+In darkroom, you can define boundary conditions with the crop operator. Applying the crop operator to an image function keeps it the same within the region the user is calculating (x=0,W y=0,H), but yields zero outside of this region.
+   
+   im cropped(x,y) darkroom.crop(input(x,y) end
+
+`cropped(-5,-5)` will be `0`, `cropped(5,5)` will be `input(5,5)`.
+
+Currently the only supported boundary condition is zero fill, but more will be supported in the future. While this boundary condition can be implemented inside darkroom, the crop operator is special-cased by the compiler and is much more efficient. It uses no extra compute or buffering except for within (typically small) boundary regions.
+
+All input images have a crop applied to them automatically.
 
 Standard Library
 ----------------
@@ -379,6 +386,7 @@ A typical use of this functionality would be to implement 'tone mapping', which 
 ### Compiling ###
 
 `darkroom.compile( inputImageFunctionsArray, outputImageFunctionsArray, tapsArray, width, height, compileOptionsTable)` 
+
 Compile takes a lua array of input image functions (returned from `darkroom.input`), an array of outputs to generate, and array of tap inputs, the width and height of the output, and compile options. `darkroom.compile` returns a terra function with this type signature:
 
   compiledPipeline( input0 : &opaque, input1 : &opaque, ... output1 : &opaque, output2 : &opaque, taps : TapStruct )
@@ -387,6 +395,7 @@ Where inputs, outputs, and taps are in the same order as passed to `darkroom.com
 
 For convenience, you can use [extras/darkroomSimple.t](#extrasdarkroomsimplet), which provides an abstraction on top of this that doesn't require loading images, or use the [extras/image.t](#extrasimaget) class:
 
+    -- define and compile the pipelne
     inp = darkroom.input( uint8[3] )
     tap = darkroom.tap( uint8 )
     im out(x,y) [uint8](inp[0]/tap + inp[1]/tap + inp[2]/tap) end
@@ -492,7 +501,12 @@ Allocates  memory for the given type in the format that darkroom expects. `V` is
 extras/dpda.t
 -------------
 
-`dpda.compile( , outputImageFunction, tapsArray )`
+This file implements a Darkroom backed for the convolution engine's DPDA code format.
+
+`kernels, config = dpda.compile( inputs, outputs, taps )`
+Call this instead of `darkroom.compile` to compile for the convolution engine. `inputs` is a map from darkroom inputs (returned from `darkroom.input) to filenames. `outputs` is a lua array of darkroom images to calculate. `taps` is a map from darkroom taps (returned from `darkroom.tap`) to {name, defaultValue} pairs.
+
+This function returns the strings `kernels` and `config`, the DPDA code and runtime configurating, respectively. These can then be written out to a file, etc.
 
 extras/darkroomDebug.t
 ----------------------
