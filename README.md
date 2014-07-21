@@ -25,7 +25,7 @@ Running Darkroom
 Darkroom includes a number of example image processing pipelines that can be used to test that Darkroom is correctly installed.
 
     cd darkroom/examples
-    terra fixedcampipe.lua
+    terra fixedcampipe.t
 
 Which should write `darkroom/examples/out/fixedcampipe.bmp`.
 
