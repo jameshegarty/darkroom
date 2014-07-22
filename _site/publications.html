@@ -1,0 +1,71 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>About Us</title>
+    
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link rel="stylesheet" href="stylesheets/prism.css" />
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <a href="index.html"><h1 class="title"><img width="70px" src="logo.png">Terra</h1></a>
+        <p>A low-level counterpart to Lua</p>
+        <ul>
+          <li><a href="https://github.com/zdevito/terra/tarball/master">Download <strong>TAR Ball</strong></a></li><li><a href="http://github.com/zdevito/terra">View On <strong>GitHub</strong></a></li>
+        </ul>
+        <p><a href="demo.html">Try Terra Online</a></p>
+        <p><a href="getting-started.html" >Getting Started</a></p>
+        <p><a href="api.html" >API Reference</a></p>
+        <p><a href="publications.html">Publications</a></p>
+        <p><a href="list.html">Mailing List</a></p>
+        <!-- <p><a href="about.html" >About Us</a></p> -->
+      </header>
+      <footer>
+      <p><a href="https://github.com/zdevito">Zach DeVito</a> <br>zdevito at stanford dot edu</p>
+      <p><small>Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
+      </footer>
+      <section class="language-terra">
+      <h1 id="publications">Publications</h1>
+
+<p><strong><a href="pldi071-devito.pdf">Terra: A Multi-Stage Language for High-Performance Computing</a></strong> <br />
+<em>Zachary DeVito, James Hegarty, Alex Aiken, Pat Hanrahan, and Jan Vitek</em><br />
+PLDI ‘13</p>
+
+<p>High-performance computing applications, such as auto-tuners and
+domain-specific languages, rely on generative programming techniques to
+achieve high performance and portability. However, these systems are often
+implemented in multiple disparate languages and perform code generation in a
+separate process from program execution, making certain optimizations
+difficult to engineer. We leverage a popular scripting language, Lua, to
+stage the execution of a novel low-level language, Terra. Users can
+implement optimizations in the high-level language, and use built-in
+constructs to generate and execute high-performance Terra code. To simplify
+meta-programming, Lua and Terra share the same lexical environment, but, to
+ensure performance, Terra code can execute independently of Lua’s
+runtime. We evaluate our design by reimplementing existing multi-language
+systems entirely in Terra. Our Terra-based auto-tuner for BLAS routines
+performs within 20% of ATLAS, and our DSL for stencil computations runs
+2.3x faster than hand-written C.</p>
+
+<p><strong><a href="pldi083-devito.pdf">First-class Runtime Generation of High-performance Types using Exotypes</a></strong> <br />
+<em>Zachary DeVito, Daniel Ritchie, Matt Fisher, Alex Aiken, and Pat Hanrahan</em><br />
+To appear in PLDI ‘14</p>
+
+<p>We introduce <em>exotypes</em>, user-defined types that combine the flexibility of meta-object protocols in dynamically-typed languages with the performance control of low-level languages. Like objects in dynamic languages, exotypes are defined programmatically at runtime, allowing behavior based on external data such as a database schema. To achieve high performance, we use staged programming to define the behavior of an exotype during a runtime compilation step and implement exotypes in Terra, a low-level staged programming language.</p>
+
+<p>We show how exotype constructors compose, and use exotypes to implement high-performance libraries for serialization, dynamic assembly, automatic differentiation, and probabilistic programming. Each exotype achieves expressiveness similar to libraries written in dynamically-typed languages but implements optimizations that exceed the performance of existing libraries written in low-level statically-typed languages. Though each implementation is significantly shorter, our serialization library is 11 times faster than Kryo, and our dynamic assembler is 3–20 times faster than Google’s Chrome assembler.</p>
+
+
+      </section>
+    </div>
+    <script src="javascripts/scale.fix.js"></script>
+    <script src="javascripts/prism.js"></script>
+  </body>
+</html>
