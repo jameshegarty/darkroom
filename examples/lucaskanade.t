@@ -2,16 +2,17 @@ import "darkroom"
 darkroomSimple = terralib.require("darkroomSimple")
 terralib.require "bilinear"
 
-
 windowRadius = 2
 iterations = 1 -- iterations per level
-weighted = false
 maxResampleX = 10
 maxResampleY = 10
 clamp = true
 
-width = 584
-height = 388
+function invert2x2( matrix )
+  local im denom(x,y) matrix[0]*matrix[3]-matrix[1]*matrix[2] end
+  local im det(x,y) if denom(x,y)~=0 then 1/denom(x,y) else 0 end end
+  return im(x,y) {det*matrix[3], -det*matrix[1], -det*matrix[2], det*matrix[0]} end
+end
 
 -- see here for ref: http://www.cs.ucf.edu/~mikel/Research/Optical_Flow.htm
 function makeLK(frame1, frame2)
@@ -20,83 +21,38 @@ function makeLK(frame1, frame2)
   -- were calling frame1 F and frame2 G, as in the original LK paper
     
   -- calculate derivatives
-  local im Fx(x,y) (frame1(x+1,y)-frame1(x-1,y))/2 end
-  local im Fy(x,y) (frame1(x,y+1)-frame1(x,y-1))/2 end
+  local im Fdx(x,y) (frame1(x+1,y)-frame1(x-1,y))/2 end
+  local im Fdy(x,y) (frame1(x,y+1)-frame1(x,y-1))/2 end
 
-  local im Gx(x,y) (frame2(x+1,y)-frame2(x-1,y))/2 end
-  local im Gy(x,y) (frame2(x,y+1)-frame2(x,y-1))/2 end
+  local im Gdx(x,y) (frame2(x+1,y)-frame2(x-1,y))/2 end
+  local im Gdy(x,y) (frame2(x,y+1)-frame2(x,y-1))/2 end
                 
-  -- calculate weight W
-  local W
-  if weighted then
-    local im w(x,y) darkroom.sqrt(darkroom.pow(Gx(x,y)-Fx(x,y),2)+darkroom.pow(Gy(x,y)-Fy(x,y),2)) end
-    im W(x,y)  if w(x,y)~=0 then 1/w(x,y) else 100 end end
-  else
-    im W(x,y)  1 end
-  end
-        
   -- calculate A^-1
-
-  local im Atemp0(x,y)
+  local im A(x,y)
     map wx = -windowRadius, windowRadius wy = -windowRadius, windowRadius reduce(sum)
-    Fx(x+wx,y+wy)*Fx(x+wx,y+wy)*W(x+wx,y+wy)
+    {Fdx(x+wx,y+wy)*Fdx(x+wx,y+wy), Fdx(x+wx,y+wy)*Fdy(x+wx,y+wy), Fdx(x+wx,y+wy)*Fdy(x+wx,y+wy), Fdy(x+wx,y+wy)*Fdy(x+wx,y+wy)}
     end 
   end
 
-  local im Atemp1(x,y)
-    map wx = -windowRadius, windowRadius wy = -windowRadius, windowRadius reduce(sum)
-      Fx(x+wx,y+wy)*Fy(x+wx,y+wy)*W(x+wx,y+wy)
-    end 
-  end
-
-  local Atemp2 = Atemp1
-
-  local im Atemp3(x,y)
-    map wx = -windowRadius, windowRadius wy = -windowRadius, windowRadius reduce(sum)
-      Fy(x+wx,y+wy)*Fy(x+wx,y+wy)*W(x+wx,y+wy)
-    end 
-  end
-
-  local im denom(x,y) (Atemp0(x,y)*Atemp3(x,y)-Atemp1(x,y)*Atemp2(x,y)) end
-  local im det(x,y) if denom(x,y)~=0 then 1/denom(x,y) else 0 end end
-                
-  local im A0(x,y) det(x,y)*Atemp3(x,y) end
-  local im A1(x,y) -det(x,y)*Atemp1(x,y) end
-  local im A2(x,y) -det(x,y)*Atemp2(x,y) end
-  local im A3(x,y) det(x,y)*Atemp0(x,y) end
+  local Ainv = invert2x2(A)
   
   -- initial condition: no offset
   local im vectorField(x,y) [float[2]]({0,0}) end
 
   -- do LK calculation
-  -- Notice: instead of iterating the same # of times for each pixel,
-  -- we could instead iterate a different # of times for each pixel 
-  -- (until the error < epsilon for ex). This would prob make for better
-  -- results, but wouldn't be parallelizable
-
   for i=1,iterations do
-    local im xcoord(x,y) vectorField(x,y)[0] end
-    local im ycoord(x,y) vectorField(x,y)[1] end
-
-    local G = im(x,y) [resampleBilinear(clamp,frame2,maxResampleX, maxResampleY,xcoord,ycoord)] end
+    local G = im(x,y) [resampleBilinear( clamp, frame2, maxResampleX, maxResampleY, im(x,y) vectorField[0] end, im(x,y) vectorField[1] end)] end
     
     im vectorField(x,y)
-      hx = vectorField(x,y)[0]
-      hy = vectorField(x,y)[1]
-
       -- loop over search window
       b = map  wx = -windowRadius, windowRadius wy = -windowRadius, windowRadius reduce(sum)
-              dx = Fx (x+wx, y+wy)
-              dy = Fy (x+wx, y+wy)
-              w = W (x+wx, y+wy)
-        
-              F = frame1 (x+wx, y+wy)
+            F = frame1 (x+wx, y+wy)
             in
-              {dx*(G(x+wx,y+wy)-F)*w,dy*(G(x+wx,y+wy)-F)*w}
+            {Fdx(x+wx, y+wy)*(G(x+wx,y+wy)-F),Fdy(x+wx, y+wy)*(G(x+wx,y+wy)-F)}
           end
-    in
-      {A0(x,y)*(-b[0])+A1(x,y)*(-b[1])+hx,
-       A2(x,y)*(-b[0])+A3(x,y)*(-b[1])+hy}
+      in
+        {Ainv[0](x,y)*(-b[0])+Ainv[1](x,y)*(-b[1])+vectorField[0],
+         Ainv[2](x,y)*(-b[0])+Ainv[3](x,y)*(-b[1])+vectorField[1]}
     end
   end
 
