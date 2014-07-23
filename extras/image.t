@@ -1003,6 +1003,8 @@ terra Image:init(
   self.SOA = SOA
   self.data = data
   self.dataPtr = dataPtr
+
+  return self
 end
 
 terra Image:initSimple(
@@ -1018,7 +1020,7 @@ terra Image:initSimple(
   self:init(width, height, width, channels, bits, floating, isSigned, SOA, data, data)
 end
 
-terra Image:initWithFile(filename : &int8)
+terra Image:load(filename : &int8)
 
   var width : int
   var height : int
@@ -1027,10 +1029,10 @@ terra Image:initWithFile(filename : &int8)
 
   var data : &opaque = loadImageUC(filename,&width,&height,&channels,&bits)
 
-  self:init(width,height,width,channels,bits,false,false,false,data,data)
+  return self:init(width,height,width,channels,bits,false,false,false,data,data)
 end
 
-terra Image:initWithRaw(filename : &int8, w:int, h:int, bits:int)
+terra Image:loadRaw(filename : &int8, w:int, h:int, bits:int)
   -- loadRaw always returns an int32
   var outBytes : int
   var data : &opaque = loadRaw(filename,w,h,bits,0,false,&outBytes)
@@ -1068,6 +1070,8 @@ terra Image:allocateDarkroomFormat(
   
   self.dataPtr = cstdlib.malloc(self.height*self.stride*(bits/8)*channels)
   self.data = self.dataPtr
+
+  return self
 end
 
 terra Image:free()
@@ -1389,18 +1393,22 @@ terra Image:SOAAOS(toAOS : bool)
     self.SOA = (toAOS==false)
   end
 
+  return self
 end
 
 terra Image:toAOS()
-  self:SOAAOS(true)
+  return self:SOAAOS(true)
 end
 
 terra Image:toSOA()
-  self:SOAAOS(false)
+  return self:SOAAOS(false)
 end
 
 -- convert to the format the darkroom expects for its imputs
 terra Image:toDarkroomFormat()
-  self:toSOA()
+  return self:toSOA()
 end
 
+terra Image:fromDarkroomFormat()
+  return self:toAOS()
+end

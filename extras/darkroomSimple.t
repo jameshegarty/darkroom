@@ -69,7 +69,7 @@ function orionSimple.load(filename, boundaryCond)
 
   local terra makeIm( filename : &int8)
     var im : &Image = [&Image](cstdlib.malloc(sizeof(Image)))
-    im:initWithFile(filename)
+    im:load(filename)
     return im
   end
   
@@ -88,7 +88,7 @@ function orionSimple.loadRaw(filename, w,h,bits,header,flipEndian)
   if header~=nil then
     local terra makeIm( filename : &int8, w:int, h:int, bits:int,header:int, flipEndian:bool)
       var im : &Image = [&Image](cstdlib.malloc(sizeof(Image)))
-      im:initWithRaw(filename,w,h,bits,header,flipEndian)
+      im:loadRaw(filename,w,h,bits,header,flipEndian)
       
       return im
     end
@@ -98,7 +98,7 @@ function orionSimple.loadRaw(filename, w,h,bits,header,flipEndian)
   else
     local terra makeIm( filename : &int8, w:int, h:int, bits:int)
       var im : &Image = [&Image](cstdlib.malloc(sizeof(Image)))
-      im:initWithRaw(filename,w,h,bits)
+      im:loadRaw(filename,w,h,bits)
       
       return im
     end
