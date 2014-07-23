@@ -1,3 +1,8 @@
+---
+layout: post
+title: Darkroom
+---
+
 Getting Started with Darkroom
 ==========================
 
