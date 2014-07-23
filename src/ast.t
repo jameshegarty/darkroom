@@ -89,6 +89,8 @@ function astFunctions:codegen()
     return `[self.lhs:codegen()]-[self.rhs:codegen()]
   elseif self.kind=="binop" and self.op=="*" then
     return `[self.lhs:codegen()]*[self.rhs:codegen()]
+  elseif self.kind=="unary" and self.op=="-" then
+    return `-[self.expr:codegen()]
   elseif self.kind=="mapreducevar" then
     if mapreducevarSymbols[self.id]==nil then
       mapreducevarSymbols[self.id] = symbol(int,self.variable)

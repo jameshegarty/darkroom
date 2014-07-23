@@ -114,4 +114,4 @@ end
 sensor = darkroomSimple.load("300d.bmp")
 campipeline = campipe(sensor)
 
-campipeline:save("out/fixedcampipe.bmp")
+campipeline:save("out/campipe.bmp")

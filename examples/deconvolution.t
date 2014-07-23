@@ -2,7 +2,7 @@ import "darkroom"
 darkroomSimple = terralib.require("darkroomSimple")
 
 fusedIter = 5
-unfusedIter = 2
+unfusedIter = 10
 
 function tofloat(input)
     assert(input)
@@ -27,16 +27,13 @@ function convolve(K,input)
     assert(N2 % 2 == 1 and N2*N2 == #K)
     local N = math.floor(N2/2)
 
-    local T = {}
-    for i= -N, N do for j = -N, N do
-        local idx = (-j + N)*N2 + (i + N) + 1
-        print(i,j,K[idx])
-        table.insert(T,im out(x,y)  input(x+i,y+j) * [K[idx]] end)
-    end end
-
-    local fin = darkroom.sum(T[1],unpack(T))
---    return im(x,y) darkroom.crop(fin) end
-    return fin
+    return im(x,y)
+      res = map i=-N,N j=-N,N reduce(sum)
+        idx =  (-j + N)*N2 + (i + N)
+        in input(x+i, y+j) * K[idx]
+      end
+      in darkroom.crop(res)
+    end
 end
 
 local function normalizekernel(K)
@@ -79,9 +76,9 @@ local function deconv(K,observed,latent_est, N)
     local Khat = flip(K)
     for i = 1,N do
         local est_conv = convolve(K,latent_est)
-        local relative_blur = im(x,y) observed(x,y) / est_conv(x,y) end
+        local relative_blur = im(x,y) darkroom.crop(observed(x,y) / est_conv(x,y)) end
         local error_est = convolve(Khat,relative_blur)
-        latent_est = im(x,y) latent_est(x,y)*error_est(x,y) end
+        latent_est = im(x,y) darkroom.crop(latent_est(x,y)*error_est(x,y)) end
     end
     return latent_est
 end
@@ -149,10 +146,10 @@ function doDeconvolution()
      var out_ptr = out.data
 
      -- run the pipeline multiple times
-     for i = 1, unfusedIter do
+     for i = 1, unfusedIter+1 do
        deconvfn( observedFloat.data, latent_est_ptr, out_ptr, &tapStruct )
 
-       if i<unfusedIter-1 then
+       if i<unfusedIter then
          var t = latent_est_ptr
          latent_est_ptr = out_ptr
          out_ptr = t
