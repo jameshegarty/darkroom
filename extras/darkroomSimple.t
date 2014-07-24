@@ -13,7 +13,6 @@ terralib.require("image")
 function imageToOrionType(im)
   local _type = darkroom.type.uint(8)
 
-  
   assert(im.isSigned==false)
 
   if im.floating then
