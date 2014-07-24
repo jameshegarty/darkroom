@@ -164,7 +164,7 @@ local K = {0.33333,0,0,
 local observed = tofloat(darkroomSimple.load("deconvolution_blurred.bmp"))
 local latent_est = im(x,y) [float[3]](0.5) end -- default value                                                                                                                         
 local convoutput = deconv( K, K, observed, latent_est, fusedIter )
-convoutput:save("out/deconv-simple.bmp")
+convoutput:save(arg[1])
 </div>
 
 
