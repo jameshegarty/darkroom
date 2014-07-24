@@ -85,7 +85,7 @@ function shift(graph, shifts)
           end)
 
         -- apply shift
-        newKernelGraphNode.kernel = newKernelGraphNode.kernel:S(function(n) return n.kind=="load" or n.kind=="crop" end):process(
+        newKernelGraphNode.kernel = newKernelGraphNode.kernel:S(function(n) return n.kind=="load" or n.kind=="crop" or n.kind=="position" end):process(
           function(nn)
             if nn.kind=="load" then
               if type(nn.from)=="table" then
@@ -98,7 +98,13 @@ function shift(graph, shifts)
               local r = nn:shallowcopy()
               r.shiftY = r.shiftY + shifts[orig]
               return darkroom.typedAST.new(r):copyMetadataFrom(nn)
+            elseif nn.kind=="position" then
+              if nn.coord=="y" and shifts[orig]~=0 then
+                local v = darkroom.typedAST.new({kind="value", value=-shifts[orig], type=nn.type}):copyMetadataFrom(nn)
+                return darkroom.typedAST.new({kind="binop", lhs=nn, rhs = v, type = nn.type, op="+"}):copyMetadataFrom(nn)
+              end
             else
+              print(nn.kind)
               assert(false)
             end
           end)

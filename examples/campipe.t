@@ -2,6 +2,10 @@ import "darkroom"
 darkroomSimple = terralib.require("darkroomSimple")
 
 -- simple, totally fixed function camera pipeline
+function blackLevel( in1, pedestal )
+  local rescale = 255/(255-pedestal)
+  return im(x,y) (in1-pedestal)*rescale end
+end
 
 -- input = uint8 nxm
 -- output = RGB8 nxm
@@ -92,10 +96,10 @@ function doccm(in1)
   end
 end
 
-function tonemap(in1)
+function tonemap(in1, gamma)
 
   return im(x,y)
-  darkroom.pow((in1(x,y)/255),0.5)*255
+  darkroom.pow((in1(x,y)/255),gamma)*255
   end
 
 end
@@ -105,10 +109,11 @@ function campipe(in1)
   -- do the campipe using floats
   local im out(x,y) [float](in1(x,y)) end
 
-  local out = bilinearDemosaic(out)
+  local out = blackLevel(out, 10)
+  out = bilinearDemosaic(out)
   out = doccm(out) 
-  out = tonemap(out)
-  return im(x,y) [uint8[3]]( out(x,y) ) end
+  out = tonemap(out, 1/2.4)
+  return im(x,y) [uint8[3]]( darkroom.vectorSelect(out>255,[uint8[3]](255),out) ) end
 end
 
 sensor = darkroomSimple.load("300d.bmp")
