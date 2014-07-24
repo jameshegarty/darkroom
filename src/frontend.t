@@ -583,7 +583,7 @@ function darkroom.compileTimeProcess(imfunc, envfn)
         elseif env[inp.name]~=nil then
           return darkroom.ast.new({kind="value", value=env[inp.name]}):copyMetadataFrom(inp)
         else
-          darkroom.error("Could not resolve identifier: "..inp.name, inp:linenumber(), inp:offset())
+          darkroom.error("Could not resolve identifier: "..inp.name, inp:linenumber(), inp:offset(), inp:filename())
         end
       elseif inp.kind=="index" then
         if inp.expr.kind=="tap" and inp.expr.count~=nil then -- count~=nil indicates LUT
@@ -599,7 +599,7 @@ function darkroom.compileTimeProcess(imfunc, envfn)
         elseif inp.expr.value[inp.field]~=nil then
           return darkroom.ast.new({kind="value", value=inp.expr.value[inp.field]}):copyMetadataFrom(inp)
         else
-          darkroom.error("Field is nil: "..inp.field, inp:linenumber(), inp:offset())
+          darkroom.error("Field is nil: "..inp.field, inp:linenumber(), inp:offset(), inp:filename())
         end
       elseif inp.kind=="escape" then
         return darkroom.evalEscape(inp.expr(inp:localEnvironment(rvalue,env)),inp)

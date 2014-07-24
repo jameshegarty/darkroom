@@ -54,8 +54,7 @@ end
 -- offsetX and offsetY are int8
 -- maxX and maxY determine the precision of offsetX and offsetY. ie if maxX = 8, then there are 128/8 subpixels in X
 -- maxX and maxY must be powers of 2
---[=[
-function resampleBilinearInt(clamp,input, inputType, maxX, maxY, offsetX, offsetY)
+function resampleBilinearInt( clamp, input, inputType, maxX, maxY, offsetX, offsetY)
   if maxX==nil then darkroom.error("maxX is nil") end
   if maxY==nil then darkroom.error("maxY is nil") end
   if type(maxX)~="number" then darkroom.error("maxX must be a number") end
@@ -66,7 +65,7 @@ function resampleBilinearInt(clamp,input, inputType, maxX, maxY, offsetX, offset
   assert(darkroom.ast.isAST(input))
   assert(darkroom.ast.isAST(offsetX))
   assert(darkroom.ast.isAST(offsetY))
-  assert(darkroom.type.isType(inputType))
+  assert(terralib.types.istype(inputType))
 
   local gatherRangeX = 128/maxX
   local gatherRangeY = 128/maxY
@@ -87,10 +86,9 @@ function resampleBilinearInt(clamp,input, inputType, maxX, maxY, offsetX, offset
 
   local im wx(x,y) [uint8]( offsetX(x,y) - (targetX(x,y) << logMaxX) ) end -- in subpixel units. always between 0 and maxX
   local im wy(x,y) [uint8]( offsetY(x,y) - (targetY(x,y) << logMaxY) ) end -- in subpixel units. always between 0 and maxY
-  local im a(x,y) [inputType](darkroom.uint32(valueXY(x,y))*(darkroom.uint8(maxX)-wx(x,y)) + darkroom.uint32(valueXp1Y(x,y))*wx(x,y) >> darkroom.uint8(logMaxX)) end
-  local im b(x,y) [inputType](darkroom.uint32(valueXYp1(x,y))*(darkroom.uint8(maxX)-wx(x,y)) + darkroom.uint32(valueXp1Yp1(x,y))*wx(x,y) >> darkroom.uint8(logMaxX)) end
-  local im out(x,y) [inputType](darkroom.uint32(a(x,y))*(darkroom.uint8(maxY)-wy(x,y))+darkroom.uint32(b(x,y))*wy(x,y) >> darkroom.uint8(logMaxY)) end
+  local im a(x,y) [inputType]([uint32](valueXY(x,y))*([uint8](maxX)-wx(x,y)) + [uint32](valueXp1Y(x,y))*wx(x,y) >> [uint8](logMaxX)) end
+  local im b(x,y) [inputType]([uint32](valueXYp1(x,y))*([uint8](maxX)-wx(x,y)) + [uint32](valueXp1Yp1(x,y))*wx(x,y) >> [uint8](logMaxX)) end
+  local im out(x,y) [inputType]([uint32](a(x,y))*([uint8](maxY)-wy(x,y))+[uint32](b(x,y))*wy(x,y) >> [uint8](logMaxY)) end
 
   return out
 end
-]=]
