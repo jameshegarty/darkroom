@@ -483,8 +483,18 @@ function darkroom.typedAST._toTypedAST(inast)
         ast.type = ast.expr.type
 
       elseif ast.kind=="mapreducevar" then
-        ast.low = inputs["low"][1]:eval()
-        ast.high = inputs["high"][1]:eval()
+        ast.low = ast.low:eval(1)
+        if ast.low:area()~=1 then 
+          darkroom.error("map reduce variable range must be a constant",ast:linenumber(),ast:offset(),ast:filename())
+        end
+        ast.low = ast.low:min(1)
+
+        ast.high = ast.high:eval(1)
+        if ast.high:area()~=1 then 
+          darkroom.error("map reduce variable range must be a constant",ast:linenumber(),ast:offset(),ast:filename())
+        end
+        ast.high = ast.high:min(1)
+
         ast.type = darkroom.type.int(32)
 
 --        ast.type = darkroom.type.meet(ast.low.type,ast.high.type,"mapreducevar", origast)
@@ -562,8 +572,18 @@ function darkroom.typedAST._toTypedAST(inast)
 
         local i = 1
         while ast["varname"..i] do
-          ast["varlow"..i] = inputs["varlow"..i][1]:eval()
-          ast["varhigh"..i] = inputs["varhigh"..i][1]:eval()
+          ast["varlow"..i] = ast["varlow"..i]:eval(1)
+          if ast["varlow"..i]:area()~=1 then 
+            darkroom.error("map reduce variable range must be a constant",ast:linenumber(),ast:offset(),ast:filename())
+          end
+          ast["varlow"..i] = ast["varlow"..i]:min(1)
+
+          ast["varhigh"..i] = ast["varhigh"..i]:eval(1)
+          if ast["varhigh"..i]:area()~=1 then 
+            darkroom.error("map reduce variable range must be a constant",ast:linenumber(),ast:offset(),ast:filename())
+          end
+          ast["varhigh"..i] = ast["varhigh"..i]:min(1)
+
           i = i + 1
         end
 

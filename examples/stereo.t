@@ -14,17 +14,17 @@ function makeOF( searchRadius, windowRadius, frame1, frame2 )
 
   local SAD = {}
   local offset = im(x,y)
-    map i = 0, searchRadius reduce(argmin)
+    map i = 20, 20+searchRadius reduce(argmin)
       map ii=-windowRadius, windowRadius jj=-windowRadius, windowRadius reduce(sum) -- SAD
         darkroom.abs(frame1(x+ii,y+jj)-frame2(x+i+ii,y+jj))
       end
     end
   end
 
-  return im(x,y) [uint8](offset[0] * 255.0/(searchRadius)) end
+  return im(x,y) [uint8]((offset[0]-20) * 255.0/(searchRadius)) end
 end
 
-local left = rectify(darkroomSimple.load("left0224.bmp"), darkroomSimple.load("left-remap.bmp"))
-local right = rectify(darkroomSimple.load("right0224.bmp"), darkroomSimple.load("right-remap.bmp"))
-local vectors = makeOF(80,4,left,right)
+local left = rectify(darkroomSimple.load("left0224.bmp"), darkroomSimple.load("right-remap.bmp"))
+local right = rectify(darkroomSimple.load("right0224.bmp"), darkroomSimple.load("left-remap.bmp"))
+local vectors = makeOF(60,4,right,left)
 vectors:save("out/stereo.bmp")
