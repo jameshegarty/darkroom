@@ -362,7 +362,7 @@ function darkroom.type.checkExplicitCast(from, to, ast)
   elseif from.type=="int" and to.type=="bool" then
     darkroom.error("converting an int to a bool will result in incorrect behavior! C makes sure that bools are always either 0 or 1. Terra does not.",ast:linenumber(),ast:offset())
     return false
-  elseif from.type=="bool" and to.type=="int" then
+  elseif from.type=="bool" and (to.type=="int" or to.type=="uint") then
     darkroom.error("converting a bool to an int will result in incorrect behavior! C makes sure that bools are always either 0 or 1. Terra does not.",ast:linenumber(),ast:offset())
     return false
   elseif from.type=="float" and to.type=="int" then
@@ -608,6 +608,10 @@ end
 
 function TypeFunctions:isInt()
   return darkroom.type.isInt(self)
+end
+
+function TypeFunctions:isUint()
+  return darkroom.type.isUint(self)
 end
 
 function TypeFunctions:isNumber()

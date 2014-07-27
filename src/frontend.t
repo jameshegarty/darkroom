@@ -2,7 +2,7 @@ darkroom.boolops = {["or"]=1,["and"]=1} -- bool -> bool -> bool
 darkroom.cmpops = {["=="]=1,["~="]=1,["<"]=1,[">"]=1,["<="]=1,[">="]=1} -- number -> number -> bool
 darkroom.binops = {["|"]=1,["^"]=1,["&"]=1,["<<"]=1,[">>"]=1,["+"]=1,["-"]=1,["%"]=1,["*"]=1,["/"]=1}
 -- these binops only work on ints
-darkroom.intbinops = {["<<"]=1,[">>"]=1,["&"]=1,["|"]=1,["^"]=1}
+darkroom.intbinops = {["<<"]=1,[">>"]=1,["and"]=1,["or"]=1,["^"]=1}
 -- ! does a logical not in C, use 'not' instead
 -- ~ does a bitwise not in C
 darkroom.unops = {["not"]=1,["-"]=1}

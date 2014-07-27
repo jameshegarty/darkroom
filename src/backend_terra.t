@@ -455,7 +455,9 @@ darkroom.terracompiler.numberBinops={
   ["=="]=function(lhs,rhs) return `lhs==rhs end,
   ["~="]=function(lhs,rhs) return `lhs~=rhs end,
   ["%"]=function(lhs,rhs) return `lhs%rhs end,
-  ["&"]=function(lhs,rhs) return `lhs and rhs end,
+  ["^"]=function(lhs,rhs) return `lhs^rhs end,
+  ["and"]=function(lhs,rhs) return `lhs and rhs end,
+  ["or"]=function(lhs,rhs) return `lhs or rhs end,
   ["<<"]=function(lhs,rhs) return `lhs<<rhs end,
   [">>"]=function(lhs,rhs) return `lhs>>rhs end,
   ["min"]=function(lhs,rhs) return `terralib.select(lhs<rhs,lhs,rhs) end,
@@ -485,17 +487,18 @@ darkroom.terracompiler.numberUnary={
   ["floor"] = function(expr,ast,V)
     return darkroom.terracompiler.vectorizeUnaryPointwise(cmath.floor,expr,V)
   end,
+  ["ceil"] = function(expr,ast,V)
+    return darkroom.terracompiler.vectorizeUnaryPointwise(cmath.ceil,expr,V)
+  end,
   ["-"] = function(expr,ast,V) return `-expr end,
   ["not"] = function(expr,ast,V) return `not expr end,
   ["abs"] = function(expr,ast,V)
-    if ast.type==darkroom.type.float(32) then
+    if ast.type:baseType():isFloat() then
       return darkroom.terracompiler.vectorizeUnaryPointwise(cmath.fabs,expr,V)
-    elseif darkroom.type.isUint(ast.type) then
+    elseif ast.type:baseType():isUint() then
       -- a uint is always positive
       return expr
-    elseif ast.type==darkroom.type.int(32) or 
-      ast.type==darkroom.type.int(64) or 
-      ast.type==darkroom.type.int(16) then
+    elseif ast.type:baseType():isInt() then
       return darkroom.terracompiler.vectorizeUnaryPointwise(cstdlib.abs,expr,V)
     else
       ast.type:print()
@@ -503,39 +506,43 @@ darkroom.terracompiler.numberUnary={
     end
   end,
   ["sin"] = function(expr,ast,V)
-    if ast.type==darkroom.type.float(32) then
+    if ast.type:baseType():isFloat() then
       return darkroom.terracompiler.vectorizeUnaryPointwise(cmath.sin,expr,V)
     else
+      ast.type:print()
       assert(false)
     end
   end,
   ["cos"] = function(expr,ast,V)
-    if ast.type==darkroom.type.float(32) then
+    if ast.type:baseType():isFloat() then
       return darkroom.terracompiler.vectorizeUnaryPointwise(  cmath.cos, expr, V )
     else
+      ast.type:print()
       assert(false)
     end
   end,
   ["exp"] = function(expr,ast,V)
-    if ast.type==darkroom.type.float(32) then
+    if ast.type:baseType():isFloat() then
       return darkroom.terracompiler.vectorizeUnaryPointwise(  cmath.exp, expr, V )
     else
+      ast.type:print()
       assert(false)
     end
   end,
   ["print"]= function(expr,ast,V)
-    if V>1 then
-      assert(false)
-    else
-      if node.expr.type==darkroom.type.float(32) then
-        table.insert(stat,quote cstdio.printf("darkroom.printf:%f\n",expr) end)
-      elseif node.expr.type==darkroom.type.uint(8) then
-        table.insert(stat,quote cstdio.printf("darkroom.printd:%d\n",expr) end)
+    local stat = {}
+
+    for v = 0,V-1 do
+      if ast.type:baseType():isFloat() then
+        table.insert(stat,quote cstdio.printf("darkroom.printf:%f\n",expr[v]) end)
+      elseif ast.type:baseType():isInt() or ast.type:baseType():isUint() then
+        table.insert(stat,quote cstdio.printf("darkroom.printd:%d\n",expr[v]) end)
       else
-        print(darkroom.type.typeToString(node.expr.type))
+        ast.type:print()
         assert(false)
       end
-   end
+    end
+    return quote stat in expr end
   end
 }
 
@@ -582,7 +589,7 @@ function darkroom.terracompiler.codegen(
           i = i + 1
         end
         
-        if node.reduceop=="sum" then
+        if node.reduceop=="sum" or node.reduceop=="max" or node.reduceop=="min" then
 
           local finalOut = {}
           local statOut = {}
@@ -590,8 +597,15 @@ function darkroom.terracompiler.codegen(
           for c = 1, node.type:channels() do
             local sum = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V), node.reduceop)
 
-            local out = quote stat; sum = sum + [inputs["expr"][c]] end
-          
+            local out
+            if node.reduceop=="sum" then
+              out = quote stat; sum = sum + [inputs["expr"][c]] end
+            elseif node.reduceop=="max" then
+              out = quote stat; sum = terralib.select([inputs["expr"][c]]>sum,[inputs["expr"][c]],sum) end
+            elseif node.reduceop=="min" then
+              out = quote stat; sum = terralib.select([inputs["expr"][c]]<sum,[inputs["expr"][c]],sum) end
+            end
+
             if c==node.type:channels() then
               for k,v in pairs(stat) do stat[k] = nil end -- no longer needed in top scope
             end
@@ -611,12 +625,12 @@ function darkroom.terracompiler.codegen(
           for c=0,node.type:channels()-1 do finalOut[c+1] = `[packedSymbol][c] end
           return {finalOut, `[packedSymbol], statOut}
 
-        elseif node.reduceop=="argmin" then
+        elseif node.reduceop=="argmin" or node.reduceop=="argmax" then
           -- special case: for argmin, the multiple channels are generated by the one loop
           -- (they are the mapreducevars that yield the smallest value)
 
           local set = symbol(bool, "set")
-          local minValue = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V), node.reduceop.."Value")
+          local value = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V), node.reduceop.."Value")
           local results = {}
           local declareResults = {}
           local assign = {}
@@ -627,17 +641,28 @@ function darkroom.terracompiler.codegen(
             table.insert(results, symbol(vector(int,V)))
             table.insert(declareResults, quote var [results[#results]] end)
             table.insert(assign, quote [results[#results]] = [mapreducevarSymbols[node["varid"..i]]] end)
-            table.insert(assignSelect, quote [results[#results]] = terralib.select( [inputs["expr"][1]] < minValue, [mapreducevarSymbols[node["varid"..i]]], [results[#results]]) end)
+
+            if node.reduceop=="argmin" then
+              table.insert(assignSelect, quote [results[#results]] = terralib.select( [inputs["expr"][1]] < value, [mapreducevarSymbols[node["varid"..i]]], [results[#results]]) end)
+            else
+              table.insert(assignSelect, quote [results[#results]] = terralib.select( [inputs["expr"][1]] > value, [mapreducevarSymbols[node["varid"..i]]], [results[#results]]) end)
+            end
             i = i + 1
           end
 
+          local assignValue
+          if node.reduceop=="argmin" then
+            assignValue = quote value = terralib.select( [inputs["expr"][1]] < value, [inputs["expr"][1]], value) end
+          else
+            assignValue = quote value = terralib.select( [inputs["expr"][1]] > value, [inputs["expr"][1]], value) end
+          end
           -- inner loop
           local out = quote stat; 
             if set==false then
-              assign; set=true; minValue = [inputs["expr"][1]];
+              assign; set=true; value = [inputs["expr"][1]];
             else
               assignSelect;
-              minValue = terralib.select( [inputs["expr"][1]] < minValue, [inputs["expr"][1]], minValue)
+              assignValue;
             end
           end
 
@@ -647,7 +672,7 @@ function darkroom.terracompiler.codegen(
             i = i + 1
           end
 
-          local statOut = {quote var [set] = false; var [minValue] = 0; declareResults; out end}
+          local statOut = {quote var [set] = false; var [value] = 0; declareResults; out end}
           local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
           
           table.insert(statOut, quote var [packedSymbol] = array(results) end)
@@ -656,6 +681,7 @@ function darkroom.terracompiler.codegen(
           return {finalOut, `[packedSymbol], statOut}
 
         else
+          print(node.reduceop)
           assert(false)
         end
         
@@ -731,7 +757,7 @@ function darkroom.terracompiler.codegen(
           elseif darkroom.terracompiler.numberUnary[node.op]==nil then
             darkroom.error("Unknown unary op "..node.op)
           else
-            out = darkroom.terracompiler.numberUnary[node.op](expr,node.expr,V)
+            out = darkroom.terracompiler.numberUnary[node.op]( expr, node.expr, V )
           end
 
         elseif node.kind=="value" then

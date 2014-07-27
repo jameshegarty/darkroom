@@ -62,6 +62,7 @@ function test(inast)
 
   local terra dosave(img: &Image, filename : &int8)
     img:save(filename)
+    img:free()
   end
 
   local cores = tonumber(arg[2]) or 1

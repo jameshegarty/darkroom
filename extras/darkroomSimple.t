@@ -178,6 +178,7 @@ function astFunctions:save(filename,compilerOptions)
   local out = func()
   local terra dosave(im: &Image, filename : &int8)
     im:save(filename)
+    im:free()
   end
 
   dosave(out,filename)

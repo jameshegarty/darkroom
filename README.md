@@ -447,6 +447,8 @@ extras/darkroomSimple.t
 
 `darkroomSimple.compile( outputImageFunctionList, compilerOptions )` 
 
+Returns a terra function that when executed returns one or more `Image` objects from `image.t`. Note that it is your responsibility to call `:free()` on these objects when you are done with them!
+
 `darkroomSimple.load(filename)` Loads the image file at `filename` and turns it into an image function.
 
 `darkroomSimple.image(img)` 

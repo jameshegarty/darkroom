@@ -223,11 +223,11 @@ function darkroom.typedAST._toTypedAST(inast)
         elseif ast.op=="floor" or ast.op=="ceil" then
           ast.type = darkroom.type.float(32)
         elseif ast.op=="abs" then
-          if ast.expr.type==darkroom.type.float(32) then
-            ast.type = darkroom.type.float(32)
-          elseif ast.expr.type==darkroom.type.float(64) then
-            ast.type = darkroom.type.float(64)
-          elseif darkroom.type.isInt(ast.expr.type) or darkroom.type.isUint(ast.expr.type) then
+          if ast.expr.type:baseType()==darkroom.type.float(32) then
+            ast.type = ast.expr.type
+          elseif ast.expr.type:baseType()==darkroom.type.float(64) then
+            ast.type = ast.expr.type
+          elseif ast.expr.type:baseType():isInt() or ast.expr.type:baseType():isUint() then
             -- obv can't make it any bigger
             ast.type = ast.expr.type
           else
@@ -235,7 +235,7 @@ function darkroom.typedAST._toTypedAST(inast)
             assert(false)
           end
         elseif ast.op=="not" then
-          if darkroom.type.isBool(ast.expr.type) then
+          if ast.expr.type:baseType():isBool() then
             ast.type = ast.expr.type
           else
             darkroom.error("not only works on bools",origast:linenumber(), origast:offset())
@@ -340,7 +340,8 @@ function darkroom.typedAST._toTypedAST(inast)
         local expr = inputs["expr"][1]
         
         if darkroom.type.isArray(expr.type)==false then
-          darkroom.error("Error, you can only index into an array type!",origast:linenumber(),origast:offset())
+          expr.type:print()
+          darkroom.error("Error, you can only index into an array type!",origast:linenumber(),origast:offset(), origast:filename())
           os.exit()
         end
         
@@ -476,7 +477,7 @@ function darkroom.typedAST._toTypedAST(inast)
         ast.printval = inputs["printval"][1]
 
         if darkroom.type.astIsBool(ast.cond)==false then
-          darkroom.error("Error, condition of assert must be boolean",ast:linenumber(),ast:offset())
+          darkroom.error("Error, condition of assert must be boolean",origast:linenumber(),origast:offset(), origast:filename())
           return nil
         end
 
@@ -485,13 +486,13 @@ function darkroom.typedAST._toTypedAST(inast)
       elseif ast.kind=="mapreducevar" then
         ast.low = ast.low:eval(1)
         if ast.low:area()~=1 then 
-          darkroom.error("map reduce variable range must be a constant",ast:linenumber(),ast:offset(),ast:filename())
+          darkroom.error("map reduce variable range must be a constant", origast:linenumber(), origast:offset(), origast:filename())
         end
         ast.low = ast.low:min(1)
 
         ast.high = ast.high:eval(1)
         if ast.high:area()~=1 then 
-          darkroom.error("map reduce variable range must be a constant",ast:linenumber(),ast:offset(),ast:filename())
+          darkroom.error("map reduce variable range must be a constant", origast:linenumber(), origast:offset(), origast:filename())
         end
         ast.high = ast.high:min(1)
 
