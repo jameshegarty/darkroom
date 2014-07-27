@@ -126,7 +126,6 @@ function darkroom.compile(inputImageFunctions, outputImageFunctions, tapInputs, 
     if options.cores == nil then options.cores=1 else assert(type(options.cores)=="number") end
     if options.stripcount == nil then options.stripcount=options.cores end
     if options.fastmath ~= nil then assert(type(options.fastmath)=="boolean") else options.fastmath = false end
-    if options.terradebug ~= nil then assert(type(options.terradebug)=="boolean") else options.terradebug = false end
     if options.pagesize ~= nil then assert(type(options.pagesize)=="number") else options.pagesize = 4*1024 end
     
     options.width = inputWidth

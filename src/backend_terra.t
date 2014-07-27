@@ -1336,7 +1336,7 @@ function darkroom.terracompiler.allocateImageWrappers(
   local function getInputWrapper(id,type)
     if inputWrappers[id]==nil then
       inputWrappers[id] = {}
-      for c = 1,type:channels() do inputWrappers[id][c] = newImageWrapper( channelPointer(c-1,inputImageSymbolMap[id], type:baseType():toTerraType()), type:baseType(), options.width, options.terradebug ) end
+      for c = 1,type:channels() do inputWrappers[id][c] = newImageWrapper( channelPointer(c-1,inputImageSymbolMap[id], type:baseType():toTerraType()), type:baseType(), options.width, options.debug ) end
       setmetatable(inputWrappers[id],pointwiseDispatchMT)
     end
     return inputWrappers[id]
@@ -1370,7 +1370,7 @@ function darkroom.terracompiler.allocateImageWrappers(
         -- make the output
         if parentIsOutput(n)~=nil then
           outputs[n] = {}
-          for c=1,n.kernel.type:channels() do outputs[n][c] = newImageWrapper( channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType()), n.kernel.type:baseType(), upToNearest(options.V, options.width), options.terradebug) end
+          for c=1,n.kernel.type:channels() do outputs[n][c] = newImageWrapper( channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType()), n.kernel.type:baseType(), upToNearest(options.V, options.width), options.debug) end
           setmetatable(outputs[n],pointwiseDispatchMT)
         else
           outputs[n] = {}
@@ -1382,7 +1382,7 @@ function darkroom.terracompiler.allocateImageWrappers(
               downToNearest(options.V, neededStencil(true,kernelGraph,n, shifts):min(1)), -- use the more conservative stencil
               stripWidth(options),
               upToNearest(options.V, neededStencil(true,kernelGraph,n, shifts):max(1)),
-              options.terradebug)
+              options.debug)
 
             linebufferSize = linebufferSize + outputs[n][c]:allocateSize()
           end

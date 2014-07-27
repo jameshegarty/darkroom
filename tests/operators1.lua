@@ -58,6 +58,7 @@ end
 
 local types = {uint8, int8, uint16, int16, uint32, int32, float, double,
                uint8[3], int8[3], uint16[3], uint32[3], int32[3], float[3], double[3]}
+
 local tests = {}
 for _,t in ipairs(types) do table.insert(tests, gen(t,testinput)) end
 test(tests)

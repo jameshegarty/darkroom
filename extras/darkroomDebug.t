@@ -718,7 +718,7 @@ function darkroom.compile(inputImageFunctions, outputImageFunctions, tapInputs, 
   local ocallbackKernelGraph = options.callbackKernelGraph
   options.callbackKernelGraph = function(node) kernelGraphPrintPretty(node); if ocallbackKernelGraph~=nil then ocallbackKernelGraph(node) end end
   options.callbackScheduledKernelGraph = function(node) kernelGraphPrintPretty(node) end
-  options.terradebug = true
+  options.debug = true
   local res =  origCompile(inputImageFunctions, outputImageFunctions, tapInputs, inputWidth, inputHeight, options)
 
   -- reset the stuff we changed in options
