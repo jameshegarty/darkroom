@@ -8,8 +8,9 @@ Getting Started with Darkroom
 
 _James Hegarty <jhegarty@stanford.edu>_
 
-Darkroom is a language for describing image processing pipelines embedded in Terra.
+Darkroom is a language for describing hardware image processing pipelines embedded in Terra.
 
+![Teaser](teaser.png)
 
 Installation
 ------------
