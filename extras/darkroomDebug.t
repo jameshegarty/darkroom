@@ -702,6 +702,7 @@ function kernelGraphPrintPretty(root)
                    print(node:name().." -------------")
                    if node.kernel==nil then
                      print("(OUTPUT NODE)")
+                     node:map("child",function(n) print(n:name()) end)
                    else
                    typedASTPrintPretty(node.kernel)
                    end

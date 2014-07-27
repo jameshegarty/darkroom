@@ -95,7 +95,7 @@ function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
           end
           return res end)
       assert(query:count()==#args)
-      
+
       local kernel = query:process(
         function(n,origNode)
           local child
@@ -114,6 +114,8 @@ function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
         if kernel:arraySize("expr")~=childCount-1 then
           darkroom.error("Duplicate outputs are not allowed! each output must be a unique image function. This may have been caused by common subexpression elimination")
         end
+        -- reorder the children so that we maintain order of outputs
+        kernel:map("expr",function(n,i) assert(darkroom.kernelGraph.isKernelGraph(n.from)); newnode["child"..i] = n.from end)
         newnode.kernel = nil
       else
         newnode.kernel = kernel

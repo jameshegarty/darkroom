@@ -5,6 +5,7 @@ import "darkroom"
 function gen(T,a)
   local drt = darkroom.type.fromTerraType(T)
   im a(x,y) [T](a) end
+
   im a(x,y) [T](darkroom.pow(a,2)) end
   im a(x,y) [T](darkroom.min(a+3,a+2,a+5)) end
   im a(x,y) [T](darkroom.crop(a)) end

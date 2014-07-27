@@ -1236,11 +1236,11 @@ function darkroom.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, sh
 
   local outputImageSymbolMap = {}
   local declareOutputImages = {}
-  for k,v in kernelGraph:inputs() do     
-    outputImageSymbolMap[k] = symbol(&(v.kernel.type:toTerraType()),"outputImage")
-    table.insert(declareOutputImages,quote var [outputImageSymbolMap[k]] = [&(v.kernel.type:toTerraType())](inputArgs[demarshalCount]) end)
+  kernelGraph:map("child",function(v,k)
+    outputImageSymbolMap["child"..k] = symbol(&(v.kernel.type:toTerraType()),"outputImage")
+    table.insert(declareOutputImages,quote var [outputImageSymbolMap["child"..k]] = [&(v.kernel.type:toTerraType())](inputArgs[demarshalCount]) end)
     demarshalCount = demarshalCount + 1
-  end
+  end)
 
   -- add the input lists and output to the kernelGraph
   local inputs, outputs, linebufferSize = darkroom.terracompiler.allocateImageWrappers(kernelGraph, inputImageSymbolMap, outputImageSymbolMap, shifts, options)
@@ -1424,11 +1424,11 @@ function darkroom.terracompiler.compile(
 
   local outputImageSymbolTable = {}
   local marshalOutputs = {}
-  for k,v in kernelGraph:inputs() do 
+  kernelGraph:map("child",function(v,k)
     table.insert(outputImageSymbolTable, symbol(&opaque)) 
     table.insert(marshalOutputs, quote @stripStorePtr = [outputImageSymbolTable[#outputImageSymbolTable]]; stripStorePtr = stripStorePtr + 1 end)
     marshalBytes = marshalBytes + terralib.sizeof(&opaque)
-  end
+  end)
 
   local TapStruct = terralib.types.newstruct("tapstruct")
   TapStruct.metamethods.__getentries = function()
