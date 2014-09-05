@@ -590,6 +590,14 @@ function TypeFunctions:isArray()
   return self.type=="array"
 end
 
+function TypeFunctions:arrayOver()
+  return darkroom.type.arrayOver(self)
+end
+
+function TypeFunctions:arrayLength()
+  return darkroom.type.arrayLength(self)
+end
+
 function TypeFunctions:toTerraType()
   return darkroom.type.toTerraType(self)
 end
