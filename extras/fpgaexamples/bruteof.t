@@ -26,7 +26,10 @@ im ofRGB(x,y) [uint8[3]]({(bruteofVectorField(x,y)[0])*50+128, (bruteofVectorFie
 ofRGB:save("out/bruteof.bmp")
 
 fpgaEstimate = terralib.require("fpgaEstimate")
-local est = fpgaEstimate.compile({ofRGB}, 1920)
+local est,pl = fpgaEstimate.compile({ofRGB}, 1920)
 io.output("out/bruteofEstimate.txt")
 io.write(est)
+io.close()
+io.output("out/bruteofEstimatePerline.txt")
+io.write(pl)
 io.close()

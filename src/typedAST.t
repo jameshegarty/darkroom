@@ -510,7 +510,7 @@ function darkroom.typedAST._toTypedAST(inast)
         if darkroom.type.isUint(ast.index.type)==false and
           darkroom.type.isInt(ast.index.type)==false then
           
-          darkroom.error("Error, index into tapLUT must be integer",ast:linenumber(),ast:offset())
+          darkroom.error("Error, index into tapLUT must be integer", origast:linenumber(), origast:offset(), origast:filename())
           return nil
         end
       elseif ast.kind=="crop" then

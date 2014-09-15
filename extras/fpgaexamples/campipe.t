@@ -5,7 +5,10 @@ fpgaEstimate = terralib.require("fpgaEstimate")
 -- simple, totally fixed function camera pipeline
 function blackLevel( in1, pedestal )
   local rescale = math.floor((255/(255-pedestal))*255)
-  return im(x,y) [uint8]((( [uint16](in1-pedestal) << 8)*rescale) >> 8) end
+  return im(x,y) 
+    shifted = darkroom.max([uint8](pedestal),in1)-[uint8](pedestal)
+    in (  [uint16](shifted)  * [uint16](rescale)  ) >> [uint16](8)
+  end
 end
 
 -- input = uint8 nxm
@@ -91,17 +94,25 @@ ccm={ {math.floor((255/142)*255),0,0},
 
 function doccm(in1)
   return im(x,y)
-  [uint8[3]]({ darkroom.dot( [uint16[3]](in1) << 8,[ccm[1]]),
-            darkroom.dot( [uint16[3]](in1) << 8,[ccm[2]]),
-            darkroom.dot( [uint16[3]](in1) << 8,[ccm[3]])} >> 8)
+  [uint8[3]]({ darkroom.dot( [uint16[3]](in1),[ccm[1]]),
+            darkroom.dot( [uint16[3]](in1),[ccm[2]]),
+            darkroom.dot( [uint16[3]](in1),[ccm[3]])} >> 8)
   end
 end
 
 function tonemap(in1, gamma)
 
+  local st = {}
+  for i=0,255 do
+    table.insert(st,math.pow((i/255),gamma)*255)
+  end
+
+  local tm = darkroomSimple.tapLUT( uint8, st )
+
   return im(x,y)
+  {tm[in1[0]],tm[in1[1]],tm[in1[2]]}
 --  darkroom.pow((in1(x,y)/255),gamma)*255
-  in1
+--  in1
   end
 
 end
@@ -112,6 +123,7 @@ function campipe(in1)
   out = bilinearDemosaic(out)
   out = doccm(out) 
   out = tonemap(out, 1/2.4)
+--  return im(x,y) [uint8[3]](out) end
   return im(x,y) [uint8[3]]( darkroom.vectorSelect(out>255,[uint8[3]](255),out) ) end
 end
 
@@ -120,7 +132,10 @@ campipeline = campipe(sensor)
 
 campipeline:save("out/campipe.bmp")
 
-local est = fpgaEstimate.compile({campipeline}, 1920)
+local est,pl = fpgaEstimate.compile({campipeline}, 1920)
 io.output("out/campipeEstimate.txt")
 io.write(est)
+io.close()
+io.output("out/campipeEstimatePerline.txt")
+io.write(pl)
 io.close()

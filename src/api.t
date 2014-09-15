@@ -25,11 +25,14 @@ function darkroom.tap( ty )
   return darkroom.ast.new({kind="tap", type=ty, id=darkroom._tapcount-1}):setLinenumber(0):setOffset(0):setFilename("null_tap")
 end
 
-function darkroom.tapLUT(ty, count)
+function darkroom.tapLUT(ty)
   ty = darkroom.type.fromTerraType(ty)
 
   assert(darkroom.type.isArray(ty)==false)
-  assert(type(count)=="number")
+  assert(ty:isUint())
+
+  -- there must be a entry for every possible value of input
+  local count = math.pow(2,ty.precision)
 
   darkroom._tapcount = darkroom._tapcount+1
   return darkroom.ast.new({kind="tap", type=darkroom.type.array(ty,count), count=count, id=darkroom._tapcount-1}):setLinenumber(0):setOffset(0):setFilename("null_tapLUT")
