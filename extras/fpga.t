@@ -17,29 +17,68 @@ function fpga.linebuffer(lines, bytesPerPixel, imageWidth, consumers)
   local name = "Linebuffer_"..lines.."lines_"..bytesPerPixel.."bpp_"..imageWidth.."w"
 
   local outputs = ""
-  for _,v in ipairs(consumers) do
+  for k,v in ipairs(consumers) do
     for x=v:min(1),v:max(1) do
       for y=v:min(2), v:max(2) do
-        outputs = outputs .. "output ["..(bytesPerPixel*8-1)..":0] out_x"..x.."_y"..y..",\n"
+        outputs = outputs .. "output ["..(bytesPerPixel*8-1)..":0] out"..k.."_x"..x.."_y"..y..",\n"
       end
     end
   end
 
-  local t = {"module "..name.."(input CLK,\ninput ["..(bytesPerPixel*8-1)..":0] in,\n"..outputs..");\n"}
+  local t = {"module "..name.."(input CLK,\n"..outputs.."input ["..(bytesPerPixel*8-1)..":0] in);\n"}
 
   if lines==1 then
     -- we're only delaying a few pixels, don't use a bram
-    for _,v in ipairs(consumers) do      
-      table.insert(t, "assign out_x0_y0 = in;\n")
+    for k,v in ipairs(consumers) do      
+      table.insert(t, "assign out"..k.."_x0_y0 = in;\n")
     end
 
   else
     assert(false)
   end
 
-  table.insert(t,"endmodule\n")
+  table.insert(t,"endmodule\n\n")
 
   return name, t
+end
+
+function fpga.buffer(sizeBytes)
+  local bramCnt = math.ceil(sizeBytes / 2048)
+  local extraBits = math.ceil(math.log(bramCnt)/math.log(2))
+
+  local res = {"module Buffer(\ninput CLK,\ninput ["..(10+extraBits)..":0] inaddr,\ninput WE,\ninput [7:0] indata,\ninput ["..(10+extraBits)..":0] outaddr,\noutput [7:0] outdata\n);\n\n"}
+
+  local assn = "outdata0"
+  for i=0,bramCnt-1 do
+    table.insert(res,"wire [7:0] outdata"..i..";\n")
+    table.insert(res,"RAMB16_S9_S9 #(.INIT_00(256'h0123456789ABCDEF00000000000000000000000000000000000000000000BBBB)\n")
+    table.insert(res,") ram"..i.."(\n")
+    table.insert(res,".DIPA(1'b0),\n")
+    table.insert(res,".DIA(indata),\n")
+    table.insert(res,".DOB(outdata"..i.."),\n")
+    table.insert(res,".ADDRA(inaddr[10:0]),\n")
+if bramCnt > 1 then
+    table.insert(res,".WEA(WE && (inaddr["..(10+extraBits)..":11]=="..i..")),\n")
+else
+    table.insert(res,".WEA(WE),\n")
+end
+
+    table.insert(res,".WEB(1'b0),\n")
+    table.insert(res,".ENA(1'b1),\n")
+    table.insert(res,".ENB(1'b1),\n")
+    table.insert(res,".ADDRB(outaddr[10:0]),\n")
+    table.insert(res,".CLKA(CLK),\n")
+    table.insert(res,".CLKB(CLK),\n")
+    table.insert(res,".SSRA(1'b0),\n")
+    table.insert(res,".SSRB(1'b0)\n")
+    table.insert(res,");\n\n")
+
+    if i>0 then assn = "(outaddr["..(10+extraBits)..":11]=="..i..")? outdata"..i.." : ("..assn..")" end
+  end
+
+  table.insert(res, "assign outdata = "..assn..";\n")
+  table.insert(res,"endmodule\n\n")
+  return res
 end
 
 function fpga.tx(size)
@@ -211,8 +250,8 @@ function fpga.trivialRetime(typedAST)
   return retiming
 end
 
-local function declare(type, name, str)
-  return "reg ["..(type:sizeof()*8-1)..":0] "..name.." = "..str..";\n"
+local function declareReg(type, name)
+  return "reg ["..(type:sizeof()*8-1)..":0] "..name..";\n"
 end
 
 local function declareWire(type, name, str)
@@ -228,19 +267,25 @@ function fpga.codegenKernel(kernelGraphNode, retiming)
     inputs = inputs.."input ["..(v.kernel.type:sizeof()*8-1)..":0] in_"..v:name().."_x0_y0,\n"
   end
 
+  if kernelGraphNode:inputCount()==0 then
+    inputs = "input [7:0] in_x0_y0,\n"
+  end
+
   local result = {"module Kernel_"..kernelGraphNode:name().."(input CLK,\n"..inputs.."output ["..(kernel.type:sizeof()*8-1)..":0] out);\n"}
+  local clockedLogic = {}
 
   local finalOut = kernel:visitEach(
     function(n, inputs)
       local res
       if n.kind=="binop" then
-        table.insert(result,declare(n.type,n:name(),inputs.lhs..n.op..inputs.rhs))
+        table.insert(result,declareReg(n.type,n:name()))
+        table.insert(clockedLogic, n:name().." <= "..inputs.lhs..n.op..inputs.rhs..";\n")
         res = n:name()
       elseif n.kind=="load" then
 --        res = "input_x"..n.relX.."_y"..n.relY
 
         if type(n.from)=="number" then
-          res = "in_tx_x0_y0"
+          res = "in_x0_y0"
         else
           res = "in_"..n.from:name().."_x0_y0"
         end
@@ -258,7 +303,8 @@ function fpga.codegenKernel(kernelGraphNode, retiming)
       return res
     end)
 
-  table.insert(result,"assign output = "..finalOut..";\n")
+  table.insert(result,"always @ (posedge CLK) begin\n"..table.concat(clockedLogic,"").."end\n")
+  table.insert(result,"assign out = "..finalOut..";\n")
   table.insert(result,"endmodule\n\n")
   return result
 end
@@ -288,6 +334,7 @@ function fpga.compile(inputs, outputs, width, height, options)
   local result = {}
   result = concat(result, fpga.tx())
   result = concat(result, fpga.rx())
+  result = concat(result, fpga.buffer(width*height))
 
   local pipeline = {[=[module Pipeline(
 input CLK,
@@ -300,40 +347,123 @@ output [7:0] out);
     return false
   end
 
+  local totalDelay = 0
   kernelGraph:visitEach(
-   function(node)
-     if node.kernel~=nil then
-       local retiming = fpga.trivialRetime(node.kernel)
-       local verilogKernel = fpga.codegenKernel(node, retiming)
-       result = concat(result, verilogKernel)
+    function(node)
+      if node.kernel~=nil then
+        local retiming = fpga.trivialRetime(node.kernel)
+        totalDelay = totalDelay + retiming[node.kernel]
+        local verilogKernel = fpga.codegenKernel(node, retiming)
+        result = concat(result, verilogKernel)
+        
+        local inputs = ""
+        if node:inputCount()==0 then
+          inputs = ".in_x0_y0(in),"
+        else
+          for k,v in node:inputs() do
+            inputs = inputs..".in_"..v:name().."_x0_y0("..v:name().."_to_"..node:name().."),"
+          end
+        end
+        
+        table.insert(pipeline,"wire ["..(node.kernel.type:sizeof()*8-1)..":0] kernelOut_"..node:name()..";\n")
+        table.insert(pipeline,"Kernel_"..node:name().." kernel_"..node:name().."(.CLK(CLK),"..inputs..".out(kernelOut_"..node:name().."));\n")
+        
+        local lboutputs = ""
 
-       local inputs = ""
-       if node:inputCount()==0 then
-         inputs = ".in_x0_y0(in),"
-       else
-
-       end
-
-       table.insert(pipeline,"wire [:0] kernelOut_"..node:name()..";\n")
-       table.insert(pipeline,"Kernel_"..node:name().." kernel_"..node:name().."(.CLK(CLK),"..inputs..",.out(kernelOut_"..node:name().."));\n")
-       
         local consumers = {}
         for v,_ in node:parents(kernelGraph) do
           if v.kernel~=nil then
             table.insert(consumers, v.kernel:stencil(node))
+            table.insert(pipeline,"wire ["..(node.kernel.type:sizeof()*8-1)..":0] "..node:name().."_to_"..v:name()..";\n")
+            lboutputs = ".out"..(#consumers).."_x0_y0("..node:name().."_to_"..v:name().."),"
           end
         end
-
+        
         if parentIsOutput(node)==false then -- output nodes don't write to linebuffer
           local lbname, lbmod = fpga.linebuffer(node:bufferSize(kernelGraph), node.kernel.type:sizeof(), width, consumers)
           result = concat(result, lbmod)
-          table.insert(pipeline,lbname.." kernelBuffer_"..node:name().."(.CLK(CLK),in(kernelOut_"..node:name().."));\n")
+          table.insert(pipeline,lbname.." kernelBuffer_"..node:name().."(.CLK(CLK),"..lboutputs..".in(kernelOut_"..node:name().."));\n")
         end
-     end
-   end)
---  table.insert(pipeline, "assign out = "..kernelGraph.expr1:name()..";\n")
+      end
+    end)
+
+  table.insert(pipeline, "assign out = kernelOut_"..kernelGraph.child1:name()..";\n")
   table.insert(pipeline,"endmodule\n\n")
+  table.insert(pipeline,"parameter PIPE_DELAY = "..(totalDelay+1)..";\n") -- one cycle delay for the bram or something?
   result = concat(result, pipeline)
+
+local pxcnt = width*height
+  table.insert(result,[=[module stage(
+input CLK, 
+input RX, 
+output TX,
+output [7:0] LED);
+
+reg [12:0] addr = 0;
+reg [12:0] sendAddr = -1;
+
+reg receiving = 1;
+reg processing = 0;
+reg sending = 0;
+
+wire [7:0] rxbits;
+wire [7:0] pipelineInput;
+reg [12:0] pipelineReadAddr = 0; 
+Buffer inputBuffer(.CLK(CLK), .inaddr(addr), .WE(receiving), .indata(rxbits), .outaddr(pipelineReadAddr), .outdata(pipelineInput));
+
+wire [7:0] pipelineOutput;
+wire [7:0] outbuf;
+reg [12:0] pipelineWriteAddr = -PIPE_DELAY; // pipe delay
+Buffer outputBuffer(.CLK(CLK), .inaddr(pipelineWriteAddr), .WE(processing), .indata(pipelineOutput), .outaddr(sendAddr), .outdata(outbuf));
+
+Pipeline pipeline(.CLK(CLK), .in(pipelineInput), .out(pipelineOutput));
+
+wire rxvalid;
+wire txready;
+RXMOD rxmod(.RX(RX),.CLK(CLK),.outbits(rxbits),.outvalid(rxvalid));
+TXMOD txmod(.TX(TX),.CLK(CLK),.inbits(outbuf),.enable(sending),.ready(txready));
+
+always @(posedge CLK) begin
+  if(receiving) begin
+  if(addr == ]=]..(pxcnt)..[=[) begin
+      addr <= 0;
+      receiving <= 0;
+		sending <= 0;
+		processing <= 1;
+    end else if(rxvalid) begin
+      addr <= addr + 1;
+    end
+  end
+  
+  if(processing) begin
+  if(pipelineWriteAddr == ]=]..(pxcnt)..[=[) begin
+	   pipelineWriteAddr <= -PIPE_DELAY;
+		pipelineReadAddr <= 0;
+      receiving <= 0;
+		sending <= 1;
+		processing <= 0;
+    end else begin
+	   pipelineReadAddr <= pipelineReadAddr + 1;
+      pipelineWriteAddr <= pipelineWriteAddr + 1;
+	 end
+  end
+  
+  if(sending) begin
+  if(sendAddr==]=]..(pxcnt)..[=[) begin
+      // we're done
+      sending <= 0;
+		receiving <= 1;
+		processing <= 0;
+	   sendAddr <= -1;
+    end else if(txready) begin
+      sendAddr <= sendAddr + 1;
+    end
+  end
+end
+
+assign LED = {addr[6:0],rxvalid};
+endmodule]=])
+
   return table.concat(result,"")
 end
 
