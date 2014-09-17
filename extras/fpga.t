@@ -1,5 +1,8 @@
 local fpga = {}
 
+--UART_CLOCK = 115200
+UART_CLOCK = 57600
+
 function concat(t1,t2)
     for i=1,#t1 do
       assert(type(t1[i])=="string")
@@ -94,7 +97,7 @@ output ready // when true, we're ready to transmit a new bit
   assign TX = TXd;
 
   reg [28:0] d;
-  wire [28:0] dInc = d[28] ? (230400) : (230400 - 32000000);
+  wire [28:0] dInc = d[28] ? (]=]..UART_CLOCK..[=[) : (]=]..UART_CLOCK..[=[ - 32000000);
   wire [28:0] dNxt = d + dInc;
   always @(posedge CLK)
   begin
@@ -167,7 +170,7 @@ assign outvalid = outvalidReg;
 //reg [7:0] started = 0;
 
 reg [28:0] d;
-  wire [28:0] dInc = d[28] ? (3686400) : (3686400 - 32000000);
+  wire [28:0] dInc = d[28] ? (]=]..(UART_CLOCK*16)..[=[) : (]=]..(UART_CLOCK*16)..[=[ - 32000000);
   wire [28:0] dNxt = d + dInc;
   always @(posedge CLK)
   begin
@@ -418,50 +421,72 @@ Buffer outputBuffer(.CLK(CLK), .inaddr(pipelineWriteAddr), .WE(processing), .ind
 
 Pipeline pipeline(.CLK(CLK), .in(pipelineInput), .out(pipelineOutput));
 
+reg [7:0] rxCRC = 0;
+reg [7:0] sendCRC = 0;
+   
 wire rxvalid;
 wire txready;
 RXMOD rxmod(.RX(RX),.CLK(CLK),.outbits(rxbits),.outvalid(rxvalid));
-TXMOD txmod(.TX(TX),.CLK(CLK),.inbits(outbuf),.enable(sending),.ready(txready));
+TXMOD txmod(.TX(TX),.CLK(CLK),.inbits( (sendAddr>]=]..(pxcnt-1)..[=[)?((sendAddr==]=]..pxcnt..[=[)?sendCRC:rxCRC):outbuf),.enable(sending),.ready(txready));
 
 always @(posedge CLK) begin
   if(receiving) begin
-  if(addr == ]=]..(pxcnt)..[=[) begin
+  if(addr == ]=]..pxcnt..[=[) begin
       addr <= 0;
       receiving <= 0;
-		sending <= 0;
-		processing <= 1;
+		  sending <= 0;
+		  processing <= 1;
     end else if(rxvalid) begin
       addr <= addr + 1;
+      rxCRC <= rxCRC + rxbits;
     end
   end
   
   if(processing) begin
-  if(pipelineWriteAddr == ]=]..(pxcnt)..[=[) begin
-	   pipelineWriteAddr <= -PIPE_DELAY;
-		pipelineReadAddr <= 0;
+    if(rxvalid) begin
+      sending <= 0;
+      receiving <= 1;
+      rxCRC <= 0;
+      processing <= 0;
+      sendAddr <= -1;
+      pipelineWriteAddr <= -PIPE_DELAY;
+      pipelineReadAddr <= 0;
+    end else if(pipelineWriteAddr == ]=]..pxcnt..[=[) begin
+      pipelineWriteAddr <= -PIPE_DELAY;
+		  pipelineReadAddr <= 0;
       receiving <= 0;
-		sending <= 1;
-		processing <= 0;
+		  sending <= 1;
+		  processing <= 0;
     end else begin
-	   pipelineReadAddr <= pipelineReadAddr + 1;
+	    pipelineReadAddr <= pipelineReadAddr + 1;
       pipelineWriteAddr <= pipelineWriteAddr + 1;
 	 end
   end
   
   if(sending) begin
-  if(sendAddr==]=]..(pxcnt)..[=[) begin
+    if(rxvalid) begin
+      sending <= 0;
+      receiving <= 1;
+      rxCRC <= 0;
+      processing <= 0;
+      sendAddr <= -1;
+      end else if(sendAddr==]=]..(pxcnt+2)..[=[) begin
       // we're done
       sending <= 0;
-		receiving <= 1;
-		processing <= 0;
-	   sendAddr <= -1;
+      receiving <= 1;
+      rxCRC <= 0;
+      processing <= 0;
+	    sendAddr <= -1;
+      sendCRC <= 0;
     end else if(txready) begin
       sendAddr <= sendAddr + 1;
+      if (sendAddr >= 0 && sendAddr < ]=]..pxcnt..[=[) begin sendCRC <= sendCRC + outbuf; end
     end
   end
+
 end
 
-assign LED = {addr[6:0],rxvalid};
+assign LED = {addr[6:1],receiving,processing,sending};
 endmodule]=])
 
   return table.concat(result,"")

@@ -10,6 +10,9 @@ else
   testinput = darkroom.input(uint8)
 end
 
+BLOCKX = 16
+BLOCKY = 16
+
 local uart = terralib.includecstring [[
 #include <stdio.h>
 #include <stdlib.h>
@@ -63,13 +66,15 @@ void init(char* device){
   //PARODD - Odd parity (else even)
   struct termios options;
   tcgetattr(uart0_filestream, &options);
-  options.c_cflag = B230400 | CS8 | CLOCAL | CREAD;//<Set baud rate
+  options.c_cflag = B57600 | CS8 | CLOCAL | CREAD;//<Set baud rate
   options.c_iflag = IGNPAR;
   options.c_oflag = 0;
   options.c_lflag = 0;
 
   cfmakeraw(&options); 
-  cfsetspeed(&options, B230400);
+//  cfsetspeed(&options, B230400);
+//  cfsetspeed(&options, B115200);
+  cfsetspeed(&options, B57600);
 
   tcflush(uart0_filestream, TCIFLUSH);
   tcsetattr(uart0_filestream, TCSANOW, &options);
@@ -82,11 +87,11 @@ void transmit(unsigned char* tx_buffer, int size){
     if (count < 0){
       printf("UART TX error\n");
     }
-    printf("COUNT %d\n",count);
+    printf("tx COUNT %d\n",count);
   }
 }
 
-void receive(unsigned char* rx_buffer, int expectedSize){
+int receive(unsigned char* rx_buffer, int expectedSize){
   //----- CHECK FOR ANY RX BYTES -----
   if (uart0_filestream != -1){
     // Read up to 255 characters from the port if they are there
@@ -101,8 +106,11 @@ void receive(unsigned char* rx_buffer, int expectedSize){
     }else{
       //Bytes received
       rx_buffer[rx_length] = '\0';
-      printf("%i bytes read : %s\n", rx_length, rx_buffer);
+      printf("%d bytes read : %s\n", rx_length, rx_buffer);
+      printf("%d\n",rx_length);
     }
+
+    return rx_length;
   }
 }
 
@@ -124,14 +132,14 @@ function test(inast)
     io.write(pl)
     io.close()
   elseif arg[1]==nil then
-    local v = fpga.compile( {{testinput,"uart"}}, {{inast,"uart"}}, 32,32)
+    local v = fpga.compile( {{testinput,"uart"}}, {{inast,"uart"}}, BLOCKX, BLOCKY)
     local s = string.sub(arg[0],1,#arg[0]-4)
     io.output("out/"..s..".v")
     io.write(v)
     io.close()
   elseif arg[2]=="test" then
     print("TEST")
-    uart.init("/dev/tty.usbserial-141B")
+    uart.init("/dev/tty.usbserial-142B")
 
     local terra uarttest()
       uart.transmit([&uint8]("aaaabbbbccccdddd"),16)
@@ -146,45 +154,101 @@ function test(inast)
 --      uarttest()
 --    end
 
-    local terra procim()
+    local UART_DELAY = 100000
+
+    local terra procim(filename:&int8)
       var txbuf = [&uint8](uart.malloc(2048));
       var rxbuf = [&uint8](uart.malloc(2048));
-
-
 
       var img : Image
 
       img:load([arg[1]])
 
-      var bw = img.width/32
-      var bh = img.height/32
+      var bw = img.width/BLOCKX
+      var bh = img.height/BLOCKY
+
+      var retries = 0
 
       for by=0,bh do
         for bx=0,bw do
-          for y=0,32 do
-            for x=0,32 do
-              txbuf[y*32+x] = [&uint8](img.data)[(by*32+y)*img.width+(bx*32+x)]
+          ::RESTART::
+          uart.printf("BX %d/%d BY %d/%d\n",bx,bw,by,bh)
+
+          for y=0,BLOCKY do
+            for x=0,BLOCKX do
+              txbuf[y*BLOCKX+x] = [&uint8](img.data)[(by*BLOCKY+y)*img.width+(bx*BLOCKX+x)]
+              rxbuf[y*BLOCKX+x] = 0;
             end
           end
 
-          uart.transmit(txbuf,32*32)
-          uart.usleep(2000000);
-          uart.receive(rxbuf,32*32)
+          var txcrc : uint8 
+          txcrc = 0
+          for i=0,BLOCKX*BLOCKY do 
+            txcrc = txcrc + txbuf[i] 
+--            uart.printf("tx CRC %d %d\n",txbuf[i],txcrc)
+          end
 
-          for y=0,32 do
-            for x=0,32 do
-              [&uint8](img.data)[(by*32+y)*img.width+(bx*32+x)] = rxbuf[y*32+x]
+          uart.transmit(txbuf,BLOCKX*BLOCKY)
+          uart.usleep(UART_DELAY);
+          var rsx : int
+          rsx = uart.receive(rxbuf,BLOCKX*BLOCKY+2)
+
+--          if rsx <= 0 then
+          if rsx < BLOCKX*BLOCKY+2 then
+            uart.printf("no data, attempting to restart. press key\n")
+--            while uart.getchar()~=32 do end
+            while true do
+              uart.printf("SENDBYTE\n")
+              uart.transmit(txbuf,1)
+              uart.usleep(UART_DELAY);
+              var rsxx = uart.receive(rxbuf,BLOCKX*BLOCKY+2)
+              if rsxx>0 then break end
+            end
+            uart.printf("DONe\n")
+
+            uart.printf("RESTART\n")
+            retries = retries + 1
+            goto RESTART
+--            uart.exit(1);
+          end
+
+          -- check CRC
+          var crc : uint8 
+          crc = 0
+          for i=0,BLOCKX*BLOCKY do 
+            crc = crc + rxbuf[i] 
+--            uart.printf("CRC %d %d\n",rxbuf[i],crc)
+          end
+          
+          if crc ~= rxbuf[BLOCKX*BLOCKY] then
+            uart.printf("CRC ERROR %d %d\n",crc,rxbuf[BLOCKX*BLOCKY])
+            retries = retries + 1
+            goto RESTART
+--            uart.exit(1)
+          end
+
+          if txcrc ~= rxbuf[BLOCKX*BLOCKY+1] then
+            uart.printf("tx CRC ERROR %d %d\n",txcrc,rxbuf[BLOCKX*BLOCKY+1])
+            retries = retries + 1
+            goto RESTART
+--            uart.exit(1)
+          end
+
+          for y=0,BLOCKY do
+            for x=0,BLOCKX do
+              [&uint8](img.data)[(by*BLOCKY+y)*img.width+(bx*BLOCKX+x)] = rxbuf[y*BLOCKX+x]
             end
           end
 
         end
       end
 
-      img:save("LOL.bmp")
+      uart.printf("RETRIES: %d\n",retries)
+      img:save(filename)
 
     end
 
-    procim()
+    procim("out/"..arg[0]..".fpga.bmp")
 
     uart.closeuart()
   else
