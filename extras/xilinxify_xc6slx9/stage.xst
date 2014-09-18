@@ -1,7 +1,7 @@
-set -tmpdir "xst/projnav.tmp"
+set -tmpdir "."
 set -xsthdpdir "xst"
 run
--ifn stage.prj
+-ifn ../../xilinxify_xc6slx9/stage.prj
 -ofn stage
 -ofmt NGC
 -p xc6slx9-3-tqg144

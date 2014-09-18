@@ -10,8 +10,9 @@ else
   testinput = darkroom.input(uint8)
 end
 
-BLOCKX = 16
-BLOCKY = 16
+BLOCKX = 128
+BLOCKY = 4
+local UART_DELAY = 300000
 
 local uart = terralib.includecstring [[
 #include <stdio.h>
@@ -141,21 +142,6 @@ function test(inast)
     print("TEST")
     uart.init("/dev/tty.usbserial-142B")
 
-    local terra uarttest()
-      uart.transmit([&uint8]("aaaabbbbccccdddd"),16)
-
-      uart.usleep(1000000);
-      var rxbuf = [&uint8](uart.malloc(256));
-      uart.receive(rxbuf,16);
-      uart.printf("E %s\n",rxbuf);
-    end
-
---    for i=0,9 do
---      uarttest()
---    end
-
-    local UART_DELAY = 100000
-
     local terra procim(filename:&int8)
       var txbuf = [&uint8](uart.malloc(2048));
       var rxbuf = [&uint8](uart.malloc(2048));
@@ -251,6 +237,8 @@ function test(inast)
     procim("out/"..arg[0]..".fpga.bmp")
 
     uart.closeuart()
+
+    
   else
     if darkroom.ast.isAST(inast) then inast = {inast} end
 

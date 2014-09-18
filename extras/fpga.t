@@ -2,6 +2,7 @@ local fpga = {}
 
 --UART_CLOCK = 115200
 UART_CLOCK = 57600
+--UART_CLOCK = 19200
 
 function concat(t1,t2)
     for i=1,#t1 do
