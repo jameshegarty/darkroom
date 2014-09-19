@@ -118,6 +118,8 @@ function binopToCost(op,type, lhsType, rhsType)
     t.luts = type:sizeof()*(8+(8/2))
   elseif op=="*" then
     t.dsps = 1
+  elseif op=="pow" then
+    t.luts = (type:sizeof()*8)*(type:sizeof()*8)
   elseif op=="and" or op=="==" or op=="or"  then
     t.luts = type:sizeof()*(8/2)
   elseif op=="dot" then

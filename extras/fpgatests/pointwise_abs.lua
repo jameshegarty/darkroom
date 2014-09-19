@@ -1,0 +1,8 @@
+(terralib.loadfile("test.t"))()
+import "darkroom"
+
+im in1(x,y) [int32](testinput(x,y)) end
+im in1(x,y) -in1(x,y) end
+im out(x,y) [uint8](darkroom.abs(in1(x,y))) end
+
+test(out)

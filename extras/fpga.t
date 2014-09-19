@@ -222,9 +222,9 @@ end
 
 
 function typedASTFunctions:internalDelay()
-  if self.kind=="binop" then
+  if self.kind=="binop" or self.kind=="unary" or self.kind=="select" then
     return 1
-  elseif self.kind=="load" or self.kind=="crop" or self.kind=="value" then
+  elseif self.kind=="load" or self.kind=="crop" or self.kind=="value" or self.kind=="cast" then
     return 0
   else
     print(self.kind)
@@ -280,10 +280,52 @@ function fpga.codegenKernel(kernelGraphNode, retiming)
 
   local finalOut = kernel:visitEach(
     function(n, inputs)
+      if n.type:isInt()==false and n.type:isUint()==false and n.type:isBool()==false then
+        darkroom.error("Only integer types are allowed "..n.type:str(), n:linenumber(), n:offset(), n:filename())
+      end
+
+      -- insert pipeline delays
+      for k,v in n:inputs() do
+        local delays = retiming[n] - retiming[v] - n:internalDelay()
+        assert(delays>=0)
+        local prev = inputs[k]
+        for i=1, delays do
+          local sn = inputs[k].."_"..n:name().."_retime"..i
+          table.insert(result,declareReg(n.type,sn))
+          table.insert(clockedLogic, sn.." <= "..prev..";\n")
+          prev = sn
+        end
+        if delays>0 then inputs[k] = inputs[k].."_"..n:name().."_retime"..delays end
+      end
+
       local res
       if n.kind=="binop" then
         table.insert(result,declareReg(n.type,n:name()))
-        table.insert(clockedLogic, n:name().." <= "..inputs.lhs..n.op..inputs.rhs..";\n")
+        local op = n.op
+        if op=="pow" then op="**" end
+        table.insert(clockedLogic, n:name().." <= "..inputs.lhs..op..inputs.rhs..";\n")
+        res = n:name()
+      elseif n.kind=="unary" then
+        if n.op=="abs" then
+          if n.type:isInt() then
+            table.insert(result,declareReg(n.type,n:name()))
+            table.insert(clockedLogic, n:name().." <= ("..inputs.expr.."["..(n.type:sizeof()*8-1)..":0] == 1'b1)?(-"..inputs.expr.."):("..inputs.expr..");\n")
+            res = n:name()          
+          else
+            return inputs.expr
+          end
+        elseif n.op=="-" then
+          assert(n.type:isInt())
+          table.insert(result,declareReg(n.type,n:name()))
+          table.insert(clockedLogic, n:name().." <= -"..inputs.expr..";\n")
+          res = n:name()          
+        else
+          print(n.op)
+          assert(false)
+        end
+      elseif n.kind=="select" then
+        table.insert(result,declareReg(n.type,n:name()))
+        table.insert(clockedLogic, n:name().." <= ("..inputs.cond..")?("..inputs.a.."):("..inputs.b..");\n")
         res = n:name()
       elseif n.kind=="load" then
 --        res = "input_x"..n.relX.."_y"..n.relY
@@ -295,6 +337,9 @@ function fpga.codegenKernel(kernelGraphNode, retiming)
         end
       elseif n.kind=="crop" then
         res = inputs.expr
+      elseif n.kind=="cast" then
+        table.insert(result, declareWire(n.type, n:name(), inputs.expr))
+        res = n:name()
       elseif n.kind=="value" then
         table.insert(result,declareWire(n.type,n:name(),n.value))
         res = n:name()

@@ -46,7 +46,8 @@ void init(char* device){
   if (uart0_filestream == -1)
   {
     //ERROR - CAN'T OPEN SERIAL PORT
-    printf("Error - Unable to open UART.  Ensure it is not in use by another application\n");
+    printf("Error - Unable to open UART %s.  Ensure it is not in use by another application\n",device);
+    exit(1);
   }
 
 //  int ret = fcntl(uart0_filestream, F_SETFL, O_RDWR);
