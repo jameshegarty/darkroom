@@ -16,27 +16,65 @@ function concat(t1,t2)
     return t1
 end
 
-function fpga.linebuffer(lines, bytesPerPixel, imageWidth, consumers)
+local function declareReg(type, name)
+  return "reg ["..(type:sizeof()*8-1)..":0] "..name..";\n"
+end
 
-  local name = "Linebuffer_"..lines.."lines_"..bytesPerPixel.."bpp_"..imageWidth.."w"
+local function declareWire(type, name, str)
+  return "wire ["..(type:sizeof()*8-1)..":0] "..name.." = "..str..";\n"
+end
+
+function numToVarname(x)
+  if x>0 then return x end
+  if x==0 then return "0" end
+  return "m"..math.abs(x)
+end
+
+function getStencilCoord(rel)
+  if type(rel)=="number" then return rel end
+  local s = rel:eval(1)
+  assert(s:area()==1)
+  return s:min(1)
+end
+
+function fpga.linebuffer(maxdelay, datatype, imageWidth, consumers)
+  assert(type(maxdelay)=="number")
+  assert(darkroom.type.isType(datatype))
+  local bytesPerPixel = datatype:sizeof()
+  local name = "Linebuffer_"..maxdelay.."delay_"..bytesPerPixel.."bpp_"..imageWidth.."w"
 
   local outputs = ""
   for k,v in ipairs(consumers) do
     for x=v:min(1),v:max(1) do
       for y=v:min(2), v:max(2) do
-        outputs = outputs .. "output ["..(bytesPerPixel*8-1)..":0] out"..k.."_x"..x.."_y"..y..",\n"
+        outputs = outputs .. "output ["..(bytesPerPixel*8-1)..":0] out"..k.."_x"..numToVarname(x).."_y"..numToVarname(y)..",\n"
       end
     end
   end
 
   local t = {"module "..name.."(input CLK,\n"..outputs.."input ["..(bytesPerPixel*8-1)..":0] in);\n"}
 
-  if lines==1 then
-    -- we're only delaying a few pixels, don't use a bram
+  local lines = math.floor(maxdelay/imageWidth)
+  local xpixels = maxdelay - lines*imageWidth
+  print("linebuffer lines",lines,"xpixels",xpixels)
+
+  if lines==0 and xpixels==0 then
     for k,v in ipairs(consumers) do      
       table.insert(t, "assign out"..k.."_x0_y0 = in;\n")
     end
-
+  elseif lines==0 then
+    -- we're only delaying a few pixels, don't use a bram
+    local clockedLogic = {}
+    local prev = "in"
+    for i=-xpixels,0 do
+      local n = "lb_"..numToVarname(i)
+      table.insert(t,declareReg(datatype,n))
+      table.insert(clockedLogic, n.." <= "..prev..";\n")
+      prev = n
+    end
+    table.insert(t,"always @ (posedge CLK) begin\n")
+    t = concat(t,clockedLogic)
+    table.insert(t,"end\n")
   else
     assert(false)
   end
@@ -254,13 +292,6 @@ function fpga.trivialRetime(typedAST)
   return retiming
 end
 
-local function declareReg(type, name)
-  return "reg ["..(type:sizeof()*8-1)..":0] "..name..";\n"
-end
-
-local function declareWire(type, name, str)
-  return "wire ["..(type:sizeof()*8-1)..":0] "..name.." = "..str..";\n"
-end
 
 function fpga.codegenKernel(kernelGraphNode, retiming)
   local kernel = kernelGraphNode.kernel
@@ -268,7 +299,9 @@ function fpga.codegenKernel(kernelGraphNode, retiming)
   local inputs = ""
 
   for k,v in kernelGraphNode:inputs() do
-    inputs = inputs.."input ["..(v.kernel.type:sizeof()*8-1)..":0] in_"..v:name().."_x0_y0,\n"
+    for sk,_ in pairs(kernel:stencil(v)) do
+      inputs = inputs.."input ["..(v.kernel.type:sizeof()*8-1)..":0] in_"..v:name().."_x"..numToVarname(sk[1]).."_y"..numToVarname(sk[2])..",\n"
+    end
   end
 
   if kernelGraphNode:inputCount()==0 then
@@ -328,12 +361,10 @@ function fpga.codegenKernel(kernelGraphNode, retiming)
         table.insert(clockedLogic, n:name().." <= ("..inputs.cond..")?("..inputs.a.."):("..inputs.b..");\n")
         res = n:name()
       elseif n.kind=="load" then
---        res = "input_x"..n.relX.."_y"..n.relY
-
         if type(n.from)=="number" then
-          res = "in_x0_y0"
+          res = "in_x"..numToVarname(getStencilCoord(n.relX)).."_y"..numToVarname(getStencilCoord(n.relY))
         else
-          res = "in_"..n.from:name().."_x0_y0"
+          res = "in_"..n.from:name().."_x"..numToVarname(getStencilCoord(n.relX)).."_y"..numToVarname(getStencilCoord(n.relY))
         end
       elseif n.kind=="crop" then
         res = inputs.expr
@@ -376,8 +407,21 @@ function fpga.compile(inputs, outputs, width, height, options)
   end
 
   local kernelGraph = darkroom.frontEnd( ast, {} )
-  local shifts = schedule(kernelGraph)
-  kernelGraph, shifts = shift(kernelGraph, shifts)
+
+  local maxStencil = Stencil.new()
+  kernelGraph:visitEach(
+    function(node)
+      for v,k in node:parents(kernelGraph) do
+        if v.kernel~=nil then
+          maxStencil = maxStencil:unionWith(v.kernel:stencil(node))
+        end
+      end
+    end)
+
+  print("Max Stencil x="..maxStencil:min(1)..","..maxStencil:max(1).." y="..maxStencil:min(2)..","..maxStencil:max(2))
+
+  local shifts = schedule(kernelGraph, width)
+  kernelGraph, shifts = shift(kernelGraph, shifts, width)
 
   ------------------------------
   local result = {}
@@ -409,8 +453,11 @@ output [7:0] out);
         if node:inputCount()==0 then
           inputs = ".in_x0_y0(in),"
         else
-          for k,v in node:inputs() do
-            inputs = inputs..".in_"..v:name().."_x0_y0("..v:name().."_to_"..node:name().."),"
+          for _,v in node:inputs() do
+            local s = node.kernel:stencil(v)
+            for k,_ in pairs(s) do
+              inputs = inputs..".in_"..v:name().."_x"..numToVarname(k[1]).."_y"..numToVarname(k[2]).."("..v:name().."_to_"..node:name().."_x"..numToVarname(k[1]).."_y"..numToVarname(k[2]).."),"
+            end
           end
         end
         
@@ -423,13 +470,19 @@ output [7:0] out);
         for v,_ in node:parents(kernelGraph) do
           if v.kernel~=nil then
             table.insert(consumers, v.kernel:stencil(node))
-            table.insert(pipeline,"wire ["..(node.kernel.type:sizeof()*8-1)..":0] "..node:name().."_to_"..v:name()..";\n")
-            lboutputs = ".out"..(#consumers).."_x0_y0("..node:name().."_to_"..v:name().."),"
+
+
+            local s = v.kernel:stencil(node)
+            for k,_ in pairs(s) do
+              local wirename = node:name().."_to_"..v:name().."_x"..numToVarname(k[1]).."_y"..numToVarname(k[2])
+              table.insert(pipeline,"wire ["..(node.kernel.type:sizeof()*8-1)..":0] "..wirename..";\n")
+              lboutputs = lboutputs..".out"..(#consumers).."_x"..numToVarname(k[1]).."_y"..numToVarname(k[2]).."("..wirename.."),"
+            end
           end
         end
         
         if parentIsOutput(node)==false then -- output nodes don't write to linebuffer
-          local lbname, lbmod = fpga.linebuffer(node:bufferSize(kernelGraph), node.kernel.type:sizeof(), width, consumers)
+          local lbname, lbmod = fpga.linebuffer(node:bufferSize(kernelGraph, width), node.kernel.type, width, consumers)
           result = concat(result, lbmod)
           table.insert(pipeline,lbname.." kernelBuffer_"..node:name().."(.CLK(CLK),"..lboutputs..".in(kernelOut_"..node:name().."));\n")
         end
@@ -535,7 +588,7 @@ end
 assign LED = {addr[6:1],receiving,processing,sending};
 endmodule]=])
 
-  return table.concat(result,"")
+  return table.concat(result,""), maxStencil
 end
 
 return fpga

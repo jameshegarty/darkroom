@@ -4,8 +4,8 @@ fpgaEstimate = terralib.require("fpgaEstimate")
 darkroomSimple = terralib.require("darkroomSimple")
 terralib.require("image")
 
-if arg[1]~="est" and arg[1]~=nil then
-  testinput = darkroomSimple.load(arg[1])
+if arg[1]=="cpu" then
+  testinput = darkroomSimple.load(arg[2])
 else
   testinput = darkroom.input(uint8)
 end
@@ -120,6 +120,33 @@ void closeuart(){
   close(uart0_filestream);
 }
                                       ]]
+local terra pad(infile : &int8, outfile : &int8, left:int, right:int, top:int, bottom:int)
+
+  var imgIn : Image
+  imgIn:load(infile)
+
+  var w = imgIn.width+(right-left)
+  var h = imgIn.height+(top-bottom)
+  var d = uart.malloc(w*h*(imgIn.bits/8))
+
+  var id = [&uint8](d)
+  for y=bottom,imgIn.height+top do
+    for x=left,imgIn.width+right do
+      var rx = x-left
+      var ry = y-bottom
+      if y<0 or x<0 or y>=imgIn.height or x>=imgIn.width then
+        id[ry*w+rx] = 0
+      else
+        id[ry*w+rx] = [&uint8](imgIn.data)[y*imgIn.width+x]
+      end
+    end
+  end
+
+  var imgOut : Image
+  imgOut:initSimple(w,h,imgIn.channels, imgIn.bits,imgIn.floating, imgIn.isSigned,imgIn.SOA,d)
+  imgOut:save(outfile)
+
+end
 
 function test(inast)
   assert(darkroom.ast.isAST(inast))
@@ -133,13 +160,15 @@ function test(inast)
     io.output("out/"..arg[0]..".perlineest.txt")
     io.write(pl)
     io.close()
-  elseif arg[1]==nil then
-    local v = fpga.compile( {{testinput,"uart"}}, {{inast,"uart"}}, BLOCKX, BLOCKY)
+  elseif arg[1]=="build" then
+    local v, maxStencil = fpga.compile( {{testinput,"uart"}}, {{inast,"uart"}}, BLOCKX, BLOCKY)
     local s = string.sub(arg[0],1,#arg[0]-4)
     io.output("out/"..s..".v")
     io.write(v)
     io.close()
-  elseif arg[2]=="test" then
+
+    pad(arg[2], "out/"..s..".input.bmp", maxStencil:min(1), maxStencil:max(1), maxStencil:min(2), maxStencil:max(2))
+  elseif arg[1]=="test" then
     print("TEST")
     uart.init("/dev/tty.usbserial-142B")
 

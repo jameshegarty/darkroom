@@ -17,7 +17,7 @@ darkroom.dimToCoord={[1]="x",[2]="y",[3]="z"}
 
 function darkroom.crop( thisast, expr )
   assert(darkroom.ast.isAST(expr))
-  return darkroom.ast.new({kind="crop",shiftY=0,expr=expr}):copyMetadataFrom(thisast)
+  return darkroom.ast.new({kind="crop",shiftY=0,shiftX=0,expr=expr}):copyMetadataFrom(thisast)
 end
 
 function darkroom.pow( thisast, base, exp)

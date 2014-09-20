@@ -1,10 +1,10 @@
 
 -- graph is just required to have some function 
--- :minUse(input) and :maxUse(input) declared on it, that return
+-- :minUse(dim,input) and :maxUse(dim,input) declared on it, that return
 -- the smallest and largest use offset that this node accesses.
 --
 -- It returns a map from node -> shift
-function schedule(graph)
+function schedule(graph, HWWidth)
   assert(darkroom.kernelGraph.isKernelGraph(graph))
 
   local shifts = {}
@@ -13,7 +13,13 @@ function schedule(graph)
       if node.kernel~=nil then 
         shifts[node] = 0
         for k,v in node:inputs() do
-          local s = node:maxUse(v) + shifts[v]
+          local s
+          if type(HWWidth)=="number" then
+            s = node:maxUse(2,v)*HWWidth + node:maxUse(1,v) + shifts[v]
+          else
+            s = node:maxUse(2,v) + shifts[v]
+          end
+
           if s > shifts[node] then shifts[node] = s end
         end
       end 
@@ -39,7 +45,7 @@ function synthRel(rel,t)
   end
 end
 
-function shift(graph, shifts)
+function shift(graph, shifts, HWWidth)
   assert(darkroom.kernelGraph.isKernelGraph(graph))
 
   local oldToNewRemap = {}
@@ -90,13 +96,32 @@ function shift(graph, shifts)
             if nn.kind=="load" then
               if type(nn.from)=="table" then
                 local r = nn:shallowcopy()
-                r.relY = synthRel(r.relY, shifts[newToOldRemap[nn.from]]-shifts[orig]):optimize()
+                
+                if type(HWWidth)=="number" then
+                  local s = shifts[newToOldRemap[nn.from]]-shifts[orig]
+                  assert(s<=0) -- I don't think we shift things into the future?
+                  local sy = -math.floor(-s/HWWidth)
+                  local sx = s-sy*HWWidth
+                  r.relY = synthRel(r.relY, sy):optimize()
+                  r.relX = synthRel(r.relX, sx):optimize()
+                else
+                  r.relY = synthRel(r.relY, shifts[newToOldRemap[nn.from]]-shifts[orig]):optimize()
+                end
+
                 if type(nn.from)=="table" then r.from = oldToNewRemap[nn.from]; assert(r.from~=nil) end
                 return darkroom.typedAST.new(r):copyMetadataFrom(nn)
               end
             elseif nn.kind=="crop" then
               local r = nn:shallowcopy()
-              r.shiftY = r.shiftY + shifts[orig]
+
+              if type(HWWidth)=="number" then
+                local sy = math.floor(shifts[orig]/HWWidth)
+                r.shiftY = r.shiftY + sy
+                r.shiftX = r.shiftX + (shifts[orig]-sy*HWWidth)
+              else
+                r.shiftY = r.shiftY + shifts[orig]
+              end
+
               return darkroom.typedAST.new(r):copyMetadataFrom(nn)
             elseif nn.kind=="position" then
               if nn.coord=="y" and shifts[orig]~=0 then

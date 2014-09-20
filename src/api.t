@@ -9,7 +9,7 @@ function darkroom.input( imtype )
   res:setName("cropSpecial"..(darkroom._inputCount).."Node")
   darkroom._inputCount = darkroom._inputCount + 1
 
-  res = darkroom.ast.new({kind="crop", shiftY = 0, expr=res}):setLinenumber(0):setOffset(0):setFilename("null_special")
+  res = darkroom.ast.new({kind="crop", shiftY = 0, shiftX = 0,expr=res}):setLinenumber(0):setOffset(0):setFilename("null_special")
 
   return res
 end

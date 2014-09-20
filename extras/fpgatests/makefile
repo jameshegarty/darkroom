@@ -19,16 +19,16 @@ out/%.lua.est.txt : %.lua
 	$(TERRA) $< est
 
 out/%.v : %.lua
-	$(TERRA) $< 
+	$(TERRA) $< build frame_128.bmp
 
 out/%.lua.bmp : %.lua
-	$(TERRA) $< frame_128.bmp
+	$(TERRA) $< cpu frame_128.bmp
 
 out/%.lua.fpga.bmp : %.lua out/%.lua.bmp out/%.bit
 	sudo kextunload -v -bundle com.apple.driver.AppleUSBFTDI  #mavs
 	papillio-prog -f out/$*.bit
 	sudo kextload -v -bundle com.apple.driver.AppleUSBFTDI
-	$(TERRA) $< frame_128.bmp test
+	$(TERRA) $< test frame_128.bmp
 
 out/%.correct.txt : %.lua out/%.lua.bmp out/%.lua.fpga.bmp
 	diff out/$*.lua.bmp out/$*.lua.fpga.bmp > out/$*.lua.diff

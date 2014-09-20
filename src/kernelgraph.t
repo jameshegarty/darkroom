@@ -28,24 +28,34 @@ function kernelGraphFunctions:makeNewName()
   return "kernelGraphNode"
 end
 
-function kernelGraphFunctions:maxUse(input)
+function kernelGraphFunctions:maxUse(dim, input)
+  assert(type(dim)=="number")
   assert(self.kernel~=nil)
   if self.kernel:stencil(input):area()==0 then return 0 end
-  return self.kernel:stencil(input):max(2)
+  return self.kernel:stencil(input):max(dim)
 end
 
-function kernelGraphFunctions:minUse(input)
+function kernelGraphFunctions:minUse(dim, input)
+  assert(type(dim)=="number")
   assert(self.kernel~=nil)
   if self.kernel:stencil(input):area()==0 then return 0 end
-  return self.kernel:stencil(input):min(2)
+  return self.kernel:stencil(input):min(dim)
 end
 
 -- find the consumer with the largest stencil
-function kernelGraphFunctions:bufferSize(root)
+function kernelGraphFunctions:bufferSize(root, HWWidth)
   local bufferSize = 1
+  if type(HWWidth)=="number" then bufferSize=0 end
   for v,_ in self:parents(root) do
-    assert(v:maxUse(self) <= 0 ) -- can't read from the future
-    local b = -v:minUse(self)+1
+    assert(v:maxUse(2,self) <= 0 ) -- can't read from the future
+    local b
+    if type(HWWidth)=="number" then
+      assert(v:maxUse(1,self) <= 0 ) -- can't read from the future
+      b = -v:minUse(1,self)-v:minUse(2,self)*HWWidth
+    else
+      b = -v:minUse(1,self)+1
+    end
+
     if b>bufferSize then bufferSize=b end
   end
   return bufferSize
