@@ -9,11 +9,13 @@ RES += $(patsubst %.lua,out/%.correct.txt,$(SRCS))
 
 TERRA = $(TERRADIR)/terra
 
+DARKROOM_CHIP?=xc6slx9
+
 all: $(RES)
 
 clean: 
 	rm out/*
-	rm build/*
+	rm -r build/*
 
 out/%.lua.est.txt : %.lua
 	$(TERRA) $< est
@@ -25,10 +27,7 @@ out/%.lua.bmp : %.lua
 	$(TERRA) $< cpu frame_128.bmp
 
 out/%.lua.fpga.bmp : %.lua out/%.lua.bmp out/%.bit
-	sudo kextunload -v -bundle com.apple.driver.AppleUSBFTDI  #mavs
-	papillio-prog -f out/$*.bit
-	sudo kextload -v -bundle com.apple.driver.AppleUSBFTDI
-	$(TERRA) $< test frame_128.bmp
+	bash $(DARKROOM_CHIP).test.sh $*
 
 out/%.correct.txt : %.lua out/%.lua.bmp out/%.lua.fpga.bmp
 	diff out/$*.lua.bmp out/$*.lua.fpga.bmp > out/$*.lua.diff
@@ -36,7 +35,8 @@ out/%.correct.txt : %.lua out/%.lua.bmp out/%.lua.fpga.bmp
 
 out/%.bit : out/%.v
 	cp $< build/stage.v
-	make -f makefile.xc6slx9
+	bash $(DARKROOM_CHIP).sh
+	export LD_LIBRARY_PATH=
 	cp build/OUT_xst.txt out/$*.xst.txt
 	cp build/OUT_map.txt out/$*.map.txt
 	cp build/OUT_par.txt out/$*.par.txt

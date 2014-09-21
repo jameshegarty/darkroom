@@ -170,7 +170,7 @@ function test(inast)
     pad(arg[2], "out/"..s..".input.bmp", maxStencil:min(1), maxStencil:max(1), maxStencil:min(2), maxStencil:max(2))
   elseif arg[1]=="test" then
     print("TEST")
-    uart.init("/dev/tty.usbserial-142B")
+    uart.init(arg[3] or "/dev/tty.usbserial-142B")
 
     local terra procim(filename:&int8)
       var txbuf = [&uint8](uart.malloc(2048));

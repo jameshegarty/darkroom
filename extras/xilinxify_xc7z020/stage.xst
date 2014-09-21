@@ -1,9 +1,9 @@
 run
--ifn ../system.prj
--ofn system
+-ifn ../../xilinxify_xc7z020/stage.prj
+-ofn stage
 -ofmt NGC
 -p xc7z020-1-clg484
--top system
+-top stage
 -opt_mode Speed
 -opt_level 1
 -power NO
