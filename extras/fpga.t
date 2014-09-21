@@ -133,7 +133,7 @@ end
   return res
 end
 
-function fpga.tx(size)
+function fpga.tx(clockMhz)
   return {[=[module TXMOD(
 input CLK,
 output TX,
@@ -146,7 +146,7 @@ output ready // when true, we're ready to transmit a new bit
   assign TX = TXd;
 
   reg [28:0] d;
-  wire [28:0] dInc = d[28] ? (]=]..UART_CLOCK..[=[) : (]=]..UART_CLOCK..[=[ - 32000000);
+  wire [28:0] dInc = d[28] ? (]=]..UART_CLOCK..[=[) : (]=]..UART_CLOCK..[=[ - ]=]..clockMhz..[=[000000);
   wire [28:0] dNxt = d + dInc;
   always @(posedge CLK)
   begin
@@ -196,7 +196,7 @@ endmodule
 ]=]}
 end
 
-function fpga.rx()
+function fpga.rx(clockMhz)
 return {[=[module RXMOD(
 input RX, 
 input CLK,
@@ -219,7 +219,7 @@ assign outvalid = outvalidReg;
 //reg [7:0] started = 0;
 
 reg [28:0] d;
-  wire [28:0] dInc = d[28] ? (]=]..(UART_CLOCK*16)..[=[) : (]=]..(UART_CLOCK*16)..[=[ - 32000000);
+  wire [28:0] dInc = d[28] ? (]=]..(UART_CLOCK*16)..[=[) : (]=]..(UART_CLOCK*16)..[=[ - ]=]..clockMhz..[=[000000);
   wire [28:0] dNxt = d + dInc;
   always @(posedge CLK)
   begin
@@ -402,6 +402,9 @@ end
 function fpga.compile(inputs, outputs, width, height, options)
   assert(#inputs==1)
   assert(#outputs==1)
+  assert(type(options)=="table" or options==nil)
+
+  if options.clockMhz==nil then options.clockMhz=32 end
 
   -- do the compile
   local newnode = {kind="outputs"}
@@ -435,8 +438,8 @@ function fpga.compile(inputs, outputs, width, height, options)
 
   ------------------------------
   local result = {}
-  result = concat(result, fpga.tx())
-  result = concat(result, fpga.rx())
+  result = concat(result, fpga.tx(options.clockMhz))
+  result = concat(result, fpga.rx(options.clockMhz))
   result = concat(result, fpga.buffer(width*height))
 
   local pipeline = {[=[module Pipeline(

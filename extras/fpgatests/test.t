@@ -12,7 +12,7 @@ end
 
 BLOCKX = 128
 BLOCKY = 4
-local UART_DELAY = 1000000
+local UART_DELAY = 300000
 
 local uart = terralib.includecstring [[
 #include <stdio.h>
@@ -148,6 +148,15 @@ local terra pad(infile : &int8, outfile : &int8, left:int, right:int, top:int, b
 
 end
 
+function deviceToOptions(dev)
+  print("DEV TO",dev)
+  if dev=="xc7z020" then
+    return {clockMhz=100}
+  else
+    return {}
+  end
+end
+
 function test(inast)
   assert(darkroom.ast.isAST(inast))
 
@@ -161,7 +170,7 @@ function test(inast)
     io.write(pl)
     io.close()
   elseif arg[1]=="build" then
-    local v, maxStencil = fpga.compile( {{testinput,"uart"}}, {{inast,"uart"}}, BLOCKX, BLOCKY)
+    local v, maxStencil = fpga.compile( {{testinput,"uart"}}, {{inast,"uart"}}, BLOCKX, BLOCKY, deviceToOptions(arg[3]))
     local s = string.sub(arg[0],1,#arg[0]-4)
     io.output("out/"..s..".v")
     io.write(v)
