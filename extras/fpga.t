@@ -69,6 +69,16 @@ function fpga.linebuffer(maxdelay, datatype, imageWidth, consumers)
     for i=-xpixels,0 do
       local n = "lb_"..numToVarname(i)
       table.insert(t,declareReg(datatype,n))
+
+      for k,v in ipairs(consumers) do
+        assert(v:min(2)==0 and v:max(2)==0)
+        for x=v:min(1),v:max(1) do
+          if x==i then
+            table.insert(t, "assign out"..k.."_x"..numToVarname(x).."_y0 = "..n..";\n")
+          end
+        end
+      end
+      
       table.insert(clockedLogic, n.." <= "..prev..";\n")
       prev = n
     end
@@ -440,12 +450,11 @@ output [7:0] out);
     return false
   end
 
-  local totalDelay = 0
-  kernelGraph:visitEach(
-    function(node)
+  local totalDelay = kernelGraph:visitEach(
+    function(node, inputArgs)
       if node.kernel~=nil then
         local retiming = fpga.trivialRetime(node.kernel)
-        totalDelay = totalDelay + retiming[node.kernel]
+--        totalDelay = totalDelay + retiming[node.kernel]
         local verilogKernel = fpga.codegenKernel(node, retiming)
         result = concat(result, verilogKernel)
         
@@ -486,7 +495,25 @@ output [7:0] out);
           result = concat(result, lbmod)
           table.insert(pipeline,lbname.." kernelBuffer_"..node:name().."(.CLK(CLK),"..lboutputs..".in(kernelOut_"..node:name().."));\n")
         end
+
+        local totalDelay = 0
+        for k,v in node:inputs() do
+          -- buffer delay for this pair of nodes (not total buffer size)
+          local bufferSize = -node:minUse(1,v)-node:minUse(2,v)*width
+          print(k, inputArgs[k])
+          local d = inputArgs[k] + bufferSize + retiming[node.kernel]
+          if d > totalDelay then totalDelay = d end
+        end
+        
+        return totalDelay
+      else
+        local totalDelay = 0
+        for k,v in pairs(inputArgs) do
+          if v > totalDelay then totalDelay=v end
+        end
+        return totalDelay
       end
+
     end)
 
   table.insert(pipeline, "assign out = kernelOut_"..kernelGraph.child1:name()..";\n")

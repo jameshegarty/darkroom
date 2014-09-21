@@ -12,7 +12,7 @@ end
 
 BLOCKX = 128
 BLOCKY = 4
-local UART_DELAY = 300000
+local UART_DELAY = 1000000
 
 local uart = terralib.includecstring [[
 #include <stdio.h>
@@ -178,7 +178,7 @@ function test(inast)
 
       var img : Image
 
-      img:load([arg[1]])
+      img:load([arg[2]])
 
       var bw = img.width/BLOCKX
       var bh = img.height/BLOCKY

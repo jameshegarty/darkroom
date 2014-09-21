@@ -37,4 +37,9 @@ out/%.correct.txt : %.lua out/%.lua.bmp out/%.lua.fpga.bmp
 out/%.bit : out/%.v
 	cp $< build/stage.v
 	make -f makefile.xc6slx9
+	cp build/OUT_xst.txt out/$*.xst.txt
+	cp build/OUT_map.txt out/$*.map.txt
+	cp build/OUT_par.txt out/$*.par.txt
+	cp build/OUT_ngd.txt out/$*.ngd.txt
+	cp build/OUT_bitgen.txt out/$*.bitgen.txt
 	cp build/stage.bit $@
