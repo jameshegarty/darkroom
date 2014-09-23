@@ -21,7 +21,7 @@ out/%.lua.est.txt : %.lua
 	$(TERRA) $< est
 
 out/%.v : %.lua
-	$(TERRA) $< build frame_128.bmp
+	$(TERRA) $< build frame_128.bmp $(DARKROOM_CHIP)
 
 out/%.lua.bmp : %.lua
 	$(TERRA) $< cpu frame_128.bmp
