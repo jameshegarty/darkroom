@@ -12,7 +12,7 @@ end
 
 BLOCKX = 128
 BLOCKY = 4
-local UART_DELAY = 1000000
+local UART_DELAY = 300000
 
 local uart = terralib.includecstring [[
 #include <stdio.h>

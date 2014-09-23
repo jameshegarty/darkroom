@@ -66,7 +66,9 @@ function fpga.linebuffer(maxdelay, datatype, imageWidth, consumers)
     -- we're only delaying a few pixels, don't use a bram
     local clockedLogic = {}
     local prev = "in"
-    for i=-xpixels,0 do
+    local i=0
+    while i>=-xpixels do
+--    for i=-xpixels,0 do
       local n = "lb_"..numToVarname(i)
       table.insert(t,declareReg(datatype,n))
 
@@ -81,6 +83,7 @@ function fpga.linebuffer(maxdelay, datatype, imageWidth, consumers)
       
       table.insert(clockedLogic, n.." <= "..prev..";\n")
       prev = n
+      i = i - 1
     end
     table.insert(t,"always @ (posedge CLK) begin\n")
     t = concat(t,clockedLogic)
@@ -499,9 +502,21 @@ output [7:0] out);
         local totalDelay = 0
         for k,v in node:inputs() do
           -- buffer delay for this pair of nodes (not total buffer size)
-          local bufferSize = -node:minUse(1,v)-node:minUse(2,v)*width
+
+          -- it turns out that the linebuffer sizes / linebuffer doesn't actually impact the pipeline delay (pipe delay meaning: if we put
+          -- a pixel in the pipe, how long until its output value comes out?). The reason is that, we always write to time=0 slot
+          -- in the linebuffer, and then pipe stages that consume the same value just read it (results in delay of exactly 1 due to being passed through the ram).
+          -- However, due to the fact that we are retiming each module, we have to add extra buffering to each input we read to account for
+          -- the differences in pipe stages of the different modules (ie if we're reading from pipe delay 10 (for A) and 20 (for B), we need to add 
+          -- an extra 10 buffers on the end of A to get the correct result. The observation is that we can implement this by simply shifting where
+          -- we read in the linebuffer - we don't have to actually instantiate extra buffering.
           print(k, inputArgs[k])
-          local d = inputArgs[k] + bufferSize + retiming[node.kernel]
+
+          local lbdelay = 1
+          if v:bufferSize(kernelGraph,width)==0 then lbdelay=0 end
+
+          print(node:name(),"to",v:name(),inputArgs[k],lbdelay,retiming[node.kernel])
+          local d = inputArgs[k] + lbdelay + retiming[node.kernel]
           if d > totalDelay then totalDelay = d end
         end
         
