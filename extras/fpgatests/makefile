@@ -3,6 +3,7 @@ SRCS := $(filter-out test.t cover.t, $(ISRCS))
 RES = $(patsubst %.lua,out/%.lua.est.txt,$(SRCS))
 RES += $(patsubst %.lua,out/%.v,$(SRCS))
 RES += $(patsubst %.lua,out/%.lua.bmp,$(SRCS))
+RES += $(patsubst %.lua,out/%.sim.bmp,$(SRCS))
 RES += $(patsubst %.lua,out/%.bit,$(SRCS))
 RES += $(patsubst %.lua,out/%.lua.fpga.bmp,$(SRCS))
 RES += $(patsubst %.lua,out/%.correct.txt,$(SRCS))
@@ -25,6 +26,11 @@ out/%.v : %.lua
 
 out/%.lua.bmp : %.lua
 	$(TERRA) $< cpu frame_128.bmp
+
+out/%.sim.bmp : out/%.v
+	echo "verilog work "$*".v" > out/$*.prj
+	cd out; fuse sim -o $*.exe -prj $*.prj
+	cd out; ./$*.exe -testplusarg inputFilename=../frame_128.raw -testplusarg outputFilename=$*.sim.bmp -tclbatch ../isim.cmd
 
 out/%.lua.fpga.bmp : %.lua out/%.lua.bmp out/%.bit
 	bash $(DARKROOM_CHIP).test.sh $*

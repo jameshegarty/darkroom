@@ -136,6 +136,54 @@ end
   return res
 end
 
+function fpga.sim()
+  return [=[`define EOF 32'hFFFF_FFFF
+module sim;
+   integer file, c, r,fileout;
+   reg     CLK;
+   reg [7:0] modInput;
+   wire [7:0] modOutput;
+
+   reg [10000:0] inputFilename;
+   reg [10000:0] outputFilename;
+
+   Pipeline pipeline(.CLK(CLK),.in(modInput),.out(modOutput));
+
+   initial begin
+      $display("HELLO");
+
+   $value$plusargs("inputFilename=%s",inputFilename);
+   $value$plusargs("outputFilename=%s",outputFilename);
+
+      file = $fopen(inputFilename,"r");
+      fileout = $fopen(outputFilename,"w");
+
+      c = $fgetc(file);
+         while (c != `EOF)
+           begin
+              $display(c);
+
+              modInput = c;
+
+	            CLK = 0;
+                      #10
+                        CLK = 1;
+                      #10
+                        $display(modOutput);
+
+              $fwrite(fileout, "%c", modOutput);
+
+
+              c = $fgetc(file);
+           end // while (c != `EOF)                                                                                                                                                                   
+
+      $display("DONE");
+      $fclose(fileout);
+
+   end // initial begin                                                                                                                                                                               
+   endmodule // sim        ]=]
+end
+
 function fpga.tx(clockMhz)
   return {[=[module TXMOD(
 input CLK,
@@ -441,6 +489,7 @@ function fpga.compile(inputs, outputs, width, height, options)
 
   ------------------------------
   local result = {}
+  table.insert(result, "`timescale 1ns / 10 ps\n")
   result = concat(result, fpga.tx(options.clockMhz))
   result = concat(result, fpga.rx(options.clockMhz))
   result = concat(result, fpga.buffer(width*height))
@@ -633,6 +682,7 @@ end
 assign LED = {addr[6:1],receiving,processing,sending};
 endmodule]=])
 
+  table.insert(result, fpga.sim())
   return table.concat(result,""), maxStencil
 end
 
