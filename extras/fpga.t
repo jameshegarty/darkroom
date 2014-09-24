@@ -329,6 +329,12 @@ endmodule
 end
 
 
+STUPIDGLOBALinternalDelays = {}
+
+function kernelGraphFunctions:internalDelay()
+  return STUPIDGLOBALinternalDelays[self]
+end
+
 function typedASTFunctions:internalDelay()
   if self.kind=="binop" or self.kind=="unary" or self.kind=="select" then
     return 1
@@ -514,12 +520,29 @@ output [7:0] out);
     return false
   end
 
+  local kernelRetiming = {}
+  kernelGraph:visitEach(
+    function(node, inputArgs)
+      if node.kernel~=nil then
+        kernelRetiming[node] = fpga.trivialRetime(node.kernel)
+        STUPIDGLOBALinternalDelays[node] = kernelRetiming[node][node.kernel]
+        assert(type(STUPIDGLOBALinternalDelays[node])=="number")
+        if parentIsOutput(node)==false and node:bufferSize(kernelGraph,width)>0 then 
+          -- account of the 1 cycle delay of the bram
+          STUPIDGLOBALinternalDelays[node] = STUPIDGLOBALinternalDelays[node] + 1
+        end
+      else
+        STUPIDGLOBALinternalDelays[node] = 0
+      end
+    end)
+
+  -- now we retime the whole pipeline, to account for the delays of each kernel
+  local pipelineRetiming = fpga.trivialRetime(kernelGraph)
+
   local totalDelay = kernelGraph:visitEach(
     function(node, inputArgs)
       if node.kernel~=nil then
-        local retiming = fpga.trivialRetime(node.kernel)
---        totalDelay = totalDelay + retiming[node.kernel]
-        local verilogKernel = fpga.codegenKernel(node, retiming)
+        local verilogKernel = fpga.codegenKernel(node, kernelRetiming[node])
         result = concat(result, verilogKernel)
         
         local inputs = ""
@@ -560,28 +583,7 @@ output [7:0] out);
           table.insert(pipeline,lbname.." kernelBuffer_"..node:name().."(.CLK(CLK),"..lboutputs..".in(kernelOut_"..node:name().."));\n")
         end
 
-        local totalDelay = 0
-        for k,v in node:inputs() do
-          -- buffer delay for this pair of nodes (not total buffer size)
-
-          -- it turns out that the linebuffer sizes / linebuffer doesn't actually impact the pipeline delay (pipe delay meaning: if we put
-          -- a pixel in the pipe, how long until its output value comes out?). The reason is that, we always write to time=0 slot
-          -- in the linebuffer, and then pipe stages that consume the same value just read it (results in delay of exactly 1 due to being passed through the ram).
-          -- However, due to the fact that we are retiming each module, we have to add extra buffering to each input we read to account for
-          -- the differences in pipe stages of the different modules (ie if we're reading from pipe delay 10 (for A) and 20 (for B), we need to add 
-          -- an extra 10 buffers on the end of A to get the correct result. The observation is that we can implement this by simply shifting where
-          -- we read in the linebuffer - we don't have to actually instantiate extra buffering.
-          print(k, inputArgs[k])
-
-          local lbdelay = 1
-          if v:bufferSize(kernelGraph,width)==0 then lbdelay=0 end
-
-          print(node:name(),"to",v:name(),inputArgs[k],lbdelay,retiming[node.kernel])
-          local d = inputArgs[k] + lbdelay + retiming[node.kernel]
-          if d > totalDelay then totalDelay = d end
-        end
-        
-        return totalDelay
+        return 0
       else
         local totalDelay = 0
         for k,v in pairs(inputArgs) do
@@ -591,6 +593,20 @@ output [7:0] out);
       end
 
     end)
+
+  -- account for the linebuffering delay
+  -- it turns out that the linebuffer sizes / linebuffer doesn't actually impact the pipeline delay (pipe delay meaning: if we put
+  -- a pixel in the pipe, how long until its output value comes out?). The reason is that, we always write to time=0 slot
+  -- in the linebuffer, and then pipe stages that consume the same value just read it (results in delay of exactly 1 due to being passed through the ram).
+  -- However, due to the fact that we are retiming each module, we have to add extra buffering to each input we read to account for
+  -- the differences in pipe stages of the different modules (ie if we're reading from pipe delay 10 (for A) and 20 (for B), we need to add 
+  -- an extra 10 buffers on the end of A to get the correct result. The observation is that we can implement this by simply shifting where
+  -- we read in the linebuffer - we don't have to actually instantiate extra buffering.
+  
+  assert(kernelGraph.kernel==nil)
+  assert(kernelGraph:inputCount()==1)
+  print("OUTPUT SHIFT",shifts[kernelGraph.child1])
+  totalDelay = pipelineRetiming[kernelGraph.child1] + shifts[kernelGraph.child1]
 
   table.insert(pipeline, "assign out = kernelOut_"..kernelGraph.child1:name()..";\n")
   table.insert(pipeline,"endmodule\n\n")
