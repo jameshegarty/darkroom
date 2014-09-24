@@ -139,49 +139,58 @@ end
 function fpga.sim()
   return [=[`define EOF 32'hFFFF_FFFF
 module sim;
-   integer file, c, r,fileout;
-   reg     CLK;
-   reg [7:0] modInput;
-   wire [7:0] modOutput;
+ integer file, c, r,fileout;
+ reg     CLK;
+ reg [7:0] modInput;
+ wire [7:0] modOutput;
+ integer addr = -PIPE_DELAY+2;
+ reg [10000:0] inputFilename;
+ reg [10000:0] outputFilename;
 
-   reg [10000:0] inputFilename;
-   reg [10000:0] outputFilename;
+ Pipeline pipeline(.CLK(CLK),.in(modInput),.out(modOutput));
 
-   Pipeline pipeline(.CLK(CLK),.in(modInput),.out(modOutput));
-
-   initial begin
-      $display("HELLO");
+ initial begin
+   $display("HELLO");
 
    $value$plusargs("inputFilename=%s",inputFilename);
    $value$plusargs("outputFilename=%s",outputFilename);
 
-      file = $fopen(inputFilename,"r");
-      fileout = $fopen(outputFilename,"w");
+   file = $fopen(inputFilename,"r");
+   fileout = $fopen(outputFilename,"w");
 
-      c = $fgetc(file);
-         while (c != `EOF)
-           begin
-              $display(c);
+   c = $fgetc(file);
+   while (c != `EOF) begin
+//     $display(c);
+     modInput = c;
+     CLK = 0;
+     #10
+     CLK = 1;
+     #10
+//     $display(modOutput);
 
-              modInput = c;
+     if(addr>=0) begin $fwrite(fileout, "%c", modOutput); end
 
-	            CLK = 0;
-                      #10
-                        CLK = 1;
-                      #10
-                        $display(modOutput);
+     c = $fgetc(file);
+     addr = addr + 1;
+   end // while (c != `EOF)
 
-              $fwrite(fileout, "%c", modOutput);
+   // drain pipe
+   addr = -PIPE_DELAY+2;
 
+   while (addr<0) begin
+     CLK = 0;
+     #10
+     CLK = 1;
+     #10
+     addr = addr + 1;     
+     $fwrite(fileout, "%c", modOutput);
+   end	   
 
-              c = $fgetc(file);
-           end // while (c != `EOF)                                                                                                                                                                   
+   $display("DONE");
+   $fclose(fileout);
+  end // initial begin
 
-      $display("DONE");
-      $fclose(fileout);
-
-   end // initial begin                                                                                                                                                                               
-   endmodule // sim        ]=]
+endmodule // sim        ]=]
 end
 
 function fpga.tx(clockMhz)
@@ -680,7 +689,9 @@ always @(posedge CLK) begin
 end
 
 assign LED = {addr[6:1],receiving,processing,sending};
-endmodule]=])
+endmodule
+
+]=])
 
   table.insert(result, fpga.sim())
   return table.concat(result,""), maxStencil

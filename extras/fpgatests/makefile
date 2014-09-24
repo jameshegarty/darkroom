@@ -15,7 +15,7 @@ DARKROOM_CHIP?=xc6slx9
 all: $(RES)
 
 clean: 
-	rm out/*
+	rm -r out/*
 	rm -r build/*
 
 out/%.lua.est.txt : %.lua
@@ -28,9 +28,9 @@ out/%.lua.bmp : %.lua
 	$(TERRA) $< cpu frame_128.bmp
 
 out/%.sim.bmp : out/%.v
-	echo "verilog work "$*".v" > out/$*.prj
-	cd out; fuse sim -o $*.exe -prj $*.prj
-	cd out; ./$*.exe -testplusarg inputFilename=../frame_128.raw -testplusarg outputFilename=$*.sim.bmp -tclbatch ../isim.cmd
+	bash sim.sh $*
+	export LD_LIBRARY_PATH=
+	terra raw2bmp.t out/$*.sim.raw out/$*.sim.bmp
 
 out/%.lua.fpga.bmp : %.lua out/%.lua.bmp out/%.bit
 	bash $(DARKROOM_CHIP).test.sh $*
