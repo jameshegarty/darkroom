@@ -41,7 +41,7 @@ function fpga.linebuffer(maxdelay, datatype, imageWidth, consumers)
   assert(type(maxdelay)=="number")
   assert(darkroom.type.isType(datatype))
   local bytesPerPixel = datatype:sizeof()
-  local name = "Linebuffer_"..maxdelay.."delay_"..bytesPerPixel.."bpp_"..imageWidth.."w"
+  local name = "Linebuffer_"..numToVarname(maxdelay).."delay_"..bytesPerPixel.."bpp_"..imageWidth.."w"
 
   local outputs = ""
   for k,v in ipairs(consumers) do
@@ -563,13 +563,25 @@ output [7:0] out);
         local lboutputs = ""
 
         local consumers = {}
+	local linebufferSize = 0 -- note: this code duplicates kernelGraph:bufferSize()
         for v,_ in node:parents(kernelGraph) do
           if v.kernel~=nil then
-            table.insert(consumers, v.kernel:stencil(node))
+	    -- bake the extra retiming pipeline delay into the stencil.
+	    -- Don't get confused here! We need to add extra delay to match the delays of each kernel.
+	    -- we could do that by adding extra FIFOs, but instead we bake it into the linebuffer 
+	    -- (shifting the stencil we read by 1 is equivilant to 1 extra cycle of delay)
+	    --
+	    -- we should probably refactor this so that the extra delay and stencil are separated out so
+	    -- that it's less confusing.
+	    local extraPipeDelay = pipelineRetiming[v]-pipelineRetiming[node]-v:internalDelay()
+	    local stencil = v.kernel:stencil(node):translate(-extraPipeDelay,0,0)
+            table.insert(consumers, stencil)
+	    
+	    -- note: this code duplicates kernelGraph:bufferSize()
+	    local b = -stencil:min(1)-stencil:min(2)*width
+	    linebufferSize = math.max(linebufferSize,b)
 
-
-            local s = v.kernel:stencil(node)
-            for k,_ in pairs(s) do
+            for k,_ in pairs(stencil) do
               local wirename = node:name().."_to_"..v:name().."_x"..numToVarname(k[1]).."_y"..numToVarname(k[2])
               table.insert(pipeline,"wire ["..(node.kernel.type:sizeof()*8-1)..":0] "..wirename..";\n")
               lboutputs = lboutputs..".out"..(#consumers).."_x"..numToVarname(k[1]).."_y"..numToVarname(k[2]).."("..wirename.."),"
@@ -578,7 +590,7 @@ output [7:0] out);
         end
         
         if parentIsOutput(node)==false then -- output nodes don't write to linebuffer
-          local lbname, lbmod = fpga.linebuffer(node:bufferSize(kernelGraph, width), node.kernel.type, width, consumers)
+          local lbname, lbmod = fpga.linebuffer(linebufferSize, node.kernel.type, width, consumers)
           result = concat(result, lbmod)
           table.insert(pipeline,lbname.." kernelBuffer_"..node:name().."(.CLK(CLK),"..lboutputs..".in(kernelOut_"..node:name().."));\n")
         end
