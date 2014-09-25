@@ -29,8 +29,6 @@ out/%.lua.bmp : %.lua
 
 out/%.sim.bmp : out/%.v
 	bash sim.sh $*
-	export LD_LIBRARY_PATH=
-	terra raw2bmp.t out/$*.sim.raw out/$*.sim.bmp
 
 out/%.lua.fpga.bmp : %.lua out/%.lua.bmp out/%.bit
 	bash $(DARKROOM_CHIP).test.sh $*

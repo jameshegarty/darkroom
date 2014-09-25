@@ -37,11 +37,13 @@ function getStencilCoord(rel)
   return s:min(1)
 end
 
+lbCnt = 0
 function fpga.linebuffer(maxdelay, datatype, imageWidth, consumers)
   assert(type(maxdelay)=="number")
   assert(darkroom.type.isType(datatype))
   local bytesPerPixel = datatype:sizeof()
-  local name = "Linebuffer_"..numToVarname(maxdelay).."delay_"..bytesPerPixel.."bpp_"..imageWidth.."w"
+  local name = "Linebuffer_"..numToVarname(maxdelay).."delay_"..bytesPerPixel.."bpp_"..imageWidth.."w_"..lbCnt
+  lbCnt = lbCnt + 1
 
   local outputs = ""
   for k,v in ipairs(consumers) do
@@ -582,7 +584,7 @@ output [7:0] out);
 	    linebufferSize = math.max(linebufferSize,b)
 
             for k,_ in pairs(stencil) do
-              local wirename = node:name().."_to_"..v:name().."_x"..numToVarname(k[1]).."_y"..numToVarname(k[2])
+              local wirename = node:name().."_to_"..v:name().."_x"..numToVarname(k[1]+extraPipeDelay).."_y"..numToVarname(k[2])
               table.insert(pipeline,"wire ["..(node.kernel.type:sizeof()*8-1)..":0] "..wirename..";\n")
               lboutputs = lboutputs..".out"..(#consumers).."_x"..numToVarname(k[1]).."_y"..numToVarname(k[2]).."("..wirename.."),"
             end
