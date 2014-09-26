@@ -127,31 +127,35 @@ function fpga.linebuffer(maxdelay, datatype, imageWidth, consumers)
       if v:min(1) < smallestX then smallestX = v:min(1) end
     end
 
+    table.insert(t,"reg [10:0] lbWriteAddr = 0;\n")
+    table.insert(t,"reg [10:0] lbReadAddr = 1;\n")
+    table.insert(clockedLogic, "if (lbWriteAddr == "..(imageWidth-1)..") begin lbWriteAddr <= 0; end else begin lbWriteAddr <= lbWriteAddr + 1; end\n")
+    table.insert(clockedLogic, "if (lbReadAddr == "..(imageWidth-1)..") begin lbReadAddr <= 0; end else begin lbReadAddr <= lbReadAddr + 1; end\n")
+
     local i=0
     while i>-lines do
-      local wa = "lbWriteAddr_line_"..numToVarname(i)
-      table.insert(t,"reg [10:0] "..wa.." = 0;\n")
-      local ra = "lbReadAddr_line_"..numToVarname(i)
-      table.insert(t,"reg [10:0] "..ra.." = 0;\n")
-      
-      local leadingVar = "lb_x0_y"..numToVarname(i)
-      table.insert(t,declareWire(datatype,leadingVar))
+
 
       table.insert(t,declareWire(datatype,"evicted_"..numToVarname(i)))
 
-      for _,j in pairs({wa,ra}) do
-        table.insert(clockedLogic, "if ("..j.." == "..imageWidth..") begin "..j.." <= 0; end else begin "..j.." <= "..j.."+1; end\n")
-      end
 
       local indata = "in"
 
       local configParams = [=[.WRITE_MODE_A("READ_FIRST")]=]
 
+      local leadingVar = "lb_x0_y"..numToVarname(i)
+      table.insert(t,declareWire(datatype,leadingVar))
+
       if i==0 then
 --        configParams = [=[.WRITE_MODE_A("WRITE_FIRST")]=]
-	  table.insert(t,"assign "..leadingVar.." = in;\n")
+--	  table.insert(t,"assign "..leadingVar.." = in;\n")
+--        table.insert(t,declareReg(datatype,leadingVar))
+--        table.insert(clockedLogic,leadingVar.." <= in;\n")
+         table.insert(t,"assign "..leadingVar.." = in;\n")
       else
-	  table.insert(t,"assign "..leadingVar.." = evicted_"..numToVarname(i+1)..";\n")
+
+         table.insert(t,"assign "..leadingVar.." = evicted_"..numToVarname(i+1)..";\n")
+
         indata = "evicted_"..numToVarname(i+1)
 --        configParams = 
       end
@@ -159,14 +163,14 @@ function fpga.linebuffer(maxdelay, datatype, imageWidth, consumers)
       table.insert(t, [=[RAMB16_S9_S9 #(]=]..configParams..[=[) ram_line]=]..numToVarname(i)..[=[(
 .DIPA(1'b0),
 .DIA(]=]..indata..[=[),
-.DOA(evicted_]=]..numToVarname(i)..[=[),
-//.DOB(),
-.ADDRA(]=]..wa..[=[),
+//.DOA(),
+.DOB(evicted_]=]..numToVarname(i)..[=[),
+.ADDRA(lbWriteAddr),
 .WEA(1'b1),
 .WEB(1'b0),
 .ENA(1'b1),
-.ENB(1'b0),
-.ADDRB(]=]..wa..[=[),
+.ENB(1'b1),
+.ADDRB(lbReadAddr),
 .CLKA(CLK),
 .CLKB(CLK),
 .SSRA(1'b0),
