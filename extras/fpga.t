@@ -4,6 +4,8 @@ local fpga = {}
 UART_CLOCK = 57600
 --UART_CLOCK = 19200
 
+BRAM_SIZE_BYTES = 2048
+
 function concat(t1,t2)
     for i=1,#t1 do
       assert(type(t1[i])=="string")
@@ -16,12 +18,24 @@ function concat(t1,t2)
     return t1
 end
 
-local function declareReg(type, name)
-  return "reg ["..(type:sizeof()*8-1)..":0] "..name..";\n"
+local function declareReg(type, name, initial)
+  if initial==nil then 
+    initial=""
+  else
+    initial = " = "..initial
+  end
+
+  return "reg ["..(type:sizeof()*8-1)..":0] "..name..initial..";\n"
 end
 
 local function declareWire(type, name, str)
-  return "wire ["..(type:sizeof()*8-1)..":0] "..name.." = "..str..";\n"
+  if str == nil then
+    str = ""
+  else
+    str = " = "..str
+  end
+
+  return "wire ["..(type:sizeof()*8-1)..":0] "..name..str..";\n"
 end
 
 function numToVarname(x)
@@ -65,12 +79,12 @@ function fpga.linebuffer(maxdelay, datatype, imageWidth, consumers)
       table.insert(t, "assign out"..k.."_x0_y0 = in;\n")
     end
   elseif lines==0 then
+
     -- we're only delaying a few pixels, don't use a bram
     local clockedLogic = {}
     local prev = "in"
-    local i=0
+    local i=-1
     while i>=-xpixels do
---    for i=-xpixels,0 do
       local n = "lb_"..numToVarname(i)
       table.insert(t,declareReg(datatype,n))
 
@@ -87,11 +101,111 @@ function fpga.linebuffer(maxdelay, datatype, imageWidth, consumers)
       prev = n
       i = i - 1
     end
+
+    for k,v in ipairs(consumers) do
+        assert(v:min(2)==0 and v:max(2)==0)
+        for x=v:min(1),v:max(1) do
+          if x==0 then
+            table.insert(t, "assign out"..k.."_x0_y0 = in;\n")
+          end
+        end
+      end
+
     table.insert(t,"always @ (posedge CLK) begin\n")
     t = concat(t,clockedLogic)
     table.insert(t,"end\n")
   else
-    assert(false)
+    local clockedLogic = {}
+
+    -- we make a bram for each full line. 
+    assert(imageWidth*bytesPerPixel < BRAM_SIZE_BYTES)
+    assert(bytesPerPixel==1)
+
+    local smallestX = 0
+    for k,v in ipairs(consumers) do
+      assert(v:max(1)==0)
+      if v:min(1) < smallestX then smallestX = v:min(1) end
+    end
+
+    local i=0
+    while i>-lines do
+      local wa = "lbWriteAddr_line_"..numToVarname(i)
+      table.insert(t,"reg [10:0] "..wa.." = 0;\n")
+      local ra = "lbReadAddr_line_"..numToVarname(i)
+      table.insert(t,"reg [10:0] "..ra.." = 0;\n")
+      
+      local leadingVar = "lb_x0_y"..numToVarname(i)
+      table.insert(t,declareWire(datatype,leadingVar))
+
+      table.insert(t,declareWire(datatype,"evicted_"..numToVarname(i)))
+
+      for _,j in pairs({wa,ra}) do
+        table.insert(clockedLogic, "if ("..j.." == "..imageWidth..") begin "..j.." <= 0; end else begin "..j.." <= "..j.."+1; end\n")
+      end
+
+      local indata = "in"
+
+      local configParams = [=[.WRITE_MODE_A("READ_FIRST")]=]
+
+      if i==0 then
+--        configParams = [=[.WRITE_MODE_A("WRITE_FIRST")]=]
+	  table.insert(t,"assign "..leadingVar.." = in;\n")
+      else
+	  table.insert(t,"assign "..leadingVar.." = evicted_"..numToVarname(i+1)..";\n")
+        indata = "evicted_"..numToVarname(i+1)
+--        configParams = 
+      end
+
+      table.insert(t, [=[RAMB16_S9_S9 #(]=]..configParams..[=[) ram_line]=]..numToVarname(i)..[=[(
+.DIPA(1'b0),
+.DIA(]=]..indata..[=[),
+.DOA(evicted_]=]..numToVarname(i)..[=[),
+//.DOB(),
+.ADDRA(]=]..wa..[=[),
+.WEA(1'b1),
+.WEB(1'b0),
+.ENA(1'b1),
+.ENB(1'b0),
+.ADDRB(]=]..wa..[=[),
+.CLKA(CLK),
+.CLKB(CLK),
+.SSRA(1'b0),
+.SSRB(1'b0));
+]=])
+      i = i - 1
+    end
+
+    local leadingVar = "lb_x0_y"..numToVarname(-lines)
+    table.insert(t,declareWire(datatype,leadingVar))
+    table.insert(t,"assign "..leadingVar.." = evicted_"..numToVarname(-lines+1)..";\n")
+
+    -- stencil shift register
+    -- note that this also codegens for the dangles in the last (oldest) row
+    for y=-lines,0 do
+      local prev = "lb_x0_y"..numToVarname(y)
+
+      local x=-1
+      while x>=-xpixels do
+        local n = "lb_x"..numToVarname(x).."_y"..numToVarname(y)
+        table.insert(t,declareReg(datatype,n))
+        table.insert(clockedLogic, n.." <= "..prev.."; // SSR\n")
+	prev = n
+	x = x - 1
+      end
+    end
+
+    for k,v in ipairs(consumers) do
+      for y=v:min(2),v:max(2) do
+        for x=v:min(1),v:max(1) do
+          table.insert(t, "assign out"..k.."_x"..numToVarname(x).."_y"..numToVarname(y).." = lb_x"..numToVarname(x).."_y"..numToVarname(y)..";\n")
+        end
+      end
+    end
+
+    table.insert(t,"always @ (posedge CLK) begin\n")
+    t = concat(t,clockedLogic)
+    table.insert(t,"end\n")
+
   end
 
   table.insert(t,"endmodule\n\n")
@@ -530,8 +644,7 @@ output [7:0] out);
         STUPIDGLOBALinternalDelays[node] = kernelRetiming[node][node.kernel]
         assert(type(STUPIDGLOBALinternalDelays[node])=="number")
         if parentIsOutput(node)==false and node:bufferSize(kernelGraph,width)>0 then 
-          -- account of the 1 cycle delay of the bram
-          STUPIDGLOBALinternalDelays[node] = STUPIDGLOBALinternalDelays[node] + 1
+          STUPIDGLOBALinternalDelays[node] = STUPIDGLOBALinternalDelays[node]
         end
       else
         STUPIDGLOBALinternalDelays[node] = 0
