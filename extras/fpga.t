@@ -532,7 +532,7 @@ function fpga.codegenKernel(kernelGraphNode, retiming)
         if n.op=="abs" then
           if n.type:isInt() then
             table.insert(result,declareReg(n.type,n:name()))
-            table.insert(clockedLogic, n:name().." <= ("..inputs.expr.."["..(n.type:sizeof()*8-1)..":0] == 1'b1)?(-"..inputs.expr.."):("..inputs.expr..");\n")
+            table.insert(clockedLogic, n:name().." <= ("..inputs.expr.."["..(n.type:sizeof()*8-1).."])?(-"..inputs.expr.."):("..inputs.expr.."); //abs\n")
             res = n:name()          
           else
             return inputs.expr
