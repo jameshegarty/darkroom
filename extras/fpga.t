@@ -51,6 +51,12 @@ function getStencilCoord(rel)
   return s:min(1)
 end
 
+function delayToXY(delay, imageWidth)
+  local lines = math.floor(delay/imageWidth)
+  local xpixels = delay - lines*imageWidth
+  return xpixels, lines
+end
+
 lbCnt = 0
 function fpga.linebuffer(maxdelay, datatype, imageWidth, consumers)
   assert(type(maxdelay)=="number")
@@ -70,8 +76,7 @@ function fpga.linebuffer(maxdelay, datatype, imageWidth, consumers)
 
   local t = {"module "..name.."(input CLK,\n"..outputs.."input ["..(bytesPerPixel*8-1)..":0] in);\n"}
 
-  local lines = math.floor(maxdelay/imageWidth)
-  local xpixels = maxdelay - lines*imageWidth
+  local xpixels, lines = delayToXY(maxdelay, imageWidth)
   print("linebuffer lines",lines,"xpixels",xpixels)
 
   if lines==0 and xpixels==0 then
@@ -596,20 +601,20 @@ function fpga.compile(inputs, outputs, width, height, options)
 
   local kernelGraph = darkroom.frontEnd( ast, {} )
 
+  local shifts = schedule(kernelGraph, width)
+  kernelGraph, shifts = shift(kernelGraph, shifts, width)
+
   local maxStencil = Stencil.new()
   kernelGraph:visitEach(
     function(node)
-      for v,k in node:parents(kernelGraph) do
-        if v.kernel~=nil then
-          maxStencil = maxStencil:unionWith(v.kernel:stencil(node))
-        end
-      end
+      maxStencil = maxStencil:unionWith(neededStencil(true,kernelGraph,node,nil))
     end)
 
+  print("S",shifts[kernelGraph.child1])
+  local shiftX, shiftY = delayToXY(shifts[kernelGraph.child1], width)
+  maxStencil = maxStencil:translate(shiftX,shiftY,0)
   print("Max Stencil x="..maxStencil:min(1)..","..maxStencil:max(1).." y="..maxStencil:min(2)..","..maxStencil:max(2))
 
-  local shifts = schedule(kernelGraph, width)
-  kernelGraph, shifts = shift(kernelGraph, shifts, width)
 
   ------------------------------
   local result = {}

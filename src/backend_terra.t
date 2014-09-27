@@ -1000,14 +1000,19 @@ _neededCache[true] = setmetatable({}, {__mode="k"})
 _neededCache[false] = setmetatable({}, {__mode="k"})
 
 function neededStencil( interior, kernelGraph, kernelNode, shifts)
-  assert(type(interior)=="boolean");assert(type(kernelGraph)=="table");assert(type(kernelNode)=="table");assert(type(shifts)=="table");
+  assert(type(interior)=="boolean");assert(type(kernelGraph)=="table");assert(type(kernelNode)=="table");
+  -- assert(type(shifts)=="table"); can be nil for HW backend
 
   if _neededCache[interior][kernelNode]==nil then
     local s = Stencil.new()
       
     for node,k in kernelNode:parents(kernelGraph) do
       if node.kernel==nil then -- ie, kernelNode is an output
-        s = s:unionWith(Stencil.new():add(0,shifts[kernelNode],0))
+        if shifts==nil then
+          s = s:unionWith(Stencil.new():add(0,0,0))
+        else
+          s = s:unionWith(Stencil.new():add(0,shifts[kernelNode],0))
+        end
       elseif node.kernel.kind=="crop" and interior==false then -- on the interior of strips, crops have no effect
         s = s:unionWith(node.kernel:stencil(kernelNode):sum(Stencil.new():add(0,node.kernel.shiftY,0)))
       else
