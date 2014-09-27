@@ -134,30 +134,19 @@ function fpga.linebuffer(maxdelay, datatype, imageWidth, consumers)
 
     local i=0
     while i>-lines do
-
-
       table.insert(t,declareWire(datatype,"evicted_"..numToVarname(i)))
 
-
       local indata = "in"
-
       local configParams = [=[.WRITE_MODE_A("READ_FIRST")]=]
 
       local leadingVar = "lb_x0_y"..numToVarname(i)
       table.insert(t,declareWire(datatype,leadingVar))
 
       if i==0 then
---        configParams = [=[.WRITE_MODE_A("WRITE_FIRST")]=]
---	  table.insert(t,"assign "..leadingVar.." = in;\n")
---        table.insert(t,declareReg(datatype,leadingVar))
---        table.insert(clockedLogic,leadingVar.." <= in;\n")
-         table.insert(t,"assign "..leadingVar.." = in;\n")
+        table.insert(t,"assign "..leadingVar.." = in;\n")
       else
-
-         table.insert(t,"assign "..leadingVar.." = evicted_"..numToVarname(i+1)..";\n")
-
+        table.insert(t,"assign "..leadingVar.." = evicted_"..numToVarname(i+1)..";\n")
         indata = "evicted_"..numToVarname(i+1)
---        configParams = 
       end
 
       table.insert(t, [=[RAMB16_S9_S9 #(]=]..configParams..[=[) ram_line]=]..numToVarname(i)..[=[(
@@ -193,8 +182,8 @@ function fpga.linebuffer(maxdelay, datatype, imageWidth, consumers)
         local n = "lb_x"..numToVarname(x).."_y"..numToVarname(y)
         table.insert(t,declareReg(datatype,n))
         table.insert(clockedLogic, n.." <= "..prev.."; // SSR\n")
-	prev = n
-	x = x - 1
+        prev = n
+        x = x - 1
       end
     end
 

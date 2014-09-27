@@ -10,8 +10,8 @@ else
   testinput = darkroom.input(uint8)
 end
 
-BLOCKX = 128
-BLOCKY = 4
+BLOCKX = 74
+BLOCKY = 6
 local UART_DELAY = 300000
 
 local uart = terralib.includecstring [[
@@ -20,6 +20,7 @@ local uart = terralib.includecstring [[
 #include <unistd.h>//Used for UART
 #include <fcntl.h>//Used for UART
 #include <termios.h>//Used for UART
+#include <math.h>
 
 int uart0_filestream;
 
@@ -83,7 +84,8 @@ void init(char* device){
 }
 
 void transmit(unsigned char* tx_buffer, int size){
-  printf("SEND %s\n",tx_buffer);
+//  printf("SEND %s\n",tx_buffer);
+  printf("SEND\n");
   if (uart0_filestream != -1){
     int count = write(uart0_filestream, tx_buffer, size); //Filestream, bytes to write, number of bytes to write
     if (count < 0){
@@ -108,8 +110,9 @@ int receive(unsigned char* rx_buffer, int expectedSize){
     }else{
       //Bytes received
       rx_buffer[rx_length] = '\0';
-      printf("%d bytes read : %s\n", rx_length, rx_buffer);
-      printf("%d\n",rx_length);
+//      printf("%d bytes read : %s\n", rx_length, rx_buffer);
+      printf("%d bytes read\n", rx_length);
+//      printf("%d\n",rx_length);
     }
 
     return rx_length;
@@ -120,7 +123,7 @@ void closeuart(){
   close(uart0_filestream);
 }
                                       ]]
-local terra pad(infile : &int8, outfile : &int8, left:int, right:int, top:int, bottom:int)
+local terra pad(infile : &int8, outfile : &int8, left:int, right:int, bottom:int, top:int)
 
   var imgIn : Image
   imgIn:load(infile)
@@ -145,6 +148,32 @@ local terra pad(infile : &int8, outfile : &int8, left:int, right:int, top:int, b
   var imgOut : Image
   imgOut:initSimple(w,h,imgIn.channels, imgIn.bits,imgIn.floating, imgIn.isSigned,imgIn.SOA,d)
   imgOut:save(outfile)
+
+end
+
+local terra padImg(imgIn : &Image, left:int, right:int, bottom:int, top:int)
+
+  var w = imgIn.width+(right-left)
+  var h = imgIn.height+(top-bottom)
+  var d = uart.malloc(w*h*(imgIn.bits/8))
+
+  var id = [&uint8](d)
+  for y=bottom,imgIn.height+top do
+    for x=left,imgIn.width+right do
+      var rx = x-left
+      var ry = y-bottom
+      if y<0 or x<0 or y>=imgIn.height or x>=imgIn.width then
+        id[ry*w+rx] = 0
+      else
+        id[ry*w+rx] = [&uint8](imgIn.data)[y*imgIn.width+x]
+      end
+    end
+  end
+
+  var imgOut : Image
+  imgOut:initSimple(w,h,imgIn.channels, imgIn.bits,imgIn.floating, imgIn.isSigned,imgIn.SOA,d)
+--  imgOut:save(outfile)
+  return imgOut
 
 end
 
@@ -176,21 +205,36 @@ function test(inast)
     io.write(v)
     io.close()
 
-    pad(arg[2], "out/"..s..".input.bmp", maxStencil:min(1), maxStencil:max(1), maxStencil:min(2), maxStencil:max(2))
+    --pad(arg[2], "out/"..s..".input.bmp", maxStencil:min(1), maxStencil:max(1), maxStencil:min(2), maxStencil:max(2))
+    io.output("out/"..s..".maxstencil.lua")
+    io.write("return {minX="..maxStencil:min(1)..",maxX="..maxStencil:max(1)..",minY="..maxStencil:min(2)..",maxY="..maxStencil:max(2).."}")
+    io.close()
   elseif arg[1]=="test" then
     print("TEST")
-    uart.init(arg[3] or "/dev/tty.usbserial-142B")
+    uart.init(arg[4] or "/dev/tty.usbserial-142B")
+
+    local maxstencil = dofile(arg[3])
 
     local terra procim(filename:&int8)
       var txbuf = [&uint8](uart.malloc(2048));
       var rxbuf = [&uint8](uart.malloc(2048));
 
       var img : Image
-
       img:load([arg[2]])
+      var paddedImg = padImg(&img, maxstencil.minX, maxstencil.maxX, maxstencil.minY, maxstencil.maxY)
 
-      var bw = img.width/BLOCKX
-      var bh = img.height/BLOCKY
+      -- each block has an area around its perimeter that's invalid b/c the stencil
+      -- is reading invalid stuff. So we have to pad each block by the stencil size.
+      var BLOCKX_core = BLOCKX + maxstencil.minX - maxstencil.maxX
+      var BLOCKY_core = BLOCKY + maxstencil.minY - maxstencil.maxY
+
+      if BLOCKX_core<=0 or BLOCKY_core<=0 then
+        uart.printf("ERROR: block too small for this stencil\n")
+        uart.exit(1)
+      end
+
+      var bw = [int](uart.ceil([float](img.width)/[float](BLOCKX_core)))
+      var bh = [int](uart.ceil([float](img.height)/[float](BLOCKY_core)))
 
       var retries = 0
 
@@ -201,7 +245,15 @@ function test(inast)
 
           for y=0,BLOCKY do
             for x=0,BLOCKX do
-              txbuf[y*BLOCKX+x] = [&uint8](img.data)[(by*BLOCKY+y)*img.width+(bx*BLOCKX+x)]
+              var px = bx*BLOCKX_core+x
+              var py = by*BLOCKY_core+y
+
+              if px>=paddedImg.width or py>=paddedImg.height then
+                txbuf[y*BLOCKX+x] = 0
+              else
+                txbuf[y*BLOCKX+x] = [&uint8](paddedImg.data)[py*paddedImg.width+px]
+              end
+
               rxbuf[y*BLOCKX+x] = 0;
             end
           end
@@ -259,9 +311,16 @@ function test(inast)
 --            uart.exit(1)
           end
 
-          for y=0,BLOCKY do
-            for x=0,BLOCKX do
-              [&uint8](img.data)[(by*BLOCKY+y)*img.width+(bx*BLOCKX+x)] = rxbuf[y*BLOCKX+x]
+          uart.printf("Write Out\n")
+          for y=0,BLOCKY_core do
+            for x=0,BLOCKX_core do
+
+              var px = bx*BLOCKX_core+x
+              var py = by*BLOCKY_core+y
+
+              if px<img.width and py<img.height then
+                [&uint8](img.data)[py*img.width+px] = rxbuf[(y-maxstencil.minY)*BLOCKX+(x-maxstencil.minX)]
+              end
             end
           end
 
