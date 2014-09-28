@@ -199,7 +199,7 @@ function test(inast)
     io.write(pl)
     io.close()
   elseif arg[1]=="build" then
-    local v, maxStencil = fpga.compile( {{testinput,"uart"}}, {{inast,"uart"}}, BLOCKX, BLOCKY, deviceToOptions(arg[3]))
+    local v, maxStencil = fpga.compile( {{testinput,"uart"}}, {{inast,"uart"}}, 128, 64, BLOCKX, BLOCKY, deviceToOptions(arg[3]))
     local s = string.sub(arg[0],1,#arg[0]-4)
     io.output("out/"..s..".v")
     io.write(v)
@@ -217,6 +217,7 @@ function test(inast)
 
     local terra procim(filename:&int8)
       var txbuf = [&uint8](uart.malloc(2048));
+      var txbufInt16 = [&int16](txbuf)
       var rxbuf = [&uint8](uart.malloc(2048));
 
       var img : Image
@@ -238,10 +239,19 @@ function test(inast)
 
       var retries = 0
 
+      var metadataBytes = 4
+
       for by=0,bh do
         for bx=0,bw do
           ::RESTART::
           uart.printf("BX %d/%d BY %d/%d\n",bx,bw,by,bh)
+
+          for i=0,metadataBytes do
+            txbuf[i] = 0
+          end
+          txbufInt16[0]=[int16](bx*BLOCKX_core+maxstencil.minX) -- x coord of first input pixel
+          txbufInt16[1]=[int16](by*BLOCKY_core+maxstencil.minY) -- y coord of first input pixel
+          uart.printf("SENT XY %d %d\n",txbuf[0], txbuf[2])
 
           for y=0,BLOCKY do
             for x=0,BLOCKX do
@@ -249,9 +259,9 @@ function test(inast)
               var py = by*BLOCKY_core+y
 
               if px>=paddedImg.width or py>=paddedImg.height then
-                txbuf[y*BLOCKX+x] = 0
+                txbuf[y*BLOCKX+x+metadataBytes] = 0
               else
-                txbuf[y*BLOCKX+x] = [&uint8](paddedImg.data)[py*paddedImg.width+px]
+                txbuf[y*BLOCKX+x+metadataBytes] = [&uint8](paddedImg.data)[py*paddedImg.width+px]
               end
 
               rxbuf[y*BLOCKX+x] = 0;
@@ -260,19 +270,19 @@ function test(inast)
 
           var txcrc : uint8 
           txcrc = 0
-          for i=0,BLOCKX*BLOCKY do 
+          for i=0,BLOCKX*BLOCKY+metadataBytes do 
             txcrc = txcrc + txbuf[i] 
 --            uart.printf("tx CRC %d %d\n",txbuf[i],txcrc)
           end
 
-          uart.transmit(txbuf,BLOCKX*BLOCKY)
+          uart.transmit(txbuf,BLOCKX*BLOCKY+metadataBytes)
           uart.usleep(UART_DELAY);
           var rsx : int
           rsx = uart.receive(rxbuf,BLOCKX*BLOCKY+2)
 
 --          if rsx <= 0 then
-          if rsx < BLOCKX*BLOCKY+2 then
-            uart.printf("no data, attempting to restart. press key\n")
+          if rsx <= 0 then
+            uart.printf("no data, assuming tx got dropped. attempting to restart. press key\n")
 --            while uart.getchar()~=32 do end
             while true do
               uart.printf("SENDBYTE\n")
@@ -287,6 +297,9 @@ function test(inast)
             retries = retries + 1
             goto RESTART
 --            uart.exit(1);
+          elseif rsx < BLOCKX*BLOCKY+2 then
+            uart.printf("missing data, retrying\n")
+            goto RESTART
           end
 
           -- check CRC
