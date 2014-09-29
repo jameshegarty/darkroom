@@ -60,7 +60,7 @@ function linebuffer(lines, bytesPerPixel, imageWidth, consumers)
     print(v:area(),"stencil",luts,"luts")
   end
 
-  assert(usedReadBW <= availableBW)
+--  assert(usedReadBW <= availableBW)
 
   local usedWriteBW = bytesPerPixel -- in bytes
   assert(usedWriteBW <= 4) -- we can only write to one bram

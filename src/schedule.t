@@ -16,6 +16,14 @@ function schedule(graph, HWWidth)
           local s
           if type(HWWidth)=="number" then
             s = node:maxUse(2,v)*HWWidth + node:maxUse(1,v) + shifts[v]
+
+            if s<0 and node:maxUse(1,v)>0 then
+              -- HACK: our current linebuffer design assumes that the max
+              -- x pixel is zero. We add extra delay here to make sure
+              -- that's the case, even though the delay is unnecessary!
+              -- eg if max x = 10, max y = -7
+              s = node:maxUse(1,v)
+            end
           else
             s = node:maxUse(2,v) + shifts[v]
           end

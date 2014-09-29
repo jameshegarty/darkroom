@@ -638,6 +638,10 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, stripWidth, stri
   local maxStencil = Stencil.new()
   kernelGraph:visitEach(
     function(node)
+      print("SS",node:name(),shifts[node])
+      for k,v in node:inputs() do
+        if node.kernel~=nil then print("ST",node.kernel:stencil(v):min(1),node.kernel:stencil(v):max(1),"Y",node.kernel:stencil(v):min(2),node.kernel:stencil(v):max(2)) end
+      end
       maxStencil = maxStencil:unionWith(neededStencil(true,kernelGraph,node,nil))
     end)
 
@@ -768,8 +772,11 @@ output [7:0] out);
   
   assert(kernelGraph.kernel==nil)
   assert(kernelGraph:inputCount()==1)
-  print("OUTPUT SHIFT",shifts[kernelGraph.child1])
-  totalDelay = pipelineRetiming[kernelGraph.child1] + shifts[kernelGraph.child1]
+
+--  totalDelay = pipelineRetiming[kernelGraph.child1] + shifts[kernelGraph.child1]
+  totalDelay = pipelineRetiming[kernelGraph.child1]
+
+  local metadata = {maxStencil = maxStencil, outputShift = shifts[kernelGraph.child1]}
 
   table.insert(pipeline, "assign out = kernelOut_"..kernelGraph.child1:name()..";\n")
   table.insert(pipeline,"endmodule\n\n")
@@ -899,7 +906,7 @@ endmodule
 ]=])
 
   table.insert(result, fpga.sim())
-  return table.concat(result,""), maxStencil
+  return table.concat(result,""), metadata
 end
 
 return fpga

@@ -50,7 +50,9 @@ function kernelGraphFunctions:bufferSize(root, HWWidth)
     assert(v:maxUse(2,self) <= 0 ) -- can't read from the future
     local b
     if type(HWWidth)=="number" then
-      assert(v:maxUse(1,self) <= 0 ) -- can't read from the future
+      -- it's actually fine to have positive X values, but their total delay must be in the past
+      -- eg x=10, y=-5 is a valid stencil to read.
+      assert(v:maxUse(1,self)+v:maxUse(2,self)*HWWidth <= 0)
       b = -v:minUse(1,self)-v:minUse(2,self)*HWWidth
     else
       b = -v:minUse(1,self)+1

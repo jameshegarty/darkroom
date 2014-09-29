@@ -199,15 +199,14 @@ function test(inast)
     io.write(pl)
     io.close()
   elseif arg[1]=="build" then
-    local v, maxStencil = fpga.compile( {{testinput,"uart"}}, {{inast,"uart"}}, 128, 64, BLOCKX, BLOCKY, deviceToOptions(arg[3]))
+    local v, metadata = fpga.compile( {{testinput,"uart"}}, {{inast,"uart"}}, 128, 64, BLOCKX, BLOCKY, deviceToOptions(arg[3]))
     local s = string.sub(arg[0],1,#arg[0]-4)
     io.output("out/"..s..".v")
     io.write(v)
     io.close()
 
-    --pad(arg[2], "out/"..s..".input.bmp", maxStencil:min(1), maxStencil:max(1), maxStencil:min(2), maxStencil:max(2))
-    io.output("out/"..s..".maxstencil.lua")
-    io.write("return {minX="..maxStencil:min(1)..",maxX="..maxStencil:max(1)..",minY="..maxStencil:min(2)..",maxY="..maxStencil:max(2).."}")
+    io.output("out/"..s..".metadata.lua")
+    io.write("return {minX="..metadata.maxStencil:min(1)..",maxX="..metadata.maxStencil:max(1)..",minY="..metadata.maxStencil:min(2)..",maxY="..metadata.maxStencil:max(2)..",outputShift="..metadata.outputShift.."}")
     io.close()
   elseif arg[1]=="test" then
     print("TEST")
@@ -230,7 +229,7 @@ function test(inast)
       var BLOCKY_core = BLOCKY + maxstencil.minY - maxstencil.maxY
 
       if BLOCKX_core<=0 or BLOCKY_core<=0 then
-        uart.printf("ERROR: block too small for this stencil\n")
+        uart.printf("ERROR: block too small for this stencil %d %d\n",BLOCKX_core, BLOCKY_core)
         uart.exit(1)
       end
 
@@ -251,7 +250,7 @@ function test(inast)
           end
           txbufInt16[0]=[int16](bx*BLOCKX_core+maxstencil.minX) -- x coord of first input pixel
           txbufInt16[1]=[int16](by*BLOCKY_core+maxstencil.minY) -- y coord of first input pixel
-          uart.printf("SENT XY %d %d\n",txbuf[0], txbuf[2])
+          uart.printf("SENT XY %d %d\n",txbufInt16[0], txbufInt16[1])
 
           for y=0,BLOCKY do
             for x=0,BLOCKX do
@@ -324,15 +323,27 @@ function test(inast)
 --            uart.exit(1)
           end
 
+
           uart.printf("Write Out\n")
-          for y=0,BLOCKY_core do
-            for x=0,BLOCKX_core do
 
-              var px = bx*BLOCKX_core+x
-              var py = by*BLOCKY_core+y
+          var shiftY = [int](maxstencil.outputShift)/[int](BLOCKX)
+          var shiftX = [int](maxstencil.outputShift)-shiftY*[int](BLOCKX)
+          var tlX = [int](txbufInt16[0])
+          var tlY = [int](txbufInt16[1])
+          uart.printf("SHIFT %d %d, %d %d\n", shiftX, shiftY, tlX,tlY)
 
-              if px<img.width and py<img.height then
-                [&uint8](img.data)[py*img.width+px] = rxbuf[(y-maxstencil.minY)*BLOCKX+(x-maxstencil.minX)]
+          for y=-maxstencil.minY+shiftY,BLOCKY_core-maxstencil.minY+shiftY do
+            for x=-maxstencil.minX+shiftX,BLOCKX_core-maxstencil.minX+shiftX do
+
+              var px = bx*BLOCKX_core+x+maxstencil.minX-shiftX
+              var py = by*BLOCKY_core+y+maxstencil.minY-shiftY
+
+              if px<img.width and py<img.height and px>=0 and py>=0 then
+--                [&uint8](img.data)[py*img.width+px] = rxbuf[(y+shiftY)*BLOCKX+(x+shiftX)]
+--                [&uint8](img.data)[py*img.width+px] = rxbuf[(y)*BLOCKX+(x)]
+                [&uint8](img.data)[py*img.width+px] = rxbuf[(y)*BLOCKX+(x)]
+
+
               end
             end
           end
