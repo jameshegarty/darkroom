@@ -43,7 +43,10 @@ void * makeCircular (void* address, int bytes) {
   assert(bytes % (4*1024) == 0);
   assert((int)address % (4*1024) == 0);
 
-  assert(file_descriptor > 0);
+  if ( file_descriptor<0){
+    printf("Error, could not allocate file %s for linebuffer\n",path);
+  }
+
   assert(!unlink(path));
  
   assert(!ftruncate(file_descriptor, bytes));

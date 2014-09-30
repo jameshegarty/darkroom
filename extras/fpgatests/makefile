@@ -38,12 +38,13 @@ out/%.correct.txt : %.lua out/%.lua.bmp out/%.lua.fpga.bmp
 	test ! -s out/$*.lua.diff && touch $@
 
 out/%.bit : out/%.v
-	cp $< build/stage.v
-	bash $(DARKROOM_CHIP).sh
+	mkdir -p build_$*
+	cp $< build_$*/stage.v
+	bash $(DARKROOM_CHIP).sh $*
 	export LD_LIBRARY_PATH=
-	cp build/OUT_xst.txt out/$*.xst.txt
-	cp build/OUT_map.txt out/$*.map.txt
-	cp build/OUT_par.txt out/$*.par.txt
-	cp build/OUT_ngd.txt out/$*.ngd.txt
-	cp build/OUT_bitgen.txt out/$*.bitgen.txt
-	cp build/stage.bit $@
+	cp build_$*/OUT_xst.txt out/$*.xst.txt
+	cp build_$*/OUT_map.txt out/$*.map.txt
+	cp build_$*/OUT_par.txt out/$*.par.txt
+	cp build_$*/OUT_ngd.txt out/$*.ngd.txt
+	cp build_$*/OUT_bitgen.txt out/$*.bitgen.txt
+	cp build_$*/stage.bit $@
