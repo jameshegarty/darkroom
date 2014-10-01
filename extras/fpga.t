@@ -44,17 +44,68 @@ function numToVarname(x)
   return "m"..math.abs(x)
 end
 
+function pointerToVarname(x)
+  return tostring(x):sub(10)
+end
+
 function getStencilCoord(rel)
   if type(rel)=="number" then return rel end
   local s = rel:eval(1)
-  assert(s:area()==1)
-  return s:min(1)
+  if s:area()==1 then
+    return numToVarname(s:min(1))
+  else
+    -- this involves something like a mapreducevar
+    return pointerToVarname(rel)
+  end
 end
 
 function delayToXY(delay, imageWidth)
   local lines = math.floor(delay/imageWidth)
   local xpixels = delay - lines*imageWidth
   return xpixels, lines
+end
+
+function fpga.reduce(op, cnt, datatype)
+  assert(type(op)=="string")
+  assert(darkroom.type.isType(datatype))
+
+  local name = "Reduce_"..op.."_"..cnt
+
+  local module = {"module "..name.."(input CLK"}
+  for i=0,cnt do table.insert(module,", input["..(datatype:sizeof()*8-1)..":0] partial_"..i.."") end
+  table.insert(module,");\n")
+
+  local clockedLogic = {}
+
+  local remain = cnt
+  local level = 0
+  while remain>1 do
+    local r = math.floor(remain/2)
+    print("remain",remain,r)
+
+    local l = ""
+    if level>0 then l="_l"..level end
+
+    for i=0,r-1 do
+      local n = "partial_l"..(level+1).."_"..i
+      table.insert(module, declareReg(datatype,n))
+      
+      if op=="sum" then
+        table.insert(clockedLogic, n.." <= partial"..l.."_"..(i*2).." + partial"..l.."_"..(i*2+1)..";\n")
+      else
+        assert(false)
+      end
+    end
+
+    remain = remain-r
+    level=level+1
+  end
+
+  table.insert(module, "assign out = partial_l"..level.."_0;\n")
+  table.insert(module, "always @ (posedge CLK) begin\n")
+  module = concat(module, clockedLogic)
+  table.insert(module,"endmodule\n")
+  return name, module
 end
 
 lbCnt = 0
@@ -601,9 +652,9 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
         res = n:name()
       elseif n.kind=="load" then
         if type(n.from)=="number" then
-          res = "in_x"..numToVarname(getStencilCoord(n.relX)).."_y"..numToVarname(getStencilCoord(n.relY))
+          res = "in_x"..getStencilCoord(n.relX).."_y"..getStencilCoord(n.relY)
         else
-          res = "in_"..n.from:name().."_x"..numToVarname(getStencilCoord(n.relX)).."_y"..numToVarname(getStencilCoord(n.relY))
+          res = "in_"..n.from:name().."_x"..getStencilCoord(n.relX).."_y"..getStencilCoord(n.relY)
         end
       elseif n.kind=="position" then
         local str = "inX"
@@ -622,6 +673,50 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
       elseif n.kind=="value" then
         table.insert(declarations,declareWire(n.type,n:name(),n.value))
         res = n:name()
+      elseif n.kind=="mapreduce" then
+
+        local moduledef = {"module Map_"..n:name().."(input CLK, input[12:0] inX, input[12:0] inY, \n"}
+
+        local i = 1
+        while n["varname"..i] do
+          table.insert(moduledef,"input mrvar_"..n["varname"..i].."[31:0],\n")
+          i=i+1
+        end
+
+        table.insert(moduledef,"output ["..(n.expr.type:sizeof()*8-1)..":0] out);\n\n")
+
+        table.insert(moduledef,table.concat(declarations,""))
+        table.insert(moduledef,"always @ (posedgeCLK) begin\n"..table.concat(clockedLogic,"").."end\n")
+        table.insert(moduledef,"endmodule\n\n")
+
+        result = concat(moduledef,result)
+
+        clockedLogic = {}
+        declarations = {declareWire(n.type, n:name())}
+
+        -- funroll
+        local partials = 0
+        local funroll = {function(inputList) partials = partials+1; return {declareWire(n.type,n:name().."_partial"..partials).."Map_"..n:name().."(.CLK(CLK),.inX(inX),.inY(inY)"..inputList..");\n"} end}
+
+        local i = 1
+        while n["varname"..i] do
+          print(n["varlow"..i],n["varhigh"..i],type(n["varlow"..i]),type(n["varhigh"..i]))
+          local ii = i
+          table.insert(funroll, function(inputList) local res = {}; for j=n["varlow"..ii],n["varhigh"..ii] do res = concat(res, funroll[ii](",.mrvar_"..n["varname"..ii].."("..j..")"..inputList)) end; return res end)
+          i=i+1
+        end
+        
+        declarations = concat(declarations, funroll[#funroll](""))
+
+        local rname, rmod = fpga.reduce(n.reduceop, partials, n.expr.type)
+        result = concat(rmod, result)
+
+        table.insert(declarations,rname.." reduce_"..n:name().."(.CLK(CLK),.output("..n:name()..")")
+        for i=1,partials do table.insert(declarations,".partial_"..i.."("..n:name().."_partial"..i.."),") end
+        table.insert(declarations,");\n")
+        res = n:name()
+      elseif n.kind=="mapreducevar" then
+        res = "mrvar_"..n.variable
       else
         print(n.kind)
         assert(false)
