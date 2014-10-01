@@ -455,8 +455,17 @@ end
 function typedASTFunctions:internalDelay()
   if self.kind=="binop" or self.kind=="unary" or self.kind=="select" or self.kind=="crop" then
     return 1
-  elseif self.kind=="load" or self.kind=="value" or self.kind=="cast" or self.kind=="position" then
+  elseif self.kind=="load" or self.kind=="value" or self.kind=="cast" or self.kind=="position" or self.kind=="mapreducevar" then
     return 0
+  elseif self.kind=="mapreduce" then
+    local area = 1
+    local i=1
+    while self["varid"..i] do
+      area = area * (self["varhigh"..i]-self["varlow"..i]+1)
+      i = i + 1
+    end
+
+    return math.ceil(math.log(area)/math.log(2)) -- for the reduce
   else
     print(self.kind)
     assert(false)
@@ -523,7 +532,26 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
   table.insert(result,"assign outY = inY_"..retiming[kernel]..";\n")
 
   local finalOut = kernel:visitEach(
-    function(n, inputs)
+    function(n, args)
+
+      local inputs = {}
+      local declarationsSeen = {}
+      local declarations = {}
+      local clockedLogicSeen = {}
+      local clockedLogic = {}
+
+      local function merge(src,dest,seen)
+        for kk, vv in pairs(src) do
+          assert(type(vv)=="string")
+          if seen[vv]==nil then table.insert(dest, vv); seen[vv]=1 end
+        end
+      end
+      for k,v in pairs(args) do
+        inputs[k] = args[k][1]
+        merge(args[k][2], clockedLogic, clockedLogicSeen)
+        merge(args[k][3], declarations, declarationsSeen)
+      end
+
       if n.type:isInt()==false and n.type:isUint()==false and n.type:isBool()==false then
         darkroom.error("Only integer types are allowed "..n.type:str(), n:linenumber(), n:offset(), n:filename())
       end
@@ -535,7 +563,7 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
         local prev = inputs[k]
         for i=1, delays do
           local sn = inputs[k].."_"..n:name().."_retime"..i
-          table.insert(result,declareReg(n.type,sn))
+          table.insert(declarations, declareReg(n.type,sn))
           table.insert(clockedLogic, sn.." <= "..prev..";\n")
           prev = sn
         end
@@ -544,7 +572,7 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
 
       local res
       if n.kind=="binop" then
-        table.insert(result,declareReg(n.type,n:name()))
+        table.insert(declarations, declareReg(n.type,n:name()))
         local op = n.op
         if op=="pow" then op="**" end
         table.insert(clockedLogic, n:name().." <= "..inputs.lhs..op..inputs.rhs..";\n")
@@ -552,7 +580,7 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
       elseif n.kind=="unary" then
         if n.op=="abs" then
           if n.type:isInt() then
-            table.insert(result,declareReg(n.type,n:name()))
+            table.insert(declarations, declareReg(n.type,n:name()))
             table.insert(clockedLogic, n:name().." <= ("..inputs.expr.."["..(n.type:sizeof()*8-1).."])?(-"..inputs.expr.."):("..inputs.expr.."); //abs\n")
             res = n:name()          
           else
@@ -560,7 +588,7 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
           end
         elseif n.op=="-" then
           assert(n.type:isInt())
-          table.insert(result,declareReg(n.type,n:name()))
+          table.insert(declarations, declareReg(n.type,n:name()))
           table.insert(clockedLogic, n:name().." <= -"..inputs.expr..";\n")
           res = n:name()          
         else
@@ -568,7 +596,7 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
           assert(false)
         end
       elseif n.kind=="select" then
-        table.insert(result,declareReg(n.type,n:name()))
+        table.insert(declarations,declareReg(n.type,n:name()))
         table.insert(clockedLogic, n:name().." <= ("..inputs.cond..")?("..inputs.a.."):("..inputs.b..");\n")
         res = n:name()
       elseif n.kind=="load" then
@@ -580,19 +608,19 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
       elseif n.kind=="position" then
         local str = "inX"
         if n.coord=="y" then str="inY" end
-        table.insert(result, declareWire(n.type, n:name(), str))
+        table.insert(declarations, declareWire(n.type, n:name(), str))
         res = n:name()
       elseif n.kind=="crop" then
         local delay = retiming[n] - n:internalDelay()
-        table.insert(result,declareReg(n.type,n:name()))
+        table.insert(declarations,declareReg(n.type,n:name()))
         -- hilariously, this also checks for values <0, b/c values <= in 2s complement are large, larger than image width...
         table.insert(clockedLogic, n:name().." <= ((inX_"..delay.."-"..n.shiftX..")>="..imageWidth.." || (inY_"..delay.."-"..n.shiftY..")>="..imageHeight..")?(0):("..inputs.expr.."); // crop\n")
         res = n:name()
       elseif n.kind=="cast" then
-        table.insert(result, declareWire(n.type, n:name(), inputs.expr))
+        table.insert(declarations, declareWire(n.type, n:name(), inputs.expr))
         res = n:name()
       elseif n.kind=="value" then
-        table.insert(result,declareWire(n.type,n:name(),n.value))
+        table.insert(declarations,declareWire(n.type,n:name(),n.value))
         res = n:name()
       else
         print(n.kind)
@@ -600,11 +628,16 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
       end
 
       assert(type(res)=="string")
-      return res
+      return {res, clockedLogic, declarations}
     end)
 
+  local outputName = finalOut[1]
+
+  result = concat(result, finalOut[3])
+  clockedLogic = concat(clockedLogic, finalOut[2])
+
   table.insert(result,"always @ (posedge CLK) begin\n"..table.concat(clockedLogic,"").."end\n")
-  table.insert(result,"assign out = "..finalOut..";\n")
+  table.insert(result,"assign out = "..outputName..";\n")
   table.insert(result,"endmodule\n\n")
   return result
 end

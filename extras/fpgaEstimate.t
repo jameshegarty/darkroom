@@ -228,7 +228,7 @@ function estimate(kernelGraph, imageWidth)
                 resInputs = sum(resInputs,v)
               end
 
-            elseif k.kind=="load" or k.kind=="value" or k.kind=="position" then
+            elseif k.kind=="load" or k.kind=="value" or k.kind=="position" or k.kind=="mapreducevar" then
 
             elseif k.kind=="gather" then
               -- this thing is fed by a linebuffer
