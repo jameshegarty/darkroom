@@ -25,7 +25,11 @@ local function declareReg(type, name, initial)
     initial = " = "..initial
   end
 
-  return "reg ["..(type:sizeof()*8-1)..":0] "..name..initial..";\n"
+  if type:isBool() then
+    return "reg "..name..initial..";\n"
+  else
+    return "reg ["..(type:sizeof()*8-1)..":0] "..name..initial..";\n"
+ end
 end
 
 local function declareWire(type, name, str)
@@ -35,7 +39,11 @@ local function declareWire(type, name, str)
     str = " = "..str
   end
 
-  return "wire ["..(type:sizeof()*8-1)..":0] "..name..str..";\n"
+  if type:isBool() then
+    return "wire "..name..str..";\n"
+  else
+    return "wire ["..(type:sizeof()*8-1)..":0] "..name..str..";\n"
+  end
 end
 
 function numToVarname(x)
@@ -59,6 +67,38 @@ function getStencilCoord(rel)
   end
 end
 
+function astFunctions:evalFunrolled(dim, mrvValues)
+  assert(type(dim)=="number")
+  assert(type(mrvValues)=="table")
+
+  if self.kind=="value" then
+    assert(type(self.value)=="number")
+    return Stencil.new():addDim(dim, self.value)
+  elseif self.kind=="unary" and self.op=="-" then
+    return self.expr:evalFunrolled(dim, mrvValues):flipDim(dim)
+  elseif self.kind=="mapreducevar" then
+    assert(type(mrvValues[self.variable])=="number")
+    return Stencil.new():addDim(dim, mrvValues[self.variable])
+  elseif self.kind=="binop" and self.op=="+" then
+    return self.lhs:evalFunrolled(dim, mrvValues):sum(self.rhs:evalFunrolled(dim, mrvValues))
+  elseif self.kind=="binop" and self.op=="-" then
+    return self.lhs:evalFunrolled(dim, mrvValues):sum(self.rhs:evalFunrolled(dim, mrvValues):flipDim(dim))
+  elseif self.kind=="binop" and self.op=="*" then
+    return self.lhs:evalFunrolled(dim, mrvValues):product(self.rhs:evalFunrolled(dim, mrvValues))
+  else
+    print("internal error, couldn't statically evaluate ", self.kind)
+    assert(false)
+  end
+end
+
+function getStencilCoordFunrolled(rel, mrvValues)
+  if type(rel)=="number" then return rel end
+  local s = rel:evalFunrolled(1, mrvValues)
+  s:print()
+  assert(s:area()==1)
+  return numToVarname(s:min(1))
+end
+
 function delayToXY(delay, imageWidth)
   local lines = math.floor(delay/imageWidth)
   local xpixels = delay - lines*imageWidth
@@ -71,8 +111,8 @@ function fpga.reduce(op, cnt, datatype)
 
   local name = "Reduce_"..op.."_"..cnt
 
-  local module = {"module "..name.."(input CLK"}
-  for i=0,cnt do table.insert(module,", input["..(datatype:sizeof()*8-1)..":0] partial_"..i.."") end
+  local module = {"module "..name.."(input CLK, output["..(datatype:sizeof()*8-1)..":0] out"}
+  for i=0,cnt-1 do table.insert(module,", input["..(datatype:sizeof()*8-1)..":0] partial_"..i.."") end
   table.insert(module,");\n")
 
   local clockedLogic = {}
@@ -97,6 +137,15 @@ function fpga.reduce(op, cnt, datatype)
       end
     end
 
+    -- codegen the dangle
+    assert(remain-r*2 == 0 or remain-r*2==1)
+    if remain-r*2==1 then
+      assert(level==0) -- should only be a remainder on the first iteration
+      local n = "partial_l"..(level+1).."_"..r
+      table.insert(module, declareReg(datatype,n))
+      table.insert(clockedLogic, n.." <= partial_"..(remain-1)..";\n")	
+    end
+
     remain = remain-r
     level=level+1
   end
@@ -104,7 +153,7 @@ function fpga.reduce(op, cnt, datatype)
   table.insert(module, "assign out = partial_l"..level.."_0;\n")
   table.insert(module, "always @ (posedge CLK) begin\n")
   module = concat(module, clockedLogic)
-  table.insert(module,"endmodule\n")
+  table.insert(module,"end\nendmodule\n")
   return name, module
 end
 
@@ -545,6 +594,7 @@ function fpga.trivialRetime(typedAST)
   return retiming
 end
 
+local binopToVerilog={["+"]="+",["*"]="*",["<<"]="<<",[">>"]=">>",["pow"]="**",["=="]="==",["and"]="&&",["-"]="-",["<"]="<",[">"]=">",["<="]="<=",[">="]=">="}
 
 function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
   assert(type(imageWidth)=="number")
@@ -555,8 +605,11 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
   local inputs = ""
 
   for k,v in kernelGraphNode:inputs() do
-    for sk,_ in pairs(kernel:stencil(v)) do
-      inputs = inputs.."input ["..(v.kernel.type:sizeof()*8-1)..":0] in_"..v:name().."_x"..numToVarname(sk[1]).."_y"..numToVarname(sk[2])..",\n"
+    local s = kernel:stencil(v)
+    for x=s:min(1),s:max(1) do
+      for y=s:min(2), s:max(2) do
+        inputs = inputs.."input ["..(v.kernel.type:sizeof()*8-1)..":0] in_"..v:name().."_x"..numToVarname(x).."_y"..numToVarname(y)..",\n"
+      end
     end
   end
 
@@ -624,8 +677,8 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
       local res
       if n.kind=="binop" then
         table.insert(declarations, declareReg(n.type,n:name()))
-        local op = n.op
-        if op=="pow" then op="**" end
+        local op = binopToVerilog[n.op]
+	if type(op)~="string" then print("OP",n.op); assert(false) end
         table.insert(clockedLogic, n:name().." <= "..inputs.lhs..op..inputs.rhs..";\n")
         res = n:name()
       elseif n.kind=="unary" then
@@ -679,14 +732,45 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
 
         local i = 1
         while n["varname"..i] do
-          table.insert(moduledef,"input mrvar_"..n["varname"..i].."[31:0],\n")
+          table.insert(moduledef,"input[31:0] mrvar_"..n["varname"..i]..",\n")
           i=i+1
+        end
+
+        local loadSeen = {}
+	local loadList = {}
+	n:S("load"):traverse(
+	function(node)
+          print("LOAD",getStencilCoord(node.relX), getStencilCoord(node.relY))
+	  local inp
+          if type(node.from)=="number" then
+            inp = "in_x"..getStencilCoord(node.relX).."_y"..getStencilCoord(node.relY)
+          else
+            inp = "in_"..node.from:name().."_x"..getStencilCoord(node.relX).."_y"..getStencilCoord(node.relY)
+          end
+	  if loadSeen[inp]==nil then
+	    loadSeen[inp]=1
+	    table.insert(moduledef,"input["..(node.type:sizeof()*8-1)..":0] "..inp..",\n")
+	    table.insert(loadList,node)
+	  end
+        end)
+
+	local function loadInputList(mrvValues)
+          local res = ""
+          for _,node in pairs(loadList) do
+            if type(node.from)=="number" then
+              res = res..",.in_x"..getStencilCoord(node.relX).."_y"..getStencilCoord(node.relY).."(in_x"..getStencilCoordFunrolled(node.relX,mrvValues).."_y"..getStencilCoordFunrolled(node.relY,mrvValues)..")"
+            else
+              res = res..",.in_"..node.from:name().."_x"..getStencilCoord(node.relX).."_y"..getStencilCoord(node.relY).."(in_"..node.from:name().."_x"..getStencilCoordFunrolled(node.relX,mrvValues).."_y"..getStencilCoordFunrolled(node.relY,mrvValues)..")"
+            end
+          end
+          return res
         end
 
         table.insert(moduledef,"output ["..(n.expr.type:sizeof()*8-1)..":0] out);\n\n")
 
         table.insert(moduledef,table.concat(declarations,""))
-        table.insert(moduledef,"always @ (posedgeCLK) begin\n"..table.concat(clockedLogic,"").."end\n")
+        table.insert(moduledef,"always @ (posedge CLK) begin\n"..table.concat(clockedLogic,"").."end\n")
+	table.insert(moduledef,"assign out = "..inputs.expr..";\n")
         table.insert(moduledef,"endmodule\n\n")
 
         result = concat(moduledef,result)
@@ -695,24 +779,24 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
         declarations = {declareWire(n.type, n:name())}
 
         -- funroll
-        local partials = 0
-        local funroll = {function(inputList) partials = partials+1; return {declareWire(n.type,n:name().."_partial"..partials).."Map_"..n:name().."(.CLK(CLK),.inX(inX),.inY(inY)"..inputList..");\n"} end}
+        local partials = -1
+        local funroll = {function(inputList, mrvValues) partials = partials+1; return {declareWire(n.type,n:name().."_partial"..partials).."Map_"..n:name().." map_"..n:name().."_"..partials.."(.CLK(CLK),.out("..n:name().."_partial"..partials.."),.inX(inX),.inY(inY)"..inputList..loadInputList(mrvValues)..");\n"} end}
 
         local i = 1
         while n["varname"..i] do
           print(n["varlow"..i],n["varhigh"..i],type(n["varlow"..i]),type(n["varhigh"..i]))
           local ii = i
-          table.insert(funroll, function(inputList) local res = {}; for j=n["varlow"..ii],n["varhigh"..ii] do res = concat(res, funroll[ii](",.mrvar_"..n["varname"..ii].."("..j..")"..inputList)) end; return res end)
+          table.insert(funroll, function(inputList, mrvValues) local res = {}; for j=n["varlow"..ii],n["varhigh"..ii] do mrvValues[n["varname"..ii]]=j; res = concat(res, funroll[ii](",.mrvar_"..n["varname"..ii].."("..j..")"..inputList, mrvValues)) end; return res end)
           i=i+1
         end
         
-        declarations = concat(declarations, funroll[#funroll](""))
+        declarations = concat(declarations, funroll[#funroll]("",{}))
 
-        local rname, rmod = fpga.reduce(n.reduceop, partials, n.expr.type)
+        local rname, rmod = fpga.reduce(n.reduceop, partials+1, n.expr.type)
         result = concat(rmod, result)
 
-        table.insert(declarations,rname.." reduce_"..n:name().."(.CLK(CLK),.output("..n:name()..")")
-        for i=1,partials do table.insert(declarations,".partial_"..i.."("..n:name().."_partial"..i.."),") end
+        table.insert(declarations,rname.." reduce_"..n:name().."(.CLK(CLK),.out("..n:name()..")")
+        for i=0,partials do table.insert(declarations,",.partial_"..i.."("..n:name().."_partial"..i..")") end
         table.insert(declarations,");\n")
         res = n:name()
       elseif n.kind=="mapreducevar" then
@@ -832,8 +916,10 @@ output [7:0] out);
               inputXY = ".inX(kernelOutX_"..v:name().."),.inY(kernelOutY_"..v:name()..")"
             end
             local s = node.kernel:stencil(v)
-            for k,_ in pairs(s) do
-              inputs = inputs..".in_"..v:name().."_x"..numToVarname(k[1]).."_y"..numToVarname(k[2]).."("..v:name().."_to_"..node:name().."_x"..numToVarname(k[1]).."_y"..numToVarname(k[2]).."),"
+            for x=s:min(1),s:max(1) do
+              for y=s:min(2), s:max(2) do
+                inputs = inputs..".in_"..v:name().."_x"..numToVarname(x).."_y"..numToVarname(y).."("..v:name().."_to_"..node:name().."_x"..numToVarname(x).."_y"..numToVarname(y).."),"
+              end
             end
           end
         end
@@ -864,10 +950,12 @@ output [7:0] out);
 	    local b = -stencil:min(1)-stencil:min(2)*stripWidth
 	    linebufferSize = math.max(linebufferSize,b)
 
-            for k,_ in pairs(stencil) do
-              local wirename = node:name().."_to_"..v:name().."_x"..numToVarname(k[1]+extraPipeDelay).."_y"..numToVarname(k[2])
-              table.insert(pipeline,"wire ["..(node.kernel.type:sizeof()*8-1)..":0] "..wirename..";\n")
-              lboutputs = lboutputs..".out"..(#consumers).."_x"..numToVarname(k[1]).."_y"..numToVarname(k[2]).."("..wirename.."),"
+            for x=stencil:min(1),stencil:max(1) do
+              for y=stencil:min(2), stencil:max(2) do
+                local wirename = node:name().."_to_"..v:name().."_x"..numToVarname(x+extraPipeDelay).."_y"..numToVarname(y)
+                table.insert(pipeline,"wire ["..(node.kernel.type:sizeof()*8-1)..":0] "..wirename..";\n")
+                lboutputs = lboutputs..".out"..(#consumers).."_x"..numToVarname(x).."_y"..numToVarname(y).."("..wirename.."),"
+              end
             end
           end
         end
