@@ -268,3 +268,9 @@ terra fixedModulus(a : int,b : int)
   return a % b
 end
 
+function nearestPowerOf2(x)
+  local r = math.pow(2, math.ceil(math.log(x)/math.log(2)))
+  assert(r>=x)
+  assert(math.log(r)/math.log(2) == math.ceil(math.log(r)/math.log(2)))
+  return r
+end
