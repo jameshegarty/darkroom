@@ -12,7 +12,7 @@ clean:
 	rm out/*
 
 out/%.v : %.t
-	$(TERRA) $<
+	$(TERRA) $< $(DARKROOM_CHIP)
 
 out/%.bit : out/%.v
 	mkdir -p build_$*

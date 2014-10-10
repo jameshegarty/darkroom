@@ -116,7 +116,8 @@ campipeline:save("out/demosaic.bmp")
 
 BLOCKX = 24
 BLOCKY = 6
-local v, metadata = fpga.compile({{sensor,"uart",darkroom.type.uint(8)}},{{campipeline,"uart",darkroom.type.array(darkroom.type.uint(8),3)}}, 128,64, BLOCKX, BLOCKY, fpga.util.deviceToOptions("xc6slx9"))
+print("Build For: "..arg[1])
+local v, metadata = fpga.compile({{sensor,"uart",darkroom.type.uint(8)}},{{campipeline,"uart",darkroom.type.array(darkroom.type.uint(8),3)}}, 128,64, BLOCKX, BLOCKY, fpga.util.deviceToOptions(arg[1]))
 
 local s = string.sub(arg[0],1,#arg[0]-2)
 io.output("out/"..s..".v")
