@@ -58,9 +58,8 @@ function test(inast, inputList)
     io.write(v)
     io.close()
 
-    io.output("out/"..s..".metadata.lua")
-    io.write("return {minX="..metadata.maxStencil:min(1)..",maxX="..metadata.maxStencil:max(1)..",minY="..metadata.maxStencil:min(2)..",maxY="..metadata.maxStencil:max(2)..",outputShift="..metadata.outputShift..",outputChannels="..metadata.outputChannels..",outputBytes="..metadata.outputBytes.."}")
-    io.close()
+    fpga.util.writeMetadata("out/"..s..".metadata.lua", metadata)
+
   elseif arg[1]=="test" then
     print("TEST")
 

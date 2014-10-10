@@ -38,7 +38,7 @@ local function declareWire(ty, name, str, comment)
 
   if comment==nil then comment="" end
 
-  if str == nil then
+  if str == nil or str=="" then
     str = ""
   else
     str = " = "..str
@@ -137,6 +137,10 @@ function fpga.reduce(op, cnt, datatype)
       
       if op=="sum" then
         table.insert(clockedLogic, n.." <= partial"..l.."_"..(i*2).." + partial"..l.."_"..(i*2+1)..";\n")
+      elseif op=="max" then
+        local a = "partial"..l.."_"..(i*2)
+        local b = "partial"..l.."_"..(i*2+1)
+        table.insert(clockedLogic, n.." <= ("..a..">"..b..")?("..a.."):("..b..");\n")
       else
         assert(false)
       end
@@ -623,9 +627,9 @@ function typedASTFunctions:cname(c)
 end
 
 function typedASTFunctions:internalDelay()
-  if self.kind=="binop" or self.kind=="unary" or self.kind=="select" or self.kind=="crop" then
+  if self.kind=="binop" or self.kind=="unary" or self.kind=="select" or self.kind=="crop" or self.kind=="vectorSelect" then
     return 1
-  elseif self.kind=="load" or self.kind=="value" or self.kind=="cast" or self.kind=="position" or self.kind=="mapreducevar" or self.kind=="array" then
+  elseif self.kind=="load" or self.kind=="value" or self.kind=="cast" or self.kind=="position" or self.kind=="mapreducevar" or self.kind=="array" or self.kind=="index" then
     return 0
   elseif self.kind=="mapreduce" then
     local area = 1
@@ -636,6 +640,8 @@ function typedASTFunctions:internalDelay()
     end
 
     return math.ceil(math.log(area)/math.log(2)) -- for the reduce
+  elseif self.kind=="reduce" then
+    return math.ceil(math.log(self:arraySize("expr"))/math.log(2)) -- for the reduce
   else
     print(self.kind)
     assert(false)
@@ -722,7 +728,7 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
       end
       for k,v in pairs(args) do
         inputs[k] = {}
-        for c=1,n.type:channels() do inputs[k][c] = args[k][1][c] end
+        for c=1,n[k].type:channels() do inputs[k][c] = args[k][1][c] end
         merge(args[k][2], clockedLogic, clockedLogicSeen)
         merge(args[k][3], declarations, declarationsSeen)
       end
@@ -736,7 +742,7 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
         local delays = retiming[n] - retiming[v] - n:internalDelay()
         assert(delays>=0)
 
-        for c=1,n.type:channels() do
+        for c=1,v.type:channels() do
           local prev = inputs[k][c]
           for i=1, delays do
             local sn = inputs[k][c].."_"..n:cname(c).."_retime"..i
@@ -863,9 +869,12 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
             print(n.op)
             assert(false)
           end
-        elseif n.kind=="select" then
+        elseif n.kind=="select" or n.kind=="vectorSelect" then
           table.insert(declarations,declareReg( n.type:baseType(), n:cname(c) ))
-          table.insert(clockedLogic, n:cname(c).." <= ("..inputs.cond[c]..")?("..inputs.a[c].."):("..inputs.b[c]..");\n")
+          local condC = 1
+          if n.kind=="vectorSelect" then condC=c end
+
+          table.insert(clockedLogic, n:cname(c).." <= ("..inputs.cond[condC]..")?("..inputs.a[c].."):("..inputs.b[c]..");\n")
           res = n:cname(c)
         elseif n.kind=="load" then
           if type(n.from)=="number" then
@@ -901,6 +910,20 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
           res = "mrvar_"..n.variable
         elseif n.kind=="array" then
           res = inputs["expr"..c][1]
+        elseif n.kind=="index" then
+          if n.index:eval(1):area()==1 then
+            res = inputs["expr"][n.index:eval(1):min(1)+1]
+          else
+            assert(false)
+          end
+        elseif n.kind=="reduce" then
+          local rname, rmod = fpga.reduce(n.op, n:arraySize("expr"), n.type)
+          result = concat(rmod, result)
+          table.insert(declarations, declareWire(n.type, n:cname(c),"", "// reduce result"))
+          local str = rname.." reduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(c)..")"
+          n:map("expr",function(_,i) str = str..",.partial_"..(i-1).."("..inputs["expr"..i][c]..")" end)
+          table.insert(declarations,str..");\n")
+          res = n:cname(c)
         else
           print(n.kind)
           assert(false)
