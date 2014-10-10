@@ -334,7 +334,7 @@ end
 
 function fpgaUtil.writeMetadata(filename, metadata)
     io.output(filename)
-    io.write("return {minX="..metadata.maxStencil:min(1)..",maxX="..metadata.maxStencil:max(1)..",minY="..metadata.maxStencil:min(2)..",maxY="..metadata.maxStencil:max(2)..",outputShift="..metadata.outputShift..",outputChannels="..metadata.outputChannels..",outputBytes="..metadata.outputBytes.."}")
+    io.write("return {minX="..metadata.maxStencil:min(1)..",maxX="..metadata.maxStencil:max(1)..",minY="..metadata.maxStencil:min(2)..",maxY="..metadata.maxStencil:max(2)..",outputShift="..metadata.outputShift..",outputChannels="..metadata.outputChannels..",outputBytes="..metadata.outputBytes..",stripWidth="..metadata.stripWidth..",stripHeight="..metadata.stripHeight..",inputFile='"..metadata.inputFile.."'}")
     io.close()
 end
 

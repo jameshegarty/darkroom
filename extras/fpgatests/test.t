@@ -58,26 +58,9 @@ function test(inast, inputList)
     io.write(v)
     io.close()
 
+    metadata.inputFile = arg[2]
     fpga.util.writeMetadata("out/"..s..".metadata.lua", metadata)
 
-  elseif arg[1]=="test" then
-    print("TEST")
-
-    local metadata = dofile(arg[3])
-
-    local uartDevice = arg[4] or "/dev/tty.usbserial-142B"
-    local outputFile = "out/"..arg[0]..".fpga.bmp"
-
-    local terra test()
-      var inputImg : Image
-      inputImg:load([arg[2]])
-
-      var outputImg = fpga.util.test(uartDevice, &inputImg, BLOCKX, BLOCKY, metadata.minX, metadata.minY, metadata.maxX, metadata.maxY, metadata.outputShift, metadata.outputChannels, metadata.outputBytes )
-
-      outputImg:save(outputFile)
-    end
-
-    test()
   else
     local cpuinast
     if darkroom.ast.isAST(inast) then 

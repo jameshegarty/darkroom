@@ -1,5 +1,7 @@
 SRCS = $(wildcard *.t)
 RES = $(patsubst %.t,out/%.v,$(SRCS))
+RES += $(patsubst %.t,out/%.bit,$(SRCS))
+RES += $(patsubst %.t,out/%.fpga.bmp,$(SRCS))
 
 TERRA = $(TERRADIR)/terra
 DARKROOM_CHIP?=xc6slx9
@@ -15,7 +17,7 @@ out/%.v : %.t
 out/%.bit : out/%.v
 	mkdir -p build_$*
 	cp $< build_$*/stage.v
-	bash $(DARKROOM_CHIP).sh $*
+	bash ../$(DARKROOM_CHIP).sh $*
 	export LD_LIBRARY_PATH=
 	cp build_$*/OUT_xst.txt out/$*.xst.txt
 	cp build_$*/OUT_map.txt out/$*.map.txt
@@ -24,5 +26,5 @@ out/%.bit : out/%.v
 	cp build_$*/OUT_bitgen.txt out/$*.bitgen.txt
 	cp build_$*/stage.bit $@
 
-out/%.lua.fpga.bmp : %.t out/%.bmp out/%.bit
-	bash $(DARKROOM_CHIP).test.sh $*
+out/%.fpga.bmp : out/%.bit
+	bash ../$(DARKROOM_CHIP).test.sh $*

@@ -110,11 +110,17 @@ function delayToXY(delay, width)
   return xpixels, lines
 end
 
+local declaredReductionModules = {}
 function fpga.reduce(op, cnt, datatype)
   assert(type(op)=="string")
   assert(darkroom.type.isType(datatype))
 
   local name = "Reduce_"..op.."_"..cnt
+
+  if declaredReductionModules[name] then
+    return name, {} -- already declared somewhere
+  end
+  declaredReductionModules[name] = 1
 
   local module = {"module "..name.."(input CLK, output["..(datatype:sizeof()*8-1)..":0] out"}
   for i=0,cnt-1 do table.insert(module,", input["..(datatype:sizeof()*8-1)..":0] partial_"..i.."") end
@@ -163,6 +169,8 @@ function fpga.reduce(op, cnt, datatype)
   table.insert(module, "always @ (posedge CLK) begin\n")
   module = concat(module, clockedLogic)
   table.insert(module,"end\nendmodule\n")
+
+
   return name, module
 end
 
@@ -1128,7 +1136,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
 --  totalDelay = pipelineRetiming[kernelGraph.child1] + shifts[kernelGraph.child1]
   totalDelay = pipelineRetiming[kernelGraph.child1]
 
-  local metadata = {maxStencil = maxStencil, outputShift = shifts[kernelGraph.child1], outputChannels = outputChannels, outputBytes = outputBytes}
+  local metadata = {maxStencil = maxStencil, outputShift = shifts[kernelGraph.child1], outputChannels = outputChannels, outputBytes = outputBytes, stripWidth = stripWidth, stripHeight=stripHeight}
 
   table.insert(pipeline, "assign out = kernelOut_"..kernelGraph.child1:name()..";\n")
   table.insert(pipeline,"endmodule\n\n")

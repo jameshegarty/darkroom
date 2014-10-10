@@ -4,7 +4,7 @@ RES = $(patsubst %.lua,out/%.v,$(SRCS))
 RES += $(patsubst %.lua,out/%.lua.bmp,$(SRCS))
 #RES += $(patsubst %.lua,out/%.sim.bmp,$(SRCS))
 RES += $(patsubst %.lua,out/%.bit,$(SRCS))
-RES += $(patsubst %.lua,out/%.lua.fpga.bmp,$(SRCS))
+RES += $(patsubst %.lua,out/%.fpga.bmp,$(SRCS))
 RES += $(patsubst %.lua,out/%.correct.txt,$(SRCS))
 BITS = $(patsubst %.lua,out/%.bit,$(SRCS))
 BITS += $(patsubst %.lua,out/%.lua.bmp,$(SRCS))
@@ -35,17 +35,17 @@ out/%.lua.bmp : %.lua
 out/%.sim.bmp : out/%.v
 	bash sim.sh $*
 
-out/%.lua.fpga.bmp : %.lua out/%.lua.bmp out/%.bit
-	bash $(DARKROOM_CHIP).test.sh $*
+out/%.fpga.bmp : %.lua out/%.lua.bmp out/%.bit
+	bash ../$(DARKROOM_CHIP).test.sh $*
 
-out/%.correct.txt : %.lua out/%.lua.bmp out/%.lua.fpga.bmp
-	diff out/$*.lua.bmp out/$*.lua.fpga.bmp > out/$*.lua.diff
+out/%.correct.txt : %.lua out/%.lua.bmp out/%.fpga.bmp
+	diff out/$*.lua.bmp out/$*.fpga.bmp > out/$*.lua.diff
 	test ! -s out/$*.lua.diff && touch $@
 
 out/%.bit : out/%.v
 	mkdir -p build_$*
 	cp $< build_$*/stage.v
-	bash $(DARKROOM_CHIP).sh $*
+	bash ../$(DARKROOM_CHIP).sh $*
 	export LD_LIBRARY_PATH=
 	cp build_$*/OUT_xst.txt out/$*.xst.txt
 	cp build_$*/OUT_map.txt out/$*.map.txt
