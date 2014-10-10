@@ -1,4 +1,5 @@
 local fpga = {}
+fpga.util = terralib.require("fpgautil")
 
 --UART_CLOCK = 115200
 UART_CLOCK = 57600
@@ -25,17 +26,29 @@ local function declareReg(type, name, initial)
     initial = " = "..initial
   end
 
-  return "reg ["..(type:sizeof()*8-1)..":0] "..name..initial..";\n"
+  if type:isBool() then
+    return "reg "..name..initial..";\n"
+  else
+    return "reg ["..(type:sizeof()*8-1)..":0] "..name..initial..";\n"
+ end
 end
 
-local function declareWire(type, name, str)
+local function declareWire(ty, name, str, comment)
+  assert(type(str)=="string" or str==nil)
+
+  if comment==nil then comment="" end
+
   if str == nil then
     str = ""
   else
     str = " = "..str
   end
 
-  return "wire ["..(type:sizeof()*8-1)..":0] "..name..str..";\n"
+  if ty:isBool() then
+    return "wire "..name..str..";\n"
+  else
+    return "wire ["..(ty:sizeof()*8-1)..":0] "..name..str..";"..comment.."\n"
+  end
 end
 
 function numToVarname(x)
@@ -59,9 +72,41 @@ function getStencilCoord(rel)
   end
 end
 
-function delayToXY(delay, imageWidth)
-  local lines = math.floor(delay/imageWidth)
-  local xpixels = delay - lines*imageWidth
+function astFunctions:evalFunrolled(dim, mrvValues)
+  assert(type(dim)=="number")
+  assert(type(mrvValues)=="table")
+
+  if self.kind=="value" then
+    assert(type(self.value)=="number")
+    return Stencil.new():addDim(dim, self.value)
+  elseif self.kind=="unary" and self.op=="-" then
+    return self.expr:evalFunrolled(dim, mrvValues):flipDim(dim)
+  elseif self.kind=="mapreducevar" then
+    assert(type(mrvValues[self.variable])=="number")
+    return Stencil.new():addDim(dim, mrvValues[self.variable])
+  elseif self.kind=="binop" and self.op=="+" then
+    return self.lhs:evalFunrolled(dim, mrvValues):sum(self.rhs:evalFunrolled(dim, mrvValues))
+  elseif self.kind=="binop" and self.op=="-" then
+    return self.lhs:evalFunrolled(dim, mrvValues):sum(self.rhs:evalFunrolled(dim, mrvValues):flipDim(dim))
+  elseif self.kind=="binop" and self.op=="*" then
+    return self.lhs:evalFunrolled(dim, mrvValues):product(self.rhs:evalFunrolled(dim, mrvValues))
+  else
+    print("internal error, couldn't statically evaluate ", self.kind)
+    assert(false)
+  end
+end
+
+function getStencilCoordFunrolled(rel, mrvValues)
+  if type(rel)=="number" then return rel end
+  local s = rel:evalFunrolled(1, mrvValues)
+  s:print()
+  assert(s:area()==1)
+  return numToVarname(s:min(1))
+end
+
+function delayToXY(delay, width)
+  local lines = math.floor(delay/width)
+  local xpixels = delay - lines*width
   return xpixels, lines
 end
 
@@ -71,8 +116,8 @@ function fpga.reduce(op, cnt, datatype)
 
   local name = "Reduce_"..op.."_"..cnt
 
-  local module = {"module "..name.."(input CLK"}
-  for i=0,cnt do table.insert(module,", input["..(datatype:sizeof()*8-1)..":0] partial_"..i.."") end
+  local module = {"module "..name.."(input CLK, output["..(datatype:sizeof()*8-1)..":0] out"}
+  for i=0,cnt-1 do table.insert(module,", input["..(datatype:sizeof()*8-1)..":0] partial_"..i.."") end
   table.insert(module,");\n")
 
   local clockedLogic = {}
@@ -97,6 +142,15 @@ function fpga.reduce(op, cnt, datatype)
       end
     end
 
+    -- codegen the dangle
+    assert(remain-r*2 == 0 or remain-r*2==1)
+    if remain-r*2==1 then
+      assert(level==0) -- should only be a remainder on the first iteration
+      local n = "partial_l"..(level+1).."_"..r
+      table.insert(module, declareReg(datatype,n))
+      table.insert(clockedLogic, n.." <= partial_"..(remain-1)..";\n")	
+    end
+
     remain = remain-r
     level=level+1
   end
@@ -104,16 +158,16 @@ function fpga.reduce(op, cnt, datatype)
   table.insert(module, "assign out = partial_l"..level.."_0;\n")
   table.insert(module, "always @ (posedge CLK) begin\n")
   module = concat(module, clockedLogic)
-  table.insert(module,"endmodule\n")
+  table.insert(module,"end\nendmodule\n")
   return name, module
 end
 
 lbCnt = 0
-function fpga.linebuffer(maxdelay, datatype, imageWidth, consumers)
+function fpga.linebuffer(maxdelay, datatype, stripWidth, consumers)
   assert(type(maxdelay)=="number")
   assert(darkroom.type.isType(datatype))
   local bytesPerPixel = datatype:sizeof()
-  local name = "Linebuffer_"..numToVarname(maxdelay).."delay_"..bytesPerPixel.."bpp_"..imageWidth.."w_"..lbCnt
+  local name = "Linebuffer_"..numToVarname(maxdelay).."delay_"..bytesPerPixel.."bpp_"..stripWidth.."w_"..lbCnt
   lbCnt = lbCnt + 1
 
   local outputs = ""
@@ -127,7 +181,7 @@ function fpga.linebuffer(maxdelay, datatype, imageWidth, consumers)
 
   local t = {"module "..name.."(input CLK, input[12:0] inX, input[12:0] inY, output[12:0] outX, output[12:0] outY,\n"..outputs.."input ["..(bytesPerPixel*8-1)..":0] in);\n"}
 
-  local xpixels, lines = delayToXY(maxdelay, imageWidth)
+  local xpixels, lines = delayToXY(maxdelay, stripWidth)
   print("linebuffer lines",lines,"xpixels",xpixels)
 
   table.insert(t,"assign outX = inX;\n")
@@ -177,7 +231,7 @@ function fpga.linebuffer(maxdelay, datatype, imageWidth, consumers)
     local clockedLogic = {}
 
     -- we make a bram for each full line. 
-    assert(imageWidth*bytesPerPixel < BRAM_SIZE_BYTES)
+    assert(stripWidth*bytesPerPixel < BRAM_SIZE_BYTES)
     assert(bytesPerPixel==1)
 
     local smallestX = 0
@@ -188,8 +242,8 @@ function fpga.linebuffer(maxdelay, datatype, imageWidth, consumers)
 
     table.insert(t,"reg [10:0] lbWriteAddr = 0;\n")
     table.insert(t,"reg [10:0] lbReadAddr = 1;\n")
-    table.insert(clockedLogic, "if (lbWriteAddr == "..(imageWidth-1)..") begin lbWriteAddr <= 0; end else begin lbWriteAddr <= lbWriteAddr + 1; end\n")
-    table.insert(clockedLogic, "if (lbReadAddr == "..(imageWidth-1)..") begin lbReadAddr <= 0; end else begin lbReadAddr <= lbReadAddr + 1; end\n")
+    table.insert(clockedLogic, "if (lbWriteAddr == "..(stripWidth-1)..") begin lbWriteAddr <= 0; end else begin lbWriteAddr <= lbWriteAddr + 1; end\n")
+    table.insert(clockedLogic, "if (lbReadAddr == "..(stripWidth-1)..") begin lbReadAddr <= 0; end else begin lbReadAddr <= lbReadAddr + 1; end\n")
 
     local i=0
     while i>-lines do
@@ -265,31 +319,69 @@ function fpga.linebuffer(maxdelay, datatype, imageWidth, consumers)
   return name, t
 end
 
-function fpga.buffer(sizeBytes)
+function fpga.buffer(moduleName, sizeBytes, inputBytes, outputBytes)
+  assert(type(inputBytes)=="number")
+  assert(type(outputBytes)=="number")
+
   local bramCnt = math.ceil(sizeBytes / 2048)
   local extraBits = math.ceil(math.log(bramCnt)/math.log(2))
 
-  local res = {"module Buffer(\ninput CLK,\ninput ["..(10+extraBits)..":0] inaddr,\ninput WE,\ninput [7:0] indata,\ninput ["..(10+extraBits)..":0] outaddr,\noutput [7:0] outdata\n);\n\n"}
+  local chunkSize
+  local outputChunkSize = nearestPowerOf2(outputBytes)
+  local inputChunkSize = nearestPowerOf2(inputBytes)
+  local contiguous
+  local writePort = "A"
+  local readPort = "B"
+
+  local addrA = "inaddr"
+  local addrB = "outaddr"
+
+  if inputBytes==1 then
+    chunkSize = nearestPowerOf2(outputBytes)
+    contiguous = outputBytes
+  elseif outputBytes==1 then
+    chunkSize = nearestPowerOf2(inputBytes)
+    contiguous = inputBytes
+    readPort = "A"
+    writePort = "B"
+    addrA = "outaddr"
+    addrB = "inaddr"
+  else
+    assert(false)
+  end
+
+  assert(chunkSize<=4)
+
+  local res = {"module "..moduleName.."(\ninput CLK,\ninput ["..(10+extraBits)..":0] inaddr,\ninput WE,\ninput ["..(inputBytes*8-1)..":0] indata,\ninput ["..(10+extraBits)..":0] outaddr,\noutput ["..(outputBytes*8-1)..":0] outdata\n);\n\n"}
+
+  if contiguous~=chunkSize then
+    table.insert(res,"reg [10:0] lastaddr = 0;\n")
+    table.insert(res,"reg [4:0] cycleCNT = 0;\n")
+    table.insert(res,"reg [10:0] addrA = 0;\n")
+  else
+    table.insert(res,"wire [10:0] addrA;\n")
+    table.insert(res,"assign addrA=inaddr;\n")
+  end
 
   local assn = "outdata0"
   for i=0,bramCnt-1 do
-    table.insert(res,"wire [7:0] outdata"..i..";\n")
-    table.insert(res,"RAMB16_S9_S9 #(.INIT_00(256'h0123456789ABCDEF00000000000000000000000000000000000000000000BBBB)\n")
+    table.insert(res,"wire ["..(outputChunkSize*8-1)..":0] outdata"..i..";\n")
+    table.insert(res,"RAMB16_S9_S"..(chunkSize*9).." #(.INIT_00(256'h0123456789ABCDEF00000000000000000000000000000000000000000000BBBB)\n")
     table.insert(res,") ram"..i.."(\n")
-    table.insert(res,".DIPA(1'b0),\n")
-    table.insert(res,".DIA(indata),\n")
-    table.insert(res,".DOB(outdata"..i.."),\n")
-    table.insert(res,".ADDRA(inaddr[10:0]),\n")
+--    table.insert(res,".DIPA(1'b0),\n")
+    table.insert(res,".DI"..writePort.."(indata),\n")
+    table.insert(res,".DO"..readPort.."(outdata"..i.."),\n")
+    table.insert(res,".ADDRA(addrA),\n")
 if bramCnt > 1 then
-    table.insert(res,".WEA(WE && (inaddr["..(10+extraBits)..":11]=="..i..")),\n")
+    table.insert(res,".WE"..writePort.."(WE && (inaddr["..(10+extraBits)..":11]=="..i..")),\n")
 else
-    table.insert(res,".WEA(WE),\n")
+    table.insert(res,".WE"..writePort.."(WE),\n")
 end
 
-    table.insert(res,".WEB(1'b0),\n")
+    table.insert(res,".WE"..readPort.."(1'b0),\n")
     table.insert(res,".ENA(1'b1),\n")
     table.insert(res,".ENB(1'b1),\n")
-    table.insert(res,".ADDRB(outaddr[10:0]),\n")
+    table.insert(res,".ADDRB("..addrB.."[10:0]),\n")
     table.insert(res,".CLKA(CLK),\n")
     table.insert(res,".CLKB(CLK),\n")
     table.insert(res,".SSRA(1'b0),\n")
@@ -299,7 +391,30 @@ end
     if i>0 then assn = "(outaddr["..(10+extraBits)..":11]=="..i..")? outdata"..i.." : ("..assn..")" end
   end
 
-  table.insert(res, "assign outdata = "..assn..";\n")
+  table.insert(res, "assign outdata = "..assn.."["..(outputBytes*8-1)..":0];\n")
+
+  if contiguous~=chunkSize then
+
+    table.insert(res,[=[always @(posedge CLK) begin
+  if(]=]..addrA..[=[ != lastaddr) begin
+    if(]=]..addrA..[=[==0) begin
+      cycleCNT <= 0;
+      addrA <= 0;
+    end else if(cycleCNT == ]=]..(contiguous-1)..[=[) begin
+      cycleCNT <= 0;
+      addrA <= addrA+1+]=]..(chunkSize-contiguous)..[=[;
+    end else begin
+      cycleCNT <= cycleCNT+1;
+      addrA <= addrA+1;
+    end
+
+  end
+  lastaddr <= ]=]..addrA..[=[;
+end
+]=])
+
+  end
+
   table.insert(res,"endmodule\n\n")
   return res
 end
@@ -503,10 +618,14 @@ function kernelGraphFunctions:internalDelay()
   return STUPIDGLOBALinternalDelays[self]
 end
 
+function typedASTFunctions:cname(c)
+  return self:name().."_c"..c
+end
+
 function typedASTFunctions:internalDelay()
   if self.kind=="binop" or self.kind=="unary" or self.kind=="select" or self.kind=="crop" then
     return 1
-  elseif self.kind=="load" or self.kind=="value" or self.kind=="cast" or self.kind=="position" or self.kind=="mapreducevar" then
+  elseif self.kind=="load" or self.kind=="value" or self.kind=="cast" or self.kind=="position" or self.kind=="mapreducevar" or self.kind=="array" then
     return 0
   elseif self.kind=="mapreduce" then
     local area = 1
@@ -545,6 +664,7 @@ function fpga.trivialRetime(typedAST)
   return retiming
 end
 
+local binopToVerilog={["+"]="+",["*"]="*",["<<"]="<<",[">>"]=">>",["pow"]="**",["=="]="==",["and"]="&&",["-"]="-",["<"]="<",[">"]=">",["<="]="<=",[">="]=">="}
 
 function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
   assert(type(imageWidth)=="number")
@@ -555,8 +675,11 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
   local inputs = ""
 
   for k,v in kernelGraphNode:inputs() do
-    for sk,_ in pairs(kernel:stencil(v)) do
-      inputs = inputs.."input ["..(v.kernel.type:sizeof()*8-1)..":0] in_"..v:name().."_x"..numToVarname(sk[1]).."_y"..numToVarname(sk[2])..",\n"
+    local s = kernel:stencil(v)
+    for x=s:min(1),s:max(1) do
+      for y=s:min(2), s:max(2) do
+        inputs = inputs.."input ["..(v.kernel.type:sizeof()*8-1)..":0] in_"..v:name().."_x"..numToVarname(x).."_y"..numToVarname(y)..",\n"
+      end
     end
   end
 
@@ -598,12 +721,13 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
         end
       end
       for k,v in pairs(args) do
-        inputs[k] = args[k][1]
+        inputs[k] = {}
+        for c=1,n.type:channels() do inputs[k][c] = args[k][1][c] end
         merge(args[k][2], clockedLogic, clockedLogicSeen)
         merge(args[k][3], declarations, declarationsSeen)
       end
 
-      if n.type:isInt()==false and n.type:isUint()==false and n.type:isBool()==false then
+      if not (n.type:baseType():isInt() or n.type:baseType():isUint() or n.type:baseType():isBool()) then
         darkroom.error("Only integer types are allowed "..n.type:str(), n:linenumber(), n:offset(), n:filename())
       end
 
@@ -611,119 +735,182 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
       for k,v in n:inputs() do
         local delays = retiming[n] - retiming[v] - n:internalDelay()
         assert(delays>=0)
-        local prev = inputs[k]
-        for i=1, delays do
-          local sn = inputs[k].."_"..n:name().."_retime"..i
-          table.insert(declarations, declareReg(n.type,sn))
-          table.insert(clockedLogic, sn.." <= "..prev..";\n")
-          prev = sn
+
+        for c=1,n.type:channels() do
+          local prev = inputs[k][c]
+          for i=1, delays do
+            local sn = inputs[k][c].."_"..n:cname(c).."_retime"..i
+            table.insert(declarations, declareReg( n.type:baseType(), sn ))
+            table.insert(clockedLogic, sn.." <= "..prev..";\n")
+            prev = sn
+          end
+          if delays>0 then inputs[k][c] = inputs[k][c].."_"..n:cname(c).."_retime"..delays end
         end
-        if delays>0 then inputs[k] = inputs[k].."_"..n:name().."_retime"..delays end
       end
 
-      local res
-      if n.kind=="binop" then
-        table.insert(declarations, declareReg(n.type,n:name()))
-        local op = n.op
-        if op=="pow" then op="**" end
-        table.insert(clockedLogic, n:name().." <= "..inputs.lhs..op..inputs.rhs..";\n")
-        res = n:name()
-      elseif n.kind=="unary" then
-        if n.op=="abs" then
-          if n.type:isInt() then
-            table.insert(declarations, declareReg(n.type,n:name()))
-            table.insert(clockedLogic, n:name().." <= ("..inputs.expr.."["..(n.type:sizeof()*8-1).."])?(-"..inputs.expr.."):("..inputs.expr.."); //abs\n")
-            res = n:name()          
-          else
-            return inputs.expr
-          end
-        elseif n.op=="-" then
-          assert(n.type:isInt())
-          table.insert(declarations, declareReg(n.type,n:name()))
-          table.insert(clockedLogic, n:name().." <= -"..inputs.expr..";\n")
-          res = n:name()          
-        else
-          print(n.op)
-          assert(false)
-        end
-      elseif n.kind=="select" then
-        table.insert(declarations,declareReg(n.type,n:name()))
-        table.insert(clockedLogic, n:name().." <= ("..inputs.cond..")?("..inputs.a.."):("..inputs.b..");\n")
-        res = n:name()
-      elseif n.kind=="load" then
-        if type(n.from)=="number" then
-          res = "in_x"..getStencilCoord(n.relX).."_y"..getStencilCoord(n.relY)
-        else
-          res = "in_"..n.from:name().."_x"..getStencilCoord(n.relX).."_y"..getStencilCoord(n.relY)
-        end
-      elseif n.kind=="position" then
-        local str = "inX"
-        if n.coord=="y" then str="inY" end
-        table.insert(declarations, declareWire(n.type, n:name(), str))
-        res = n:name()
-      elseif n.kind=="crop" then
-        local delay = retiming[n] - n:internalDelay()
-        table.insert(declarations,declareReg(n.type,n:name()))
-        -- hilariously, this also checks for values <0, b/c values <= in 2s complement are large, larger than image width...
-        table.insert(clockedLogic, n:name().." <= ((inX_"..delay.."-"..n.shiftX..")>="..imageWidth.." || (inY_"..delay.."-"..n.shiftY..")>="..imageHeight..")?(0):("..inputs.expr.."); // crop\n")
-        res = n:name()
-      elseif n.kind=="cast" then
-        table.insert(declarations, declareWire(n.type, n:name(), inputs.expr))
-        res = n:name()
-      elseif n.kind=="value" then
-        table.insert(declarations,declareWire(n.type,n:name(),n.value))
-        res = n:name()
-      elseif n.kind=="mapreduce" then
+      local finalOut = {}
+
+      -- mapreduce mixes channels is weird ways, so codegen this separately
+      if n.kind=="mapreduce" then
 
         local moduledef = {"module Map_"..n:name().."(input CLK, input[12:0] inX, input[12:0] inY, \n"}
 
         local i = 1
         while n["varname"..i] do
-          table.insert(moduledef,"input mrvar_"..n["varname"..i].."[31:0],\n")
+          table.insert(moduledef,"input[31:0] mrvar_"..n["varname"..i]..",\n")
           i=i+1
+        end
+
+        local loadSeen = {}
+        local loadList = {}
+        n:S("load"):traverse(
+        function(node)
+          print("LOAD",getStencilCoord(node.relX), getStencilCoord(node.relY))
+           local inp
+          if type(node.from)=="number" then
+            inp = "in_x"..getStencilCoord(node.relX).."_y"..getStencilCoord(node.relY)
+          else
+            inp = "in_"..node.from:name().."_x"..getStencilCoord(node.relX).."_y"..getStencilCoord(node.relY)
+          end
+        if loadSeen[inp]==nil then
+        loadSeen[inp]=1
+        table.insert(moduledef,"input["..(node.type:sizeof()*8-1)..":0] "..inp..",\n")
+        table.insert(loadList,node)
+	      end
+        end)
+
+        local function loadInputList(mrvValues)
+          local res = ""
+          for _,node in pairs(loadList) do
+            if type(node.from)=="number" then
+              res = res..",.in_x"..getStencilCoord(node.relX).."_y"..getStencilCoord(node.relY).."(in_x"..getStencilCoordFunrolled(node.relX,mrvValues).."_y"..getStencilCoordFunrolled(node.relY,mrvValues)..")"
+            else
+              res = res..",.in_"..node.from:name().."_x"..getStencilCoord(node.relX).."_y"..getStencilCoord(node.relY).."(in_"..node.from:name().."_x"..getStencilCoordFunrolled(node.relX,mrvValues).."_y"..getStencilCoordFunrolled(node.relY,mrvValues)..")"
+            end
+          end
+          return res
         end
 
         table.insert(moduledef,"output ["..(n.expr.type:sizeof()*8-1)..":0] out);\n\n")
 
         table.insert(moduledef,table.concat(declarations,""))
-        table.insert(moduledef,"always @ (posedgeCLK) begin\n"..table.concat(clockedLogic,"").."end\n")
+        table.insert(moduledef,"always @ (posedge CLK) begin\n"..table.concat(clockedLogic,"").."end\n")
+
+        table.insert(moduledef,"assign out = {"..inputs.expr[#inputs.expr])
+        local c = #inputs.expr-1
+        while c>=1 do table.insert(moduledef,","..outputName[c]); c=c-1 end
+        table.insert(moduledef, "};\n")
         table.insert(moduledef,"endmodule\n\n")
 
         result = concat(moduledef,result)
 
         clockedLogic = {}
-        declarations = {declareWire(n.type, n:name())}
+        declarations = {}
 
         -- funroll
-        local partials = 0
-        local funroll = {function(inputList) partials = partials+1; return {declareWire(n.type,n:name().."_partial"..partials).."Map_"..n:name().."(.CLK(CLK),.inX(inX),.inY(inY)"..inputList..");\n"} end}
+        local partials = -1
+        local funroll = {function(inputList, mrvValues) partials = partials+1; return {declareWire(n.type,n:name().."_partial"..partials).."Map_"..n:name().." map_"..n:name().."_"..partials.."(.CLK(CLK),.out("..n:name().."_partial"..partials.."),.inX(inX),.inY(inY)"..inputList..loadInputList(mrvValues)..");\n"} end}
 
         local i = 1
         while n["varname"..i] do
           print(n["varlow"..i],n["varhigh"..i],type(n["varlow"..i]),type(n["varhigh"..i]))
           local ii = i
-          table.insert(funroll, function(inputList) local res = {}; for j=n["varlow"..ii],n["varhigh"..ii] do res = concat(res, funroll[ii](",.mrvar_"..n["varname"..ii].."("..j..")"..inputList)) end; return res end)
+          table.insert(funroll, function(inputList, mrvValues) local res = {}; for j=n["varlow"..ii],n["varhigh"..ii] do mrvValues[n["varname"..ii]]=j; res = concat(res, funroll[ii](",.mrvar_"..n["varname"..ii].."("..j..")"..inputList, mrvValues)) end; return res end)
           i=i+1
         end
         
-        declarations = concat(declarations, funroll[#funroll](""))
+        declarations = concat(declarations, funroll[#funroll]("",{}))
 
-        local rname, rmod = fpga.reduce(n.reduceop, partials, n.expr.type)
+        local rname, rmod = fpga.reduce(n.reduceop, partials+1, n.expr.type)
         result = concat(rmod, result)
 
-        table.insert(declarations,rname.." reduce_"..n:name().."(.CLK(CLK),.output("..n:name()..")")
-        for i=1,partials do table.insert(declarations,".partial_"..i.."("..n:name().."_partial"..i.."),") end
-        table.insert(declarations,");\n")
-        res = n:name()
-      elseif n.kind=="mapreducevar" then
-        res = "mrvar_"..n.variable
-      else
-        print(n.kind)
-        assert(false)
+        local finalOut = {}
+
+        for c=1,n.type:channels() do
+          table.insert(declarations, declareWire(n.type, n:cname(c)))
+          table.insert(declarations,rname.." reduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(c)..")")
+          for i=0,partials do table.insert(declarations,",.partial_"..i.."("..n:name().."_partial"..i..")") end
+          table.insert(declarations,");\n")
+          table.insert(finalOut, n:cname(c))
+        end
+
+        return {finalOut, clockedLogic, declarations}
       end
 
-      assert(type(res)=="string")
-      return {res, clockedLogic, declarations}
+      for c=1,n.type:channels() do
+        local res
+        if n.kind=="binop" then
+          table.insert(declarations, declareReg( n.type:baseType(), n:cname(c) ))
+          local op = binopToVerilog[n.op]
+          if type(op)~="string" then print("OP",n.op); assert(false) end
+          table.insert(clockedLogic, n:name().."_c"..c.." <= "..inputs.lhs[c]..op..inputs.rhs[c]..";\n")
+          res = n:name().."_c"..c
+        elseif n.kind=="unary" then
+          if n.op=="abs" then
+            if n.type:baseType():isInt() then
+              table.insert(declarations, declareReg( n.type:baseType(), n:cname(c) ))
+              table.insert(clockedLogic, n:cname(c).." <= ("..inputs.expr[c].."["..(n.type:baseType():sizeof()*8-1).."])?(-"..inputs.expr[c].."):("..inputs.expr[c].."); //abs\n")
+              res = n:cname(c)
+            else
+              return inputs.expr[c] -- must be unsigned
+            end
+          elseif n.op=="-" then
+            assert(n.type:baseType():isInt())
+            table.insert(declarations, declareReg(n.type:baseType(),n:cname(c)))
+            table.insert(clockedLogic, n:cname(c).." <= -"..inputs.expr[c].."; // unary sub\n")
+            res = n:cname(c)
+          else
+            print(n.op)
+            assert(false)
+          end
+        elseif n.kind=="select" then
+          table.insert(declarations,declareReg( n.type:baseType(), n:cname(c) ))
+          table.insert(clockedLogic, n:cname(c).." <= ("..inputs.cond[c]..")?("..inputs.a[c].."):("..inputs.b[c]..");\n")
+          res = n:cname(c)
+        elseif n.kind=="load" then
+          if type(n.from)=="number" then
+            res = "in_x"..getStencilCoord(n.relX).."_y"..getStencilCoord(n.relY)
+          else
+            res = "in_"..n.from:name().."_x"..getStencilCoord(n.relX).."_y"..getStencilCoord(n.relY)
+          end
+        elseif n.kind=="position" then
+          local str = "inX"
+          if n.coord=="y" then str="inY" end
+          table.insert(declarations, declareWire(n.type, n:name(), str))
+          res = n:name()
+        elseif n.kind=="crop" then
+          local delay = retiming[n] - n:internalDelay()
+          table.insert(declarations, declareReg( n.type:baseType(), n:cname(c) ))
+          -- hilariously, this also checks for values <0, b/c values <= in 2s complement are large, larger than image width...
+          table.insert(clockedLogic, n:cname(c).." <= ((inX_"..delay.."-"..n.shiftX..")>="..imageWidth.." || (inY_"..delay.."-"..n.shiftY..")>="..imageHeight..")?(0):("..inputs.expr[c].."); // crop\n")
+          res = n:cname(c)
+        elseif n.kind=="cast" then
+          local expr
+          if n.type:isArray() and n.expr.type:isArray()==false then
+            expr = inputs["expr"][1] -- broadcast
+          else
+            expr = inputs["expr"][c]
+          end
+
+          table.insert(declarations, declareWire(n.type:baseType(), n:cname(c), expr," //cast"))
+          res = n:cname(c)
+        elseif n.kind=="value" then
+          table.insert(declarations,declareWire(n.type:baseType(), n:cname(c), tostring(n.value), " //value" ))
+          res = n:cname(c)
+        elseif n.kind=="mapreducevar" then
+          res = "mrvar_"..n.variable
+        elseif n.kind=="array" then
+          res = inputs["expr"..c][1]
+        else
+          print(n.kind)
+          assert(false)
+        end
+
+        assert(type(res)=="string")
+        finalOut[c] = res
+      end
+
+      return {finalOut, clockedLogic, declarations}
     end)
 
   local outputName = finalOut[1]
@@ -732,7 +919,10 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
   clockedLogic = concat(clockedLogic, finalOut[2])
 
   table.insert(result,"always @ (posedge CLK) begin\n"..table.concat(clockedLogic,"").."end\n")
-  table.insert(result,"assign out = "..outputName..";\n")
+  table.insert(result,"assign out = {"..outputName[#outputName])
+  local c = #outputName-1
+  while c>=1 do table.insert(result,","..outputName[c]); c=c-1 end
+  table.insert(result, "};\n")
   table.insert(result,"endmodule\n\n")
   return result
 end
@@ -742,6 +932,7 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, stripWidth, stri
   assert(#outputs==1)
   assert(type(stripHeight)=="number")
   assert(type(options)=="table" or options==nil)
+
 
   if options.clockMhz==nil then options.clockMhz=32 end
 
@@ -762,6 +953,11 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, stripWidth, stri
 
   local shifts = schedule(kernelGraph, stripWidth)
   kernelGraph, shifts = shift(kernelGraph, shifts, stripWidth)
+
+  local inputBytes = inputs[1][1].expr.type:sizeof()
+  local outputBytes = kernelGraph.child1.kernel.type:sizeof()
+  local outputChannels = kernelGraph.child1.kernel.type:channels()
+  print("INPUTBYTeS",inputBytes,"OUTPUTBYTES",outputBytes)
 
   local maxStencil = Stencil.new()
   kernelGraph:visitEach(
@@ -784,12 +980,13 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, stripWidth, stri
   table.insert(result, "`timescale 1ns / 10 ps\n")
   result = concat(result, fpga.tx(options.clockMhz))
   result = concat(result, fpga.rx(options.clockMhz))
-  result = concat(result, fpga.buffer(stripWidth*stripHeight))
+  result = concat(result, fpga.buffer("InputBuffer",stripWidth*stripHeight,1,inputBytes))
+  result = concat(result, fpga.buffer("OutputBuffer",stripWidth*stripHeight,outputBytes,1))
 
   local pipeline = {[=[module Pipeline(
 input CLK, input[12:0] inX, input[12:0] inY,
-input [7:0] in,
-output [7:0] out);
+input []=]..(inputBytes*8-1)..[=[:0] in,
+output []=]..(outputBytes*8-1)..[=[:0] out);
 ]=]}
 
   local function parentIsOutput(node)
@@ -832,8 +1029,10 @@ output [7:0] out);
               inputXY = ".inX(kernelOutX_"..v:name().."),.inY(kernelOutY_"..v:name()..")"
             end
             local s = node.kernel:stencil(v)
-            for k,_ in pairs(s) do
-              inputs = inputs..".in_"..v:name().."_x"..numToVarname(k[1]).."_y"..numToVarname(k[2]).."("..v:name().."_to_"..node:name().."_x"..numToVarname(k[1]).."_y"..numToVarname(k[2]).."),"
+            for x=s:min(1),s:max(1) do
+              for y=s:min(2), s:max(2) do
+                inputs = inputs..".in_"..v:name().."_x"..numToVarname(x).."_y"..numToVarname(y).."("..v:name().."_to_"..node:name().."_x"..numToVarname(x).."_y"..numToVarname(y).."),"
+              end
             end
           end
         end
@@ -864,10 +1063,12 @@ output [7:0] out);
 	    local b = -stencil:min(1)-stencil:min(2)*stripWidth
 	    linebufferSize = math.max(linebufferSize,b)
 
-            for k,_ in pairs(stencil) do
-              local wirename = node:name().."_to_"..v:name().."_x"..numToVarname(k[1]+extraPipeDelay).."_y"..numToVarname(k[2])
-              table.insert(pipeline,"wire ["..(node.kernel.type:sizeof()*8-1)..":0] "..wirename..";\n")
-              lboutputs = lboutputs..".out"..(#consumers).."_x"..numToVarname(k[1]).."_y"..numToVarname(k[2]).."("..wirename.."),"
+            for x=stencil:min(1),stencil:max(1) do
+              for y=stencil:min(2), stencil:max(2) do
+                local wirename = node:name().."_to_"..v:name().."_x"..numToVarname(x+extraPipeDelay).."_y"..numToVarname(y)
+                table.insert(pipeline,"wire ["..(node.kernel.type:sizeof()*8-1)..":0] "..wirename..";\n")
+                lboutputs = lboutputs..".out"..(#consumers).."_x"..numToVarname(x).."_y"..numToVarname(y).."("..wirename.."),"
+              end
             end
           end
         end
@@ -904,7 +1105,7 @@ output [7:0] out);
 --  totalDelay = pipelineRetiming[kernelGraph.child1] + shifts[kernelGraph.child1]
   totalDelay = pipelineRetiming[kernelGraph.child1]
 
-  local metadata = {maxStencil = maxStencil, outputShift = shifts[kernelGraph.child1]}
+  local metadata = {maxStencil = maxStencil, outputShift = shifts[kernelGraph.child1], outputChannels = outputChannels, outputBytes = outputBytes}
 
   table.insert(pipeline, "assign out = kernelOut_"..kernelGraph.child1:name()..";\n")
   table.insert(pipeline,"endmodule\n\n")
@@ -940,12 +1141,12 @@ reg sending = 0;
 wire [7:0] rxbits;
 wire [7:0] pipelineInput;
 reg [12:0] pipelineReadAddr = 0; 
-Buffer inputBuffer(.CLK(CLK), .inaddr(addr), .WE(receiving), .indata(rxbits), .outaddr(pipelineReadAddr), .outdata(pipelineInput));
+InputBuffer inputBuffer(.CLK(CLK), .inaddr(addr), .WE(receiving), .indata(rxbits), .outaddr(pipelineReadAddr), .outdata(pipelineInput));
 
-wire [7:0] pipelineOutput;
+wire []=]..(outputBytes*8-1)..[=[:0] pipelineOutput;
 wire [7:0] outbuf;
 reg [12:0] pipelineWriteAddr = -PIPE_DELAY; // pipe delay
-Buffer outputBuffer(.CLK(CLK), .inaddr(pipelineWriteAddr), .WE(processing), .indata(pipelineOutput), .outaddr(sendAddr), .outdata(outbuf));
+OutputBuffer outputBuffer(.CLK(CLK), .inaddr(pipelineWriteAddr), .WE(processing), .indata(pipelineOutput), .outaddr(sendAddr), .outdata(outbuf));
 
 Pipeline pipeline(.CLK(CLK), .inX(posX+metadata[12:0]), .inY(posY+metadata[28:16]), .in(pipelineInput), .out(pipelineOutput));
 
@@ -955,11 +1156,11 @@ reg [7:0] sendCRC = 0;
 wire rxvalid;
 wire txready;
 RXMOD rxmod(.RX(RX),.CLK(CLK),.outbits(rxbits),.outvalid(rxvalid));
-TXMOD txmod(.TX(TX),.CLK(CLK),.inbits( (sendAddr>]=]..(pxcnt-1)..[=[)?((sendAddr==]=]..pxcnt..[=[)?sendCRC:rxCRC):outbuf),.enable(sending),.ready(txready));
+TXMOD txmod(.TX(TX),.CLK(CLK),.inbits( (sendAddr>]=]..(pxcnt*outputBytes-1)..[=[)?((sendAddr==]=]..(pxcnt*outputBytes)..[=[)?sendCRC:rxCRC):outbuf),.enable(sending),.ready(txready));
 
 always @(posedge CLK) begin
   if(receiving) begin
-  if(addr == ]=]..pxcnt..[=[) begin
+  if(addr == ]=]..(pxcnt*inputBytes)..[=[) begin
       addr <= ]=]..rxStartAddr..[=[;
       receiving <= 0;
 		  sending <= 0;
@@ -1012,7 +1213,7 @@ always @(posedge CLK) begin
       rxCRC <= 0;
       processing <= 0;
       sendAddr <= -1;
-      end else if(sendAddr==]=]..(pxcnt+2)..[=[) begin
+      end else if(sendAddr==]=]..(pxcnt*outputBytes+2)..[=[) begin
       // we're done
       sending <= 0;
       receiving <= 1;
@@ -1022,7 +1223,7 @@ always @(posedge CLK) begin
       sendCRC <= 0;
     end else if(txready) begin
       sendAddr <= sendAddr + 1;
-      if (sendAddr >= 0 && sendAddr < ]=]..pxcnt..[=[) begin sendCRC <= sendCRC + outbuf; end
+      if (sendAddr >= 0 && sendAddr < ]=]..(pxcnt*outputBytes)..[=[) begin sendCRC <= sendCRC + outbuf; end
     end
   end
 

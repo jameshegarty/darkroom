@@ -1,12 +1,15 @@
 ISRCS = $(wildcard *.lua)
 SRCS := $(filter-out test.t cover.t, $(ISRCS))
-RES = $(patsubst %.lua,out/%.lua.est.txt,$(SRCS))
-RES += $(patsubst %.lua,out/%.v,$(SRCS))
+RES = $(patsubst %.lua,out/%.v,$(SRCS))
 RES += $(patsubst %.lua,out/%.lua.bmp,$(SRCS))
 #RES += $(patsubst %.lua,out/%.sim.bmp,$(SRCS))
 RES += $(patsubst %.lua,out/%.bit,$(SRCS))
 RES += $(patsubst %.lua,out/%.lua.fpga.bmp,$(SRCS))
 RES += $(patsubst %.lua,out/%.correct.txt,$(SRCS))
+BITS = $(patsubst %.lua,out/%.bit,$(SRCS))
+BITS += $(patsubst %.lua,out/%.lua.bmp,$(SRCS))
+BITS += $(patsubst %.lua,out/%.lua.est.txt,$(SRCS))
+RES += $(BITS)
 
 TERRA = $(TERRADIR)/terra
 
@@ -14,9 +17,11 @@ DARKROOM_CHIP?=xc6slx9
 
 all: $(RES)
 
+bits: $(BITS)
+
 clean: 
-	rm -r out/*
-	rm -r build/*
+	rm -rf out/*
+	rm -rf build_*
 
 out/%.lua.est.txt : %.lua
 	$(TERRA) $< est
