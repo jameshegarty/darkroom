@@ -34,7 +34,7 @@ function declareReg(type, name, initial)
  end
 end
 
-local function declareWire(ty, name, str, comment)
+function declareWire(ty, name, str, comment)
   assert(type(str)=="string" or str==nil)
 
   if comment==nil then comment="" end

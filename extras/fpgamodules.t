@@ -179,6 +179,9 @@ function modules.buffer(moduleName, sizeBytes, inputBytes, outputBytes)
   local clkA = "CLK_INPUT"
   local clkB = "CLK_OUTPUT"
 
+  local chunkSizeA = inputChunkSize
+  local chunkSizeB = outputChunkSize
+
   if inputBytes==1 then
     chunkSize = nearestPowerOf2(outputBytes)
     contiguous = outputBytes
@@ -191,6 +194,8 @@ function modules.buffer(moduleName, sizeBytes, inputBytes, outputBytes)
     addrB = "inaddr"
     clkA = "CLK_OUTPUT"
     clkB = "CLK_INPUT"
+    chunkSizeA = outputChunkSize
+    chunkSizeB = inputChunkSize
   elseif inputBytes==outputBytes then
     chunkSize = nearestPowerOf2(inputBytes)
     contiguous = inputBytes
@@ -215,7 +220,7 @@ function modules.buffer(moduleName, sizeBytes, inputBytes, outputBytes)
   local assn = "outdata0"
   for i=0,bramCnt-1 do
     table.insert(res,"wire ["..(outputChunkSize*8-1)..":0] outdata"..i..";\n")
-    table.insert(res,"RAMB16_S"..(inputChunkSize*9).."_S"..(outputChunkSize*9).." #(.INIT_00(256'h0123456789ABCDEF00000000000000000000000000000000000000000000BBBB)\n")
+    table.insert(res,"RAMB16_S"..(chunkSizeA*9).."_S"..(chunkSizeB*9).." #(.INIT_00(256'h0123456789ABCDEF00000000000000000000000000000000000000000000BBBB)\n")
     table.insert(res,") ram"..i.."(\n")
     table.insert(res,".DIPA(1'b0),\n")
     table.insert(res,".DI"..writePort.."(indata),\n")
@@ -246,7 +251,7 @@ end
 
   if contiguous~=chunkSize and (outputBytes~=inputBytes) then
 
-    table.insert(res,[=[always @(posedge CLK) begin
+    table.insert(res,[=[always @(posedge ]=]..clkA..[=[) begin
   if(]=]..addrA..[=[ != lastaddr) begin
     if(]=]..addrA..[=[==0) begin
       cycleCNT <= 0;
@@ -499,12 +504,12 @@ reg sending = 0;
 wire [7:0] rxbits;
 wire [7:0] pipelineInput;
 reg [12:0] pipelineReadAddr = 0; 
-InputBuffer inputBuffer(.CLK(CLK), .inaddr(addr), .WE(receiving), .indata(rxbits), .outaddr(pipelineReadAddr), .outdata(pipelineInput));
+InputBuffer inputBuffer(.CLK_INPUT(CLK), .CLK_OUTPUT(CLK), .inaddr(addr), .WE(receiving), .indata(rxbits), .outaddr(pipelineReadAddr), .outdata(pipelineInput));
 
 wire []=]..(outputBytes*8-1)..[=[:0] pipelineOutput;
 wire [7:0] outbuf;
 reg [12:0] pipelineWriteAddr = -PIPE_DELAY; // pipe delay
-OutputBuffer outputBuffer(.CLK(CLK), .inaddr(pipelineWriteAddr), .WE(processing), .indata(pipelineOutput), .outaddr(sendAddr), .outdata(outbuf));
+OutputBuffer outputBuffer(.CLK_INPUT(CLK), .CLK_OUTPUT(CLK), .inaddr(pipelineWriteAddr), .WE(processing), .indata(pipelineOutput), .outaddr(sendAddr), .outdata(outbuf));
 
 Pipeline pipeline(.CLK(CLK), .inX(posX+metadata[12:0]), .inY(posY+metadata[28:16]), .in(pipelineInput), .out(pipelineOutput));
 
