@@ -862,9 +862,10 @@ assign injoy = valid && (X < 16*JX + 16 && X >= 16*JX &&
 
 assign c = valid && (Y[4:4] ^ X[4:4]);
 assign VGA_RED = {R[2:2] && valid, R[1:1] && valid, R[0:0] && valid};
-assign VGA_GREEN = {c ,c , c};
-assign VGA_BLUE = {c,c};
-
+//assign VGA_GREEN = {c ,c , c};
+assign VGA_GREEN = {G[2:2] && valid, G[1:1] && valid, G[0:0] && valid};
+//assign VGA_BLUE = {c,c};
+assign VGA_BLUE = {B[1:1] && valid, B[0:0] && valid};
 
 always @(posedge CLK50)
     if(xreset)
@@ -1124,7 +1125,7 @@ end
 wire VGA_CLK;
 wire [23:0] outdata;
 wire [7:0] VGA_IN_R;
-assign VGA_IN_R = {5'b0, outdata[7:5]};
+assign VGA_IN_R = outdata[7:0];
 wire [7:0] VGA_IN_G;
 assign VGA_IN_G = outdata[15:8];
 wire [7:0] VGA_IN_B;
@@ -1135,8 +1136,8 @@ wire [9:0] VGA_Y;
 //assign VGA_GREEN={posX==0,CAM_VSYNC_R,CAM_HREF_R}; // for debug
 VGA vga(.CLK(CLK), .RST(VGA_RST), .VGA_CLK(VGA_CLK), .VGA_VSYNC(VGA_VSYNC), .VGA_HSYNC(VGA_HSYNC), .VGA_RED(VGA_RED), .VGA_GREEN(VGA_GREEN), .VGA_BLUE(VGA_BLUE), .R(VGA_IN_R), .G(VGA_IN_G), .B(VGA_IN_B),.X(VGA_X), .Y(VGA_Y));
 //pipelineOutput
-OutputBuffer outputBuffer(.CLK_INPUT(PCLK), .CLK_OUTPUT(VGA_CLK), .WE(1'b1), .inaddr(writeAddr), .indata({pipelineInput,pipelineInput,pipelineInput}), .outaddr(readAddr), .outdata(outdata));
-Pipeline pipeline(.CLK(CLK), .inX(posX), .inY(posY), .in(pipelineInput), .out(pipelineOutput));
+OutputBuffer outputBuffer(.CLK_INPUT(PCLK), .CLK_OUTPUT(VGA_CLK), .WE(1'b1), .inaddr(writeAddr), .indata(pipelineOutput), .outaddr(readAddr), .outdata(outdata));
+Pipeline pipeline(.CLK(PCLK), .inX(posX), .inY(posY), .in(pipelineInput), .out(pipelineOutput));
 
 always @(posedge VGA_CLK) begin
   readAddr <= VGA_X;
