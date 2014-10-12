@@ -338,4 +338,5 @@ function fpgaUtil.writeMetadata(filename, metadata)
     io.close()
 end
 
+
 return fpgaUtil

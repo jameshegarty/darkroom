@@ -1,6 +1,6 @@
 local fpga = {}
 fpga.util = terralib.require("fpgautil")
-fpga.modules = terralib.require("fpgamodules")
+
 
 --UART_CLOCK = 115200
 UART_CLOCK = 57600
@@ -20,7 +20,7 @@ function concat(t1,t2)
     return t1
 end
 
-local function declareReg(type, name, initial)
+function declareReg(type, name, initial)
   if initial==nil then 
     initial=""
   else
@@ -61,6 +61,8 @@ end
 function pointerToVarname(x)
   return tostring(x):sub(10)
 end
+
+fpga.modules = terralib.require("fpgamodules")
 
 function getStencilCoord(rel)
   if type(rel)=="number" then return rel end
