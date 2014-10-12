@@ -10,6 +10,7 @@ all: $(RES)
 
 clean: 
 	rm out/*
+	rm -rf build_*
 
 out/%.v : %.t
 	$(TERRA) $< $(DARKROOM_CHIP)

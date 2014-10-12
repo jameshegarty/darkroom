@@ -1,15 +1,15 @@
-CD = cd build; 
+CD = cd $(BUILD_DIR); 
 
-all: build/stage.bit
+all: $(BUILD_DIR)/stage.bit
 
-build/stage_map.ncd: build/stage.v
+$(BUILD_DIR)/stage_map.ncd: $(BUILD_DIR)/stage.v
 	$(CD) xst -ifn ../../xilinxify_xc6slx9/stage.xst > OUT_xst.txt
 	$(CD) ngdbuild -nt timestamp -uc ../../xilinxify_xc6slx9/constraints.ucf -p xc6slx9-tqg144-3 stage.ngc stage.ngd > OUT_ngd.txt
 	$(CD) map -p xc6slx9-tqg144-3 -w -logic_opt off -ol high -t 1 -xt 0 -register_duplication off -r 4 -mt off -ir off -pr off -lc off -power off -o stage_map.ncd stage.ngd stage.pcf > OUT_map.txt
 
-build/stage.ncd: build/stage_map.ncd
+$(BUILD_DIR)/stage.ncd: $(BUILD_DIR)/stage_map.ncd
 	$(CD) par -w -ol high -mt off stage_map.ncd stage.ncd stage.pcf > OUT_par.txt
 
-build/stage.bit: build/stage.ncd
+$(BUILD_DIR)/stage.bit: $(BUILD_DIR)/stage.ncd
 	$(CD) bitgen -intstyle ise -f ../../xilinxify_xc6slx9/stage.ut stage.ncd > OUT_bitgen.txt
 
