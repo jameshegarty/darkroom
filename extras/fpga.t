@@ -113,17 +113,16 @@ function delayToXY(delay, width)
   return xpixels, lines
 end
 
-local declaredReductionModules = {}
-function fpga.reduce(op, cnt, datatype)
+function fpga.reduce(compilerState, op, cnt, datatype)
   assert(type(op)=="string")
   assert(darkroom.type.isType(datatype))
 
   local name = "Reduce_"..op.."_"..cnt
 
-  if declaredReductionModules[name] then
+  if compilerState.declaredReductionModules[name] then
     return name, {} -- already declared somewhere
   end
-  declaredReductionModules[name] = 1
+  compilerState.declaredReductionModules[name] = 1
 
   local module = {"module "..name.."(input CLK, output["..(datatype:sizeof()*8-1)..":0] out"}
   for i=0,cnt-1 do table.insert(module,", input["..(datatype:sizeof()*8-1)..":0] partial_"..i.."") end
@@ -236,7 +235,7 @@ end
 
 local binopToVerilog={["+"]="+",["*"]="*",["<<"]="<<",[">>"]=">>",["pow"]="**",["=="]="==",["and"]="&&",["-"]="-",["<"]="<",[">"]=">",["<="]="<=",[">="]=">="}
 
-function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
+function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth, imageHeight)
   assert(type(imageWidth)=="number")
   assert(type(imageHeight)=="number")
 
@@ -391,7 +390,8 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
         
         declarations = concat(declarations, funroll[#funroll]("",{}))
 
-        local rname, rmod = fpga.reduce(n.reduceop, partials+1, n.expr.type)
+        local rname, rmod = fpga.reduce(compilerState, n.reduceop, partials+1, n.expr.type)
+
         result = concat(rmod, result)
 
         local finalOut = {}
@@ -481,7 +481,7 @@ function fpga.codegenKernel(kernelGraphNode, retiming, imageWidth, imageHeight)
             assert(false)
           end
         elseif n.kind=="reduce" then
-          local rname, rmod = fpga.reduce(n.op, n:arraySize("expr"), n.type)
+          local rname, rmod = fpga.reduce(compilerState, n.op, n:arraySize("expr"), n.type)
           result = concat(rmod, result)
           table.insert(declarations, declareWire(n.type, n:cname(c),"", "// reduce result"))
           local str = rname.." reduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(c)..")"
@@ -520,6 +520,7 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, stripWidth, stri
   assert(type(stripHeight)=="number")
   assert(type(options)=="table" or options==nil)
 
+  local compilerState = {declaredReductionModules = {}}
 
   if options.clockMhz==nil then options.clockMhz=32 end
 
@@ -598,7 +599,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
   local totalDelay = kernelGraph:visitEach(
     function(node, inputArgs)
       if node.kernel~=nil then
-        local verilogKernel = fpga.codegenKernel(node, kernelRetiming[node], imageWidth, imageHeight)
+        local verilogKernel = fpga.codegenKernel(compilerState, node, kernelRetiming[node], imageWidth, imageHeight)
         result = concat(result, verilogKernel)
         
         local inputs = ""
