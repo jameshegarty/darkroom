@@ -118,7 +118,7 @@ function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
           newnode["child"..childCount] = child
           childCount = childCount+1
           
-          local res = darkroom.typedAST.new({kind="load",from=child,type=n.type,relX=0,relY=0}):copyMetadataFrom(n)
+          local res = darkroom.typedAST.new({kind="load",from=child,type=n.type,relX=0,relY=0,scaleN1=child.kernel.scaleN1,scaleD1=child.kernel.scaleD1,scaleN2=child.kernel.scaleN2,scaleD2=child.kernel.scaleD2}):copyMetadataFrom(n)
           return res
         end)
       

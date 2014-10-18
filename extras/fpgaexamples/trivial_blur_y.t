@@ -5,8 +5,8 @@ fpga = terralib.require("fpga")
 
 sensor = darkroomSimple.load("300d.bmp")
 im sensorb(x,y) map i=-1,2 j=-1,2 reduce(sum) sensor(x+i,y+j) >> [uint8](4) end end
-local SHIFT = 5
-campipeline = im(x,y) {sensorb >> [uint8](SHIFT), sensorb >> [uint8](SHIFT), sensorb>>[uint8]([SHIFT+1])} end
+local SHIFT = 6
+campipeline = im(x,y) { (sensorb >> [uint8](SHIFT))*[uint8](2), (sensorb >> [uint8](SHIFT))*[uint8](2), sensorb>>[uint8]([SHIFT])} end
 
 campipeline:save("out/trivial.bmp")
 

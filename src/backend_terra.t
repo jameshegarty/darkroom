@@ -27,6 +27,59 @@ pointwiseDispatchMT = {
   end
 }
 
+function strideMod(downsampleStride, upsampleStride, clock)
+  if clock==nil then return 1 end
+  assert(terralib.isquote(clock) or terralib.issymbol(clock))
+
+  if upsampleStride==1 then
+    return downsampleStride
+  elseif downsampleStride==1 then
+    return `terralib.select(clock % upsampleStride==(upsampleStride-1), 1, 0)
+  else
+    assert(false)
+  end
+
+end
+
+function looprate(N,D,max)
+  if N==1 then return D*max 
+  elseif N==0 and D==0 then return 1
+  elseif N==max then return D end
+  assert(false)
+end
+
+function imageSize(w,N,D)
+  if D==0 then return w end
+  return math.ceil(w*(N/D))
+end
+
+function ratioToScale(N,D)
+  local scale = 1
+  if D~=0 then scale = N/D end -- images with scale free values, eg numbers
+  return scale
+end
+
+function calculateStride(producerN, producerD, consumerN, consumerD)
+  if consumerN==nil or (producerN==0 and producerD==0 and consumerN==0 and consumerD==0) then return 1,1 end
+  if producerN==0 and producerD==0 then producerN=1; producerD=1 end
+  if producerN==consumerN then
+    -- a downsample
+    assert(consumerD>=producerD)
+    local d = consumerD/producerD
+    assert(d==math.floor(d))
+    return d,1
+  elseif producerD==consumerD then
+    -- a upsample
+    assert(consumerN>=producerN)
+    local d = consumerN/producerN
+    assert(d==math.floor(d))
+    return 1,d
+  else
+    print(producerN,producerD,consumerN,consumerD)
+    assert(false) -- Can't upsample and downsample at the same time
+  end
+end
+
 -----------------------------------
 local vmIV = terralib.includecstring [[
 #include <stdio.h>
@@ -88,12 +141,16 @@ LineBufferWrapperMT={__index=LineBufferWrapperFunctions}
 linebufferCount = 7 -- just start with a random id to make the debug checks more effective
 function isLineBufferWrapper(b) return getmetatable(b)==LineBufferWrapperMT end
 
-function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightStencil, debug )
+function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightStencil, debug, scaleN1, scaleD1, scaleN2, scaleD2 )
   assert(type(lines)=="number")
   assert(type(leftStencil)=="number")
   assert(type(stripWidth)=="number")
   assert(type(rightStencil)=="number")
   assert(type(debug)=="boolean")
+  assert(type(scaleN1)=="number")
+  assert(type(scaleD1)=="number")
+  assert(type(scaleN2)=="number")
+  assert(type(scaleD2)=="number")
   assert(darkroom.type.isType(orionType))
 
   local tab = {lines=lines, 
@@ -104,6 +161,10 @@ function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightS
                rightStencil=rightStencil,
                linebufferPosition = 0,
                debug=debug,
+               scaleN1=scaleN1,
+               scaleD1=scaleD1,
+               scaleN2=scaleN2,
+               scaleD2=scaleD2,
                iv={}, 
                ivDebugX = {}, 
                ivDebugY={}, 
@@ -195,6 +256,7 @@ function LineBufferWrapperFunctions:set( loopid, value, V )
     local res = {}
 
     if self.debug then
+
       for i=0,V-1 do
         table.insert(res,quote
                        @([self.ivDebugX[loopid]]+i) = [self.posX[loopid]]+i
@@ -242,7 +304,7 @@ function LineBufferWrapperFunctions:get(loopid, gather, relX,relY, V, validLeft,
     end
 
     res = quote 
-      for [i]=0,[V-1] do
+      for [i]=0,V do
                      -- because we expand out the valid region to the largest vector size (to save having to codegen the non-vectorized dangling region), 
                      -- some of the area we compute is garbage, and thus
                      -- will read invalid values (but we will overwrite it later so its ok). Bypass the debug checks on those regions.
@@ -259,10 +321,13 @@ function LineBufferWrapperFunctions:get(loopid, gather, relX,relY, V, validLeft,
   return res
 end
 
-function LineBufferWrapperFunctions:next(loopid,v)
+function LineBufferWrapperFunctions:next(loopid,v, consumerScaleN1, consumerScaleD1)
   assert(type(loopid)=="number")
   assert(type(v)=="number" or terralib.isquote(v))
-  
+
+  local downsampleStride, upsampleStride = calculateStride(self.scaleN1, self.scaleD1, consumerScaleN1, consumerScaleD1)
+
+  v = `(v*downsampleStride)/upsampleStride
   local res = {}
 
   table.insert(res, quote [self.iv[loopid]] = [self.iv[loopid]] + v end)
@@ -279,7 +344,7 @@ end
 
 -- sub: this is the number of pixels we looped over since last calling nextline
 -- basically: the number of times we called nextVector this row * the vector width
-function LineBufferWrapperFunctions:nextLine(loopid,  sub)
+function LineBufferWrapperFunctions:nextLine(loopid,  sub, clock, consumerScaleN2, consumerScaleD2)
   assert(terralib.isquote(sub))
 
   local res = {}
@@ -288,19 +353,22 @@ function LineBufferWrapperFunctions:nextLine(loopid,  sub)
   local base = {self.base}
   local bufType = {self.orionType:toTerraType()}
 
+  local downsampleStride, upsampleStride = calculateStride(self.scaleN2, self.scaleD2, consumerScaleN2, consumerScaleD2)
+  local stride = strideMod(downsampleStride, upsampleStride, clock)
+
   if self.debug then
     buf = {self.iv[loopid], self.ivDebugX[loopid], self.ivDebugY[loopid], self.ivDebugId[loopid]}
     base = {self.base, self.baseDebugX, self.baseDebugY, self.baseDebugId}
     bufType = {self.orionType:toTerraType(),int,int,int}
 
-    table.insert(res, quote [self.posY[loopid]] = [self.posY[loopid]] + 1 end)
+    table.insert(res, quote [self.posY[loopid]] = [self.posY[loopid]] + stride end)
     table.insert(res, quote [self.posX[loopid]] = [self.posX[loopid]] - sub end)
   end
 
   for k,v in pairs(buf) do
     table.insert(res, 
       quote 
-        [buf[k]] = [buf[k]] - sub + [self:lineWidth()] 
+        [buf[k]] = [buf[k]] - sub + [self:lineWidth()]*stride
         if [buf[k]] >= [base[k]]+[self:modularSize(bufType[k])*2] then [buf[k]] = [buf[k]] - [self:modularSize(bufType[k])] end
       end)
   end
@@ -314,12 +382,16 @@ function isImageWrapper(b) return getmetatable(b)==ImageWrapperMT end
 
 -- tab.terraType should be the base type of the data stored in this image
 -- ie, if it's a floating point image, tab.terraType should be float
-function newImageWrapper( basePtr, orionType, stride, debug )
+function newImageWrapper( basePtr, orionType, stride, debug, scaleN1, scaleD1, scaleN2, scaleD2 )
   assert(darkroom.type.isType(orionType))
   assert(type(stride)=="number")
   assert(type(debug) == "boolean")
+  assert(type(scaleN1)=="number")
+  assert(type(scaleD1)=="number")
+  assert(type(scaleN2)=="number")
+  assert(type(scaleD2)=="number")
 
-  local tab = {data={},basePtr=basePtr,orionType=orionType, stride=stride, debug=debug}
+  local tab = {data={},basePtr=basePtr,orionType=orionType, stride=stride, debug=debug, scaleN1=scaleN1, scaleD1=scaleD1, scaleN2=scaleN2, scaleD2=scaleD2}
 
   return setmetatable(tab,ImageWrapperMT)
 end
@@ -403,17 +475,20 @@ function ImageWrapperFunctions:get(loopid, gather, relX, relY, V)
   return expr
 end
 
-function ImageWrapperFunctions:next(loopid,v)
+function ImageWrapperFunctions:next(loopid,v,  consumerScaleN1, consumerScaleD1)
   assert(type(loopid)=="number")
   assert(type(v)=="number" or terralib.isquote(v))
+  local downsampleStride, upsampleStride = calculateStride(self.scaleN1, self.scaleD1, consumerScaleN1, consumerScaleD1)
+  v = `v*downsampleStride
   return quote [self.data[loopid]] = [self.data[loopid]] + v end
 end
 
 -- sub: this is the number of pixels we looped over since last calling nextline
 -- basically: the number of times we called nextVector this row * the vector width
-function ImageWrapperFunctions:nextLine(loopid, sub)
+function ImageWrapperFunctions:nextLine(loopid, sub, clock, consumerScaleN2, consumerScaleD2)
   assert(terralib.isquote(sub))
-  return quote [self.data[loopid]] = [self.data[loopid]] + [self.stride] - sub end
+  local downsampleStride, upsampleStride = calculateStride(self.scaleN2, self.scaleD2, consumerScaleN2, consumerScaleD2)
+  return quote [self.data[loopid]] = [self.data[loopid]] + [self.stride]*[strideMod(downsampleStride,upsampleStride,clock)] - sub end
 end
 
 
@@ -709,7 +784,20 @@ function darkroom.terracompiler.codegen(
           end
 
           assert(darkroom.kernelGraph.isKernelGraph(node.from) or type(node.from)=="number")
-          out = inputImages[kernelNode][node.from][c]:get(loopid, false, relX, relY,  V, validLeft, validRight);
+
+          local downsampleStride, upsampleStride
+          if type(node.from)=="number" then downsampleStride, upsampleStride = calculateStride(1,1, node.scaleN1, node.scaleD1)
+            else downsampleStride, upsampleStride = calculateStride(node.from.kernel.scaleN1, node.from.kernel.scaleD1, node.scaleN1, node.scaleD1) end
+
+          if downsampleStride==1 and upsampleStride==1 then
+            out = inputImages[kernelNode][node.from][c]:get(loopid, false, relX, relY,  V, validLeft, validRight);
+          else
+            local vres = {}
+            local yres = {}
+            if downsampleStride==1 then for i = 0,V-1 do table.insert(vres,math.floor(i/upsampleStride)-i); table.insert(yres,0) end
+            else for i = 0,V-1 do table.insert(vres,i*(downsampleStride-1)); table.insert(yres,0) end end
+            out = inputImages[kernelNode][node.from][c]:get(loopid, true,  `vectorof(int,vres)+relX, `vectorof(int,yres)+relY,  V, validLeft, validRight);
+          end
         elseif node.kind=="binop" then
           local lhs = inputs["lhs"][c]
           local rhs = inputs["rhs"][c]
@@ -993,8 +1081,10 @@ function darkroom.terracompiler.codegen(
 end
 
 -- user is expected to allocate an image that is padded to the (vector size)*(stripCount)
-function stripWidth(options)
-  return upToNearest(options.V*options.stripcount,options.width) / options.stripcount
+function stripWidth(options, scaleN1, scaleD1)
+  assert(type(scaleN1)=="number")
+  assert(type(scaleD1)=="number")
+  return math.floor((upToNearest(options.V*options.stripcount,options.width) / options.stripcount) * ratioToScale(scaleN1,scaleD1))
 end
 
 
@@ -1037,8 +1127,8 @@ function validStencil(kernelGraph, kernelNode, shifts)
   end
 end
 
-function stripLeft(strip, options) return `strip*[stripWidth(options)] end
-function stripRight(strip, options) return quote var w = (strip+1)*[stripWidth(options)] in terralib.select(w>options.width,options.width,w) end end
+function stripLeft(strip, options, scaleN1, scaleD1) return `strip*[stripWidth(options, scaleN1, scaleD1)] end
+function stripRight(strip, options, scaleN1, scaleD1) return quote var w = (strip+1)*[stripWidth(options, scaleN1, scaleD1)]; var tw = [math.floor(options.width*ratioToScale(scaleN1,scaleD1))] in terralib.select(w>tw,tw,w) end end
 
 -- return interiorValue or exteriorValue depending if this strip's edge is on the exterior of the region we're calculating or not
 terra interiorSelectLeft(strip : int, interiorValue : int, exteriorValue : int)
@@ -1051,23 +1141,25 @@ terra interiorSelectRight(strip : int, stripcount : int, interiorValue : int, ex
   return interiorValue
 end
 
-function needed(kernelGraph, kernelNode, strip, shifts, options)
-  assert(type(kernelGraph)=="table");assert(type(kernelNode)=="table");assert(type(shifts)=="table");assert(type(options)=="table");
+function needed(kernelGraph, kernelNode, strip, shifts, largestScaleY, options)
+  assert(type(kernelGraph)=="table");assert(type(kernelNode)=="table");assert(type(shifts)=="table");assert(type(largestScaleY)=="number");assert(type(options)=="table");
 
-  return {left = `[stripLeft(strip,options)]+interiorSelectLeft(strip,[neededStencil( true, kernelGraph, kernelNode, shifts):min(1)], [neededStencil( false, kernelGraph, kernelNode, shifts):min(1)]),
-          right = `[stripRight(strip,options)]+interiorSelectRight(strip,[options.stripcount],[neededStencil( true, kernelGraph, kernelNode, shifts):max(1)],[neededStencil( false, kernelGraph, kernelNode, shifts):max(1)]),
-          top = `options.height+[neededStencil( false, kernelGraph, kernelNode, shifts):max(2)],
+  return {left = `[stripLeft(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+interiorSelectLeft(strip,[neededStencil( true, kernelGraph, kernelNode, shifts):min(1)], [neededStencil( false, kernelGraph, kernelNode, shifts):min(1)]),
+          right = `[stripRight(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+interiorSelectRight(strip,[options.stripcount],[neededStencil( true, kernelGraph, kernelNode, shifts):max(1)],[neededStencil( false, kernelGraph, kernelNode, shifts):max(1)]),
+          top = `[options.height*largestScaleY]+[neededStencil( false, kernelGraph, kernelNode, shifts):max(2)],
           bottom = `[neededStencil( false, kernelGraph, kernelNode, shifts):min(2)]}
 end
 
-function valid(kernelGraph, kernelNode, strip, shifts, options)
-  local v = {left = `[stripLeft(strip,options)]+interiorSelectLeft(strip,[neededStencil( true, kernelGraph, kernelNode, shifts):min(1)],[validStencil(kernelGraph, kernelNode, shifts):min(1)]),
-          right = `[stripRight(strip,options)]+interiorSelectRight(strip,[options.stripcount], [neededStencil( true, kernelGraph, kernelNode, shifts):max(1)], [validStencil(kernelGraph, kernelNode, shifts):max(1)]),
-          top = `options.height+[validStencil(kernelGraph, kernelNode, shifts):max(2)],
+function valid(kernelGraph, kernelNode, strip, shifts, largestScaleY, options)
+  assert(type(kernelGraph)=="table");assert(type(kernelNode)=="table");assert(type(shifts)=="table");assert(type(largestScaleY)=="number");assert(type(options)=="table");
+
+  local v = {left = `[stripLeft(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+interiorSelectLeft(strip,[neededStencil( true, kernelGraph, kernelNode, shifts):min(1)],[validStencil(kernelGraph, kernelNode, shifts):min(1)]),
+          right = `[stripRight(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+interiorSelectRight(strip,[options.stripcount], [neededStencil( true, kernelGraph, kernelNode, shifts):max(1)], [validStencil(kernelGraph, kernelNode, shifts):max(1)]),
+          top = `[options.height*largestScaleY]+[validStencil(kernelGraph, kernelNode, shifts):max(2)],
           bottom = `[validStencil(kernelGraph, kernelNode, shifts):min(2)]}
 
   -- valid should never be larger than needed
-  local n = needed( kernelGraph, kernelNode, strip, shifts, options )
+  local n = needed( kernelGraph, kernelNode, strip, shifts, largestScaleY, options )
 
   v.left = `terralib.select(v.left < n.left, n.left, v.left)
   v.right = `terralib.select(v.right > n.right, n.right, v.right)
@@ -1112,10 +1204,12 @@ function darkroom.terracompiler.codegenInnerLoop(
     clock,
     linebufferBase,
     shifts,
+    largestScaleY,
     options)
 
   assert(type(shifts)=="table")
   assert(type(options)=="table")
+  assert(type(largestScaleY)=="number")
 
   local x = symbol(int,"x")
 
@@ -1140,9 +1234,9 @@ return
       -- requested y=[0,n] of a function shifted by s, then neededY=[s,n+s]. As a result, this implementation
       -- closely resembles hardware that produces 1 line per clock. 
 
-      local needed, neededStat = memo("needed",needed( kernelGraph, n, strip, shifts, options )) -- clock space
+      local needed, neededStat = memo("needed",needed( kernelGraph, n, strip, shifts, largestScaleY, options )) -- clock space
       local neededImageSpace, neededImageSpaceStat = memo("neededImageSpace",shiftRegion( needed, -shifts[n] ))
-      local valid, validStat = memo("valid",valid( kernelGraph, n, strip, shifts, options ))
+      local valid, validStat = memo("valid",valid( kernelGraph, n, strip, shifts, largestScaleY, options ))
       local validVectorized, validVectorizedStat = memo("validVectorized",vectorizeRegion(valid, options.V)) -- always >= valid to the nearest vector width
 
       table.insert(loopStartCode,
@@ -1166,7 +1260,7 @@ return
 
       table.insert(loopCode,
         quote
-          if clock >= [needed.bottom] and clock < [needed.top] then
+          if clock >= [needed.bottom] and clock < [needed.top] and (clock % [looprate(n.kernel.scaleN2,n.kernel.scaleD2,largestScaleY)] == 0 or [n.kernel.scaleD2]==0) then
             if clock < [valid.bottom] or clock >= [valid.top]  then
               -- top/bottom row(s) (all boundary)
               -- theoretically we could do some of this vectorized, but it shouldn't really matter
@@ -1176,8 +1270,8 @@ return
                 [outputs[n]:next( loopid, 1 )];
                 [inputs[n]:next( loopid, 1 )];
               end
-              [outputs[n]:nextLine( loopid, `[needed.right]-[needed.left], stripCount)];
-              [inputs[n]:nextLine( loopid, `[needed.right]-[needed.left], stripCount)];
+              [outputs[n]:nextLine( loopid, `[needed.right]-[needed.left])];
+              [inputs[n]:nextLine( loopid, `[needed.right]-[needed.left], clock, n.kernel.scaleN2, n.kernel.scaleD2)];
             else
               -- interior row(s), mixed boundary and calculated region
 
@@ -1188,11 +1282,11 @@ return
                 statements;
                 [outputs[n]:set( loopid, expr, options.V )];
                 [outputs[n]:next( loopid, options.V )];
-                [inputs[n]:next( loopid, options.V )];
+                [inputs[n]:next( loopid, options.V, n.kernel.scaleN1, n.kernel.scaleD1 )];
               end
 
               [outputs[n]:next( loopid, `-(validVectorized.right-needed.left) )];
-              [inputs[n]:next( loopid, `-(validVectorized.right-needed.left) )];
+              [inputs[n]:next( loopid, `-(validVectorized.right-needed.left), n.kernel.scaleN1, n.kernel.scaleD1 )];
               
               -- these need to happen out of order b/c we may _overwrite_ sections of the array that were written by the loop above
               for [x] = needed.left, valid.left do
@@ -1211,7 +1305,7 @@ return
               end
           
               [outputs[n]:nextLine( loopid, `needed.right-needed.left)];
-              [inputs[n]:nextLine( loopid, `needed.right-needed.left)];
+              [inputs[n]:nextLine( loopid, `needed.right-needed.left, clock, n.kernel.scaleN2, n.kernel.scaleD2)];
             end
           end
       end)
@@ -1221,10 +1315,11 @@ return
 end
 
 -- codegen all the code that runs per thread (and preamble)
-function darkroom.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, shifts, options)
+function darkroom.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, shifts, largestScaleY, options)
   assert(darkroom.kernelGraph.isKernelGraph(kernelGraph))
   assert(type(inputs)=="table")
   assert(type(shifts)=="table")
+  assert(type(largestScaleY)=="number")
   assert(type(options)=="table")
 
   local core = symbol(int, "core")
@@ -1273,6 +1368,7 @@ function darkroom.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, sh
     clock, 
     linebufferBase,
     shifts,
+    largestScaleY,
     options)
 
 
@@ -1310,7 +1406,7 @@ function darkroom.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, sh
       var [linebufferBase] = linebuffers -- the image wrappers will mutate linebufferBase each time they allocate a buffer in the start code
       thisLoopStartCode
 
-      for [clock] = startClock, options.height+endClock do
+      for [clock] = startClock, [options.height*largestScaleY]+endClock do
         thisLoopCode
       end
 
@@ -1344,7 +1440,7 @@ function darkroom.terracompiler.allocateImageWrappers(
   local function getInputWrapper(id,type)
     if inputWrappers[id]==nil then
       inputWrappers[id] = {}
-      for c = 1,type:channels() do inputWrappers[id][c] = newImageWrapper( channelPointer(c-1,inputImageSymbolMap[id], type:baseType():toTerraType()), type:baseType(), options.width, options.debug ) end
+      for c = 1,type:channels() do inputWrappers[id][c] = newImageWrapper( channelPointer(c-1,inputImageSymbolMap[id], type:baseType():toTerraType()), type:baseType(), options.width, options.debug ,1,1,1,1) end
       setmetatable(inputWrappers[id],pointwiseDispatchMT)
     end
     return inputWrappers[id]
@@ -1378,7 +1474,7 @@ function darkroom.terracompiler.allocateImageWrappers(
         -- make the output
         if parentIsOutput(n)~=nil then
           outputs[n] = {}
-          for c=1,n.kernel.type:channels() do outputs[n][c] = newImageWrapper( channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType()), n.kernel.type:baseType(), upToNearest(options.V, options.width), options.debug) end
+          for c=1,n.kernel.type:channels() do outputs[n][c] = newImageWrapper( channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType()), n.kernel.type:baseType(), upToNearest(options.V, imageSize(options.width,n.kernel.scaleN1,n.kernel.scaleD1)), options.debug, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2) end
           setmetatable(outputs[n],pointwiseDispatchMT)
         else
           outputs[n] = {}
@@ -1388,9 +1484,13 @@ function darkroom.terracompiler.allocateImageWrappers(
               n:bufferSize(kernelGraph), 
               n.kernel.type:baseType(),
               downToNearest(options.V, neededStencil(true,kernelGraph,n, shifts):min(1)), -- use the more conservative stencil
-              stripWidth(options),
+              stripWidth(options, n.kernel.scaleN1, n.kernel.scaleD1),
               upToNearest(options.V, neededStencil(true,kernelGraph,n, shifts):max(1)),
-              options.debug)
+              options.debug,
+              n.kernel.scaleN1, 
+              n.kernel.scaleD1,
+              n.kernel.scaleN2, 
+              n.kernel.scaleD2)
 
             linebufferSize = linebufferSize + outputs[n][c]:allocateSize()
           end
@@ -1408,12 +1508,14 @@ function darkroom.terracompiler.compile(
     inputImages,
     taps,
     shifts,
+    largestScaleY,
     options)
 
   if darkroom.verbose then print("compile") end
   assert(darkroom.kernelGraph.isKernelGraph(kernelGraph))
   assert(type(inputImages)=="table")
   assert(type(taps)=="table")
+  assert(type(largestScaleY)=="number")
   assert(type(options)=="table")
 
   -- make symbols for the input images
@@ -1449,7 +1551,7 @@ function darkroom.terracompiler.compile(
   end
   marshalBytes = marshalBytes + terralib.sizeof(TapStruct)
 
-  local threadCode = darkroom.terracompiler.codegenThread( kernelGraph, inputImages, TapStruct, shifts, options )
+  local threadCode = darkroom.terracompiler.codegenThread( kernelGraph, inputImages, TapStruct, shifts, largestScaleY, options )
   --threadCode:printpretty(false)
 
   local fin = terra([inputImageSymbolTable], [outputImageSymbolTable], tapsIn : &opaque)
@@ -1471,7 +1573,7 @@ function darkroom.terracompiler.compile(
         @[&TapStruct](stripStorePtr) = @taps
         threadCode(&stripStore)
       else
-        for i=0,options.cores do
+        for i=1,options.cores do
           @([&int32](&stripStore[i*marshalBytes])) = i -- core ID
           var [stripStorePtr] = [&&opaque](&stripStore[i*marshalBytes+4])
           marshalInputs

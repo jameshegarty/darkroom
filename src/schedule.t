@@ -76,12 +76,16 @@ function shift(graph, shifts, HWWidth)
 
                   r.relX = synthRel(r.relX, n.translate1):optimize()
                   r.relY = synthRel(r.relY, n.translate2):optimize()
+                  r.scaleN1 = n.scaleN1
+                  r.scaleN2 = n.scaleN2
+                  r.scaleD1 = n.scaleD1
+                  r.scaleD2 = n.scaleD2
 
                   if type(nn.from)=="table" then r.from = oldToNewRemap[nn.from]; assert(r.from~=nil) end
                   return darkroom.typedAST.new(r):copyMetadataFrom(nn)
                 elseif nn.kind=="position" then
 
-                  local res = {kind="binop", lhs=nn, type = nn.type, op="+"}
+                  local res = {kind="binop", lhs=nn, type = nn.type, op="+", scaleN1=nn.scaleN1, scaleD1=nn.scaleD1, scaldN2=nn.scaleN2, scaleD2=nn.scaleD2}
 
                   if nn.coord=="x" then
                     res.rhs = darkroom.typedAST._toTypedAST(n.translate1)
@@ -102,6 +106,7 @@ function shift(graph, shifts, HWWidth)
         newKernelGraphNode.kernel = newKernelGraphNode.kernel:S(function(n) return n.kind=="load" or n.kind=="crop" or n.kind=="position" end):process(
           function(nn)
             if nn.kind=="load" then
+
               if type(nn.from)=="table" then
                 local r = nn:shallowcopy()
                 
@@ -117,6 +122,7 @@ function shift(graph, shifts, HWWidth)
                 end
 
                 if type(nn.from)=="table" then r.from = oldToNewRemap[nn.from]; assert(r.from~=nil) end
+
                 return darkroom.typedAST.new(r):copyMetadataFrom(nn)
               end
             elseif nn.kind=="crop" then

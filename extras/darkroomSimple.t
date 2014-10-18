@@ -285,12 +285,15 @@ function orionSimple.compile(outList, options)
     -- we have to do this here, because it has to follow typechecking (we don't know the types until compile has happened)
     for k,v in kernelGraph:inputs() do
       local s = symbol(Image)
+      local w = imageSize(width,v.kernel.scaleN1,v.kernel.scaleD1)
+      local h = imageSize(height,v.kernel.scaleN2,v.kernel.scaleD2)
+
       table.insert(outDecl,
         quote 
           var [s] 
           var data : &opaque
-          cstdlib.posix_memalign( [&&opaque](&data), 4*1024, [upToNearest(options.V,width)*height*v.kernel.type:sizeof()])
-          s:init([width],[height],[upToNearest(options.V,width)],[v.kernel.type:channels()],[v.kernel.type:baseType():sizeof()]*8,[v.kernel.type:isFloat()],[v.kernel.type:isInt()],true,data,data)
+          cstdlib.posix_memalign( [&&opaque](&data), 4*1024, [upToNearest(options.V,w)*h*v.kernel.type:sizeof()])
+          s:init([w],[h],[upToNearest(options.V,w)],[v.kernel.type:channels()],[v.kernel.type:baseType():sizeof()]*8,[v.kernel.type:isFloat()],[v.kernel.type:isInt()],true,data,data)
         end)
       table.insert(outRes, quote s:toAOS() in s end)
       table.insert(outArgs, `s.data)

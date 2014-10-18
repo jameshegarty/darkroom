@@ -571,7 +571,7 @@ function typedASTPrintPrettys(root)
     local i=1
     while self["translate"..i] do
       -- translate is either a number or an AST
-      out = out..darkroom.dimToCoord[i].."*"..self["scale"..i].."+"..astPrintPrettys(self["translate"..i], root, assignments)
+      out = out..darkroom.dimToCoord[i].."*("..self["scaleD"..i].."/"..self["scaleN"..i]..")+"..astPrintPrettys(self["translate"..i], root, assignments)
       if self["translate"..(i+1)] then out = out.."," end
       i=i+1
     end
@@ -704,7 +704,8 @@ function kernelGraphPrintPretty(root)
                      print("(OUTPUT NODE)")
                      node:map("child",function(n) print(n:name()) end)
                    else
-                   typedASTPrintPretty(node.kernel)
+                     print("scale: ",node.kernel.scaleN1.."/"..node.kernel.scaleD1, node.kernel.scaleN2.."/"..node.kernel.scaleD2)
+                     typedASTPrintPretty(node.kernel)
                    end
                  end)
 end

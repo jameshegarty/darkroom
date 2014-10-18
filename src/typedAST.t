@@ -19,7 +19,7 @@ return false
   expr:S("*"):traverse( 
     function(n)
       if expr.kind=="binop" then
-        if expr.op~="+" and expr.op~="-" then
+        if expr.op~="+" and expr.op~="-" and expr.op~="*" and expr.op~="/" then
           darkroom.error("binop '"..expr.op.."' is not supported in an constant expr")
         end
       elseif expr.kind=="value" then
@@ -59,14 +59,22 @@ return nil
   local pos
   local mulCount = 0
   local addCount = 0
-  ast:S("position"):traverse(function(n) pos = n end)
-  while pos:parentCount(ast) > 0 do
-    for k,_ in pos:parents(ast) do pos = k end
-    if pos.kind=="binop" and (pos.op=="+" or pos.op=="-") then addCount = addCount+1
-    elseif pos.kind=="binop" and (pos.op=="*" or pos.op=="/") then mulCount = mulCount+1
-    else print(pos.kind,pos.op);assert(false) end
+
+  local multN = 1
+  local multD = 1
+  ast:S("position"):traverse(function(n) assert(pos==nil); pos = n end)
+
+  for n,k in pos:parents(ast) do 
+    if n.kind=="binop" and (n.op=="+" or n.op=="-") then addCount = addCount+1
+    elseif n.kind=="binop" and (n.op=="*" or n.op=="/") then
+      assert(mulCount==0); mulCount=1
+      if n.op=="*" and k=="lhs" then assert(n.rhs.kind=="value"); multN = n.rhs.value 
+      elseif n.op=="*" and k=="rhs" then assert(n.lhs.kind=="value"); multN = n.lhs.value 
+      elseif n.op=="/" and k=="lhs" then assert(n.rhs.kind=="value"); multD = n.rhs.value 
+      elseif n.op=="/" and k=="rhs" then assert(n.lhs.kind=="value"); multD = n.lhs.value 
+      else assert(false) end
+    else print(n.kind,n.op);assert(false) end
   end
-  assert(mulCount==0)
 
   -- cheap hack, since the path from the position to the root is just a bunch of adds,
   -- we can get the translation by setting the position to 0
@@ -77,7 +85,8 @@ return nil
       end
     end)
   assert(translate:S("position"):count()==0)
-  return translate:optimize(), 1
+
+  return translate:optimize(), multN, multD
 end
 
 -- the translate operator can take a few different arguments as translations
@@ -201,16 +210,33 @@ end
 
 function darkroom.typedAST._toTypedAST(inast)
 
+  local largestScaleN = {1,1}
+  local largestScaleD = {1,1}
+
   local res = inast:visitEach(
     function(origast,inputs)
       assert(darkroom.ast.isAST(origast))
       local ast = origast:shallowcopy()
+
+      if ast.kind~="transform" then
+        for k,v in pairs(inputs) do
+          for i=1,2 do
+            if ast["scaleN"..i]==nil or ast["scaleN"..i]==0 then ast["scaleN"..i] = v[1]["scaleN"..i] end
+            if ast["scaleD"..i]==nil or ast["scaleD"..i]==0 then ast["scaleD"..i] = v[1]["scaleD"..i] end
+            if (ast["scaleN"..i]~=v[1]["scaleN"..i] or ast["scaleD"..i]~=v[1]["scaleD"..i]) and v[1]["scaleN"..i]~=0 then
+              print("kind",ast.kind,"i",i,"key",k,"scaleN_this",ast["scaleN"..i],"scaleN_input",v[1]["scaleN"..i],ast["scaleD"..i],v[1]["scaleD"..i])
+              darkroom.error("Operations can only be applied to images that are the same size.",origast:linenumber(), origast:offset(), origast:filename())
+            end
+          end
+        end
+      end
 
       if ast.kind=="value" then
         if ast.type==nil then ast.type=darkroom.type.valueToType(ast.value) end
         if ast.type==nil then
           darkroom.error("Internal error, couldn't convert "..tostring(ast.value).." to orion type", origast:linenumber(), origast:offset(), origast:filename() )
         end
+        ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
       elseif ast.kind=="unary" then
         ast.expr = inputs["expr"][1]
         
@@ -289,6 +315,7 @@ function darkroom.typedAST._toTypedAST(inast)
         -- if position is still in the tree at this point, it means it's being used in an expression somewhere
         -- choose a reasonable type...
         ast.type=darkroom.type.int(32)
+        ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
       elseif ast.kind=="select" or ast.kind=="vectorSelect" then
         local cond = inputs["cond"][1]
         local a = inputs["a"][1]
@@ -380,16 +407,17 @@ function darkroom.typedAST._toTypedAST(inast)
         local i=1
         while ast["arg"..i] do
           -- if we got here we can assume it's valid
-          local translate,scale=darkroom.typedAST.synthOffset( origast["arg"..i], darkroom.dimToCoord[i])
+          local translate,multN, multD=darkroom.typedAST.synthOffset( origast["arg"..i], darkroom.dimToCoord[i])
 
           if translate==nil then
             darkroom.error("Error, non-stencil access pattern", origast:linenumber(), origast:offset(), origast:filename())
           end
 
           newtrans["translate"..i]=translate
-          newtrans["scale"..i]=scale
+          newtrans["scaleN"..i]=multD
+          newtrans["scaleD"..i]=multN
 
-          if translate~=0 or scale~=1 then noTransform = false end
+          if translate~=0 or multD~=1 or multN~=1 then noTransform = false end
           i=i+1
         end
         
@@ -501,6 +529,7 @@ function darkroom.typedAST._toTypedAST(inast)
 --        ast.type = darkroom.type.meet(ast.low.type,ast.high.type,"mapreducevar", origast)
       elseif ast.kind=="tap" then
         -- taps should be tagged with type already
+        ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
       elseif ast.kind=="tapLUTLookup" then
         ast.index = inputs["index"][1]
         
@@ -556,6 +585,7 @@ function darkroom.typedAST._toTypedAST(inast)
         end
       elseif ast.kind=="load" then
         -- already has a type
+        ast.scaleN1=1; ast.scaleD1=1; ast.scaleN2=1; ast.scaleD2=1;
       elseif ast.kind=="mapreduce" then
         if ast.reduceop=="sum" or ast.reduceop=="max" or ast.reduceop=="min" then
           ast.type = inputs.expr[1].type
@@ -596,11 +626,18 @@ function darkroom.typedAST._toTypedAST(inast)
       if darkroom.type.isType(ast.type)==false then print(ast.kind) end
       ast = darkroom.typedAST.new(ast):copyMetadataFrom(origast)
       assert(darkroom.type.isType(ast.type))
+      for i=1,2 do 
+        if type(ast["scaleN"..i])~="number" or type(ast["scaleD"..i])~="number" then print("missingrate",ast.kind); assert(false) end 
+        if (ast["scaleN"..i]/ast["scaleD"..i])>(largestScaleN[i]/largestScaleD[i]) then largestScaleN[i] = ast["scaleN"..i]; largestScaleD[i] = ast["scaleD"..i]; end
+      end
 
       return {ast}
     end)
 
-  return res[1], res[2]
+  -- it shoulden't be possible for the largest scale to be fractional
+  for i=1,2 do assert(largestScaleD[i]==1) end
+
+  return res[1], largestScaleN[1], largestScaleN[2]
 end
 
 function darkroom.typedAST.astToTypedAST(ast, options)
@@ -681,13 +718,13 @@ function darkroom.typedAST.astToTypedAST(ast, options)
     print("_toTypedAST",collectgarbage("count"))
   end
 
-  local typedAST = darkroom.typedAST._toTypedAST(ast)
+  local typedAST, largestScaleX, largestScaleY = darkroom.typedAST._toTypedAST(ast)
 
   if options.verbose or options.printstage then
     print("conversion to typed AST done ------------")
   end
 
-  return typedAST
+  return typedAST, largestScaleX, largestScaleY
 end
 
 

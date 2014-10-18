@@ -47,6 +47,12 @@ function astFunctions:optimize()
         return n.rhs
       elseif n.kind=="binop" and n.op=="+" and n.rhs.kind=="value" and n.rhs.value==0 then
         return n.lhs
+      elseif n.kind=="binop" and n.op=="*" and n.rhs.kind=="value" and n.rhs.value==0 then
+        return n.rhs
+      elseif n.kind=="binop" and n.op=="*" and n.lhs.kind=="value" and n.lhs.value==0 then
+        return n.lhs
+      elseif n.kind=="binop" and n.op=="/" and n.lhs.kind=="value" and n.lhs.value==0 then
+        return n.lhs
       end
     end)
 
