@@ -1153,16 +1153,19 @@ function neededStripRelative(kernelGraph, kernelNode, strip, shifts, largestScal
 
   return {left = `interiorSelectLeft(strip,[neededStencil( true, kernelGraph, kernelNode, shifts):min(1)], [neededStencil( false, kernelGraph, kernelNode, shifts):min(1)]),
           right = `interiorSelectRight(strip,[options.stripcount],[neededStencil( true, kernelGraph, kernelNode, shifts):max(1)],[neededStencil( false, kernelGraph, kernelNode, shifts):max(1)]),
-          top = `[options.height*largestScaleY]+[neededStencil( false, kernelGraph, kernelNode, shifts):max(2)],
+          top = `[neededStencil( false, kernelGraph, kernelNode, shifts):max(2)],
           bottom = `[neededStencil( false, kernelGraph, kernelNode, shifts):min(2)]}
 end
 
 function needed(kernelGraph, kernelNode, strip, shifts, largestScaleY, options)
   assert(type(kernelGraph)=="table");assert(type(kernelNode)=="table");assert(type(shifts)=="table");assert(type(largestScaleY)=="number");assert(type(options)=="table");
   local nsr = neededStripRelative(kernelGraph, kernelNode, strip, shifts, largestScaleY, options)
+
+  local scale = looprate(kernelNode.kernel.scaleN2,kernelNode.kernel.scaleD2,largestScaleY)
+
   return {left = `[stripLeft(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+[nsr.left],
           right = `[stripRight(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+[nsr.right],
-          top = nsr.top, bottom = nsr.bottom}
+          top = `[nsr.top]*[scale]+[options.height*largestScaleY], bottom = `[nsr.bottom]*[scale]}
 end
 
 function valid(kernelGraph, kernelNode, strip, shifts, largestScaleY, options)
@@ -1262,14 +1265,14 @@ return
           -- we use image space needed region here b/c These are the actual pixel coords we will write to
           -- since all image accesses use relative coordinates, This doesn't cause problems
           [inputs[n]:declare( loopid, neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, options, linebufferBase ) ];
-          [outputs[n]:declare( loopid, neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, options, linebufferBase ) ];
+          [outputs[n]:declare( loopid, neededImageSpace.left, neededImageSpace.bottom, neededStripRelative.bottom, core, strip, options, linebufferBase ) ];
           
           if options.verbose then
             cstdio.printf("--- %s V %d cores %d core %d shift %d\n",[n.kernel:name()],options.V, options.cores, strip, [shifts[n]])
             cstdio.printf("valid l %d r %d t %d b %d\n",[valid.left],[valid.right],[valid.top],[valid.bottom])
             cstdio.printf("validVectorized l %d r %d t %d b %d\n",[validVectorized.left],[validVectorized.right],[validVectorized.top],[validVectorized.bottom])
             cstdio.printf("needed l %d r %d t %d b %d\n",[needed.left],[needed.right],[needed.top],[needed.bottom])
-            cstdio.printf("needed image space l %d r %d t %d b %d\n",[neededImageSpace.left],[neededImageSpace.right],[neededImageSpace.top],[neededImageSpace.bottom])
+            cstdio.printf("needed image space strip relative l %d r %d t %d b %d\n",[neededImageSpace.left],[neededImageSpace.right],[neededImageSpace.top],[neededImageSpace.bottom])
           end
         end)
 
@@ -1277,7 +1280,7 @@ return
 
       table.insert(loopCode,
         quote
-          if clock >= [needed.bottom] and clock < [needed.top] and (clock % [looprate(n.kernel.scaleN2,n.kernel.scaleD2,largestScaleY)] == 0 or [n.kernel.scaleD2]==0) then
+          if clock >= [needed.bottom] and clock < [needed.top] and (fixedModulus(clock,[looprate(n.kernel.scaleN2,n.kernel.scaleD2,largestScaleY)]) == 0 or [n.kernel.scaleD2]==0) then
             if clock < [valid.bottom] or clock >= [valid.top]  then
               -- top/bottom row(s) (all boundary)
               -- theoretically we could do some of this vectorized, but it shouldn't really matter
@@ -1396,8 +1399,9 @@ function darkroom.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, sh
   kernelGraph:S("*"):traverse(
     function(n)
       if n.kernel~=nil then
-        local a = neededStencil(false, kernelGraph,n, shifts):max(2)
-        local b = neededStencil(false, kernelGraph,n, shifts):min(2)
+        local scale = looprate( n.kernel.scaleN2, n.kernel.scaleD2, largestScaleY)
+        local a = neededStencil(false, kernelGraph,n, shifts):max(2)*scale
+        local b = neededStencil(false, kernelGraph,n, shifts):min(2)*scale
         if a > endClock then endClock=a end
         if b<startClock then startClock=b end
       end

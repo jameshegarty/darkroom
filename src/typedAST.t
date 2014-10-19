@@ -414,8 +414,8 @@ function darkroom.typedAST._toTypedAST(inast)
           end
 
           newtrans["translate"..i]=translate
-          newtrans["scaleN"..i]=multD
-          newtrans["scaleD"..i]=multN
+          newtrans["scaleN"..i]=multD*ast.expr["scaleN"..i]
+          newtrans["scaleD"..i]=multN*ast.expr["scaleD"..i]
 
           if translate~=0 or multD~=1 or multN~=1 then noTransform = false end
           i=i+1
