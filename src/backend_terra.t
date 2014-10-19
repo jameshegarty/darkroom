@@ -177,13 +177,17 @@ function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightS
 end
 
 
-function LineBufferWrapperFunctions:declare( loopid, x, y, clock, core, stripId, linebufferBase )
+function LineBufferWrapperFunctions:declare( loopid, xStripRelative, y, clock, core, stripId, options, linebufferBase )
   assert(type(loopid)=="number")
-  assert(terralib.isquote(x) or terralib.issymbol(x))
+  assert(terralib.isquote(xStripRelative) or terralib.issymbol(xStripRelative))
   assert(terralib.isquote(y) or terralib.issymbol(y)) -- we don't actually use this - we don't care what the actual coord is
   assert(terralib.isquote(clock) or terralib.issymbol(clock))
   assert(terralib.isquote(core) or terralib.issymbol(core))
   assert(terralib.issymbol(stripId))
+  assert(terralib.issymbol(linebufferBase))
+  assert(type(options)=="table")
+
+  local x = `[stripLeft( stripId, options, self.scaleN1, self.scaleD1)]+xStripRelative
 
   local res = {}
 
@@ -396,13 +400,16 @@ function newImageWrapper( basePtr, orionType, stride, debug, scaleN1, scaleD1, s
   return setmetatable(tab,ImageWrapperMT)
 end
 
-function ImageWrapperFunctions:declare( loopid, x, y, clock, core, stripId )
+function ImageWrapperFunctions:declare( loopid, xStripRelative, y, clock, core, stripId, options )
   assert(type(loopid)=="number")
-  assert(terralib.isquote(x) or terralib.issymbol(x))
+  assert(terralib.isquote(xStripRelative) or terralib.issymbol(xStripRelative))
   assert(terralib.isquote(y) or terralib.issymbol(y))
   assert(terralib.isquote(clock) or terralib.issymbol(clock)) -- not used
   assert(terralib.isquote(core) or terralib.issymbol(core))
   assert(terralib.isquote(stripId) or terralib.issymbol(stripId))
+  assert(type(options)=="table")
+
+  local x = `[stripLeft( stripId, options, self.scaleN1, self.scaleD1)]+xStripRelative
 
   if self.data[loopid]==nil then self.data[loopid] = symbol(&(self.orionType:toTerraType())) end
   return quote var [self.data[loopid]] =  [&self.orionType:toTerraType()]([self.basePtr] + y*[self.stride] + x) end
@@ -1141,13 +1148,21 @@ terra interiorSelectRight(strip : int, stripcount : int, interiorValue : int, ex
   return interiorValue
 end
 
-function needed(kernelGraph, kernelNode, strip, shifts, largestScaleY, options)
+function neededStripRelative(kernelGraph, kernelNode, strip, shifts, largestScaleY, options)
   assert(type(kernelGraph)=="table");assert(type(kernelNode)=="table");assert(type(shifts)=="table");assert(type(largestScaleY)=="number");assert(type(options)=="table");
 
-  return {left = `[stripLeft(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+interiorSelectLeft(strip,[neededStencil( true, kernelGraph, kernelNode, shifts):min(1)], [neededStencil( false, kernelGraph, kernelNode, shifts):min(1)]),
-          right = `[stripRight(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+interiorSelectRight(strip,[options.stripcount],[neededStencil( true, kernelGraph, kernelNode, shifts):max(1)],[neededStencil( false, kernelGraph, kernelNode, shifts):max(1)]),
+  return {left = `interiorSelectLeft(strip,[neededStencil( true, kernelGraph, kernelNode, shifts):min(1)], [neededStencil( false, kernelGraph, kernelNode, shifts):min(1)]),
+          right = `interiorSelectRight(strip,[options.stripcount],[neededStencil( true, kernelGraph, kernelNode, shifts):max(1)],[neededStencil( false, kernelGraph, kernelNode, shifts):max(1)]),
           top = `[options.height*largestScaleY]+[neededStencil( false, kernelGraph, kernelNode, shifts):max(2)],
           bottom = `[neededStencil( false, kernelGraph, kernelNode, shifts):min(2)]}
+end
+
+function needed(kernelGraph, kernelNode, strip, shifts, largestScaleY, options)
+  assert(type(kernelGraph)=="table");assert(type(kernelNode)=="table");assert(type(shifts)=="table");assert(type(largestScaleY)=="number");assert(type(options)=="table");
+  local nsr = neededStripRelative(kernelGraph, kernelNode, strip, shifts, largestScaleY, options)
+  return {left = `[stripLeft(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+[nsr.left],
+          right = `[stripRight(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+[nsr.right],
+          top = nsr.top, bottom = nsr.bottom}
 end
 
 function valid(kernelGraph, kernelNode, strip, shifts, largestScaleY, options)
@@ -1234,18 +1249,20 @@ return
       -- requested y=[0,n] of a function shifted by s, then neededY=[s,n+s]. As a result, this implementation
       -- closely resembles hardware that produces 1 line per clock. 
 
+      local neededStripRelative, neededStripRelativeStat = memo("neededStripRelative",neededStripRelative( kernelGraph, n, strip, shifts, largestScaleY, options )) -- clock space
       local needed, neededStat = memo("needed",needed( kernelGraph, n, strip, shifts, largestScaleY, options )) -- clock space
-      local neededImageSpace, neededImageSpaceStat = memo("neededImageSpace",shiftRegion( needed, -shifts[n] ))
+      local neededImageSpace, neededImageSpaceStat = memo("neededImageSpace",shiftRegion( neededStripRelative, -shifts[n] ))
+--      local neededImageSpace, neededImageSpaceStat = memo("neededImageSpace",shiftRegion( needed, -shifts[n] ))
       local valid, validStat = memo("valid",valid( kernelGraph, n, strip, shifts, largestScaleY, options ))
       local validVectorized, validVectorizedStat = memo("validVectorized",vectorizeRegion(valid, options.V)) -- always >= valid to the nearest vector width
 
       table.insert(loopStartCode,
         quote
-          neededStat; neededImageSpaceStat; validStat; validVectorizedStat;
+          neededStripRelativeStat; neededStat; neededImageSpaceStat; validStat; validVectorizedStat;
           -- we use image space needed region here b/c These are the actual pixel coords we will write to
           -- since all image accesses use relative coordinates, This doesn't cause problems
-          [inputs[n]:declare( loopid, neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, linebufferBase ) ];
-          [outputs[n]:declare( loopid, neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, linebufferBase ) ];
+          [inputs[n]:declare( loopid, neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, options, linebufferBase ) ];
+          [outputs[n]:declare( loopid, neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, options, linebufferBase ) ];
           
           if options.verbose then
             cstdio.printf("--- %s V %d cores %d core %d shift %d\n",[n.kernel:name()],options.V, options.cores, strip, [shifts[n]])
@@ -1573,7 +1590,7 @@ function darkroom.terracompiler.compile(
         @[&TapStruct](stripStorePtr) = @taps
         threadCode(&stripStore)
       else
-        for i=1,options.cores do
+        for i=0,options.cores do
           @([&int32](&stripStore[i*marshalBytes])) = i -- core ID
           var [stripStorePtr] = [&&opaque](&stripStore[i*marshalBytes+4])
           marshalInputs
