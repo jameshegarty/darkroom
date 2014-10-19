@@ -36,6 +36,7 @@ function strideMod(downsampleStride, upsampleStride, clock)
   elseif downsampleStride==1 then
     return `terralib.select(clock % upsampleStride==(upsampleStride-1), 1, 0)
   else
+    print(downsampleStride, upsampleStride, clock)
     assert(false)
   end
 
@@ -62,6 +63,8 @@ end
 function calculateStride(producerN, producerD, consumerN, consumerD)
   if consumerN==nil or (producerN==0 and producerD==0 and consumerN==0 and consumerD==0) then return 1,1 end
   if producerN==0 and producerD==0 then producerN=1; producerD=1 end
+  producerN, producerD = ratioFactor(producerN, producerD)
+  consumerN, consumerD = ratioFactor(consumerN, consumerD)
   if producerN==consumerN then
     -- a downsample
     assert(consumerD>=producerD)
@@ -348,31 +351,33 @@ end
 
 -- sub: this is the number of pixels we looped over since last calling nextline
 -- basically: the number of times we called nextVector this row * the vector width
-function LineBufferWrapperFunctions:nextLine(loopid,  sub, clock, consumerScaleN2, consumerScaleD2)
+function LineBufferWrapperFunctions:nextLine(loopid,  sub, clock, consumerScaleN1, consumerScaleD1, consumerScaleN2, consumerScaleD2)
   assert(terralib.isquote(sub))
-
+  if clock~=nil then assert(type(consumerScaleN1)=="number");assert(type(consumerScaleD1)=="number");assert(type(consumerScaleN2)=="number");assert(type(consumerScaleD2)=="number"); end
   local res = {}
 
   local buf = {self.iv[loopid]}
   local base = {self.base}
   local bufType = {self.orionType:toTerraType()}
 
-  local downsampleStride, upsampleStride = calculateStride(self.scaleN2, self.scaleD2, consumerScaleN2, consumerScaleD2)
-  local stride = strideMod(downsampleStride, upsampleStride, clock)
+  local downsampleStrideY, upsampleStrideY = calculateStride(self.scaleN2, self.scaleD2, consumerScaleN2, consumerScaleD2)
+  local strideY = strideMod(downsampleStrideY, upsampleStrideY, clock)
+
+  local downsampleStrideX, upsampleStrideX = calculateStride(self.scaleN1, self.scaleD1, consumerScaleN1, consumerScaleD1)
 
   if self.debug then
     buf = {self.iv[loopid], self.ivDebugX[loopid], self.ivDebugY[loopid], self.ivDebugId[loopid]}
     base = {self.base, self.baseDebugX, self.baseDebugY, self.baseDebugId}
     bufType = {self.orionType:toTerraType(),int,int,int}
 
-    table.insert(res, quote [self.posY[loopid]] = [self.posY[loopid]] + stride end)
-    table.insert(res, quote [self.posX[loopid]] = [self.posX[loopid]] - sub end)
+    table.insert(res, quote [self.posY[loopid]] = [self.posY[loopid]] + strideY end)
+    table.insert(res, quote [self.posX[loopid]] = [self.posX[loopid]] - sub*[downsampleStrideX] end)
   end
 
   for k,v in pairs(buf) do
     table.insert(res, 
       quote 
-        [buf[k]] = [buf[k]] - sub + [self:lineWidth()]*stride
+        [buf[k]] = [buf[k]] - (sub*[downsampleStrideX]) + [self:lineWidth()]*strideY
         if [buf[k]] >= [base[k]]+[self:modularSize(bufType[k])*2] then [buf[k]] = [buf[k]] - [self:modularSize(bufType[k])] end
       end)
   end
@@ -492,10 +497,12 @@ end
 
 -- sub: this is the number of pixels we looped over since last calling nextline
 -- basically: the number of times we called nextVector this row * the vector width
-function ImageWrapperFunctions:nextLine(loopid, sub, clock, consumerScaleN2, consumerScaleD2)
+function ImageWrapperFunctions:nextLine(loopid, sub, clock, consumerScaleN1, consumerScaleD1, consumerScaleN2, consumerScaleD2)
   assert(terralib.isquote(sub))
-  local downsampleStride, upsampleStride = calculateStride(self.scaleN2, self.scaleD2, consumerScaleN2, consumerScaleD2)
-  return quote [self.data[loopid]] = [self.data[loopid]] + [self.stride]*[strideMod(downsampleStride,upsampleStride,clock)] - sub end
+  if clock~=nil then assert(type(consumerScaleN1)=="number");assert(type(consumerScaleD1)=="number");assert(type(consumerScaleN2)=="number");assert(type(consumerScaleD2)=="number"); end
+  local downsampleStrideY, upsampleStrideY = calculateStride(self.scaleN2, self.scaleD2, consumerScaleN2, consumerScaleD2)
+  local downsampleStrideX, upsampleStrideX = calculateStride(self.scaleN1, self.scaleD1, consumerScaleN1, consumerScaleD1)
+  return quote [self.data[loopid]] = [self.data[loopid]] + [self.stride]*[strideMod(downsampleStrideY,upsampleStrideY,clock)] - (sub*[downsampleStrideX]) end
 end
 
 
@@ -1288,15 +1295,15 @@ return
               for [x] = [needed.left], [needed.right] do
                 [outputs[n]:set( loopid, boundary(n), 1 )];
                 [outputs[n]:next( loopid, 1 )];
-                [inputs[n]:next( loopid, 1 )];
+                [inputs[n]:next( loopid, 1, n.kernel.scaleN1, n.kernel.scaleD1 )];
               end
               [outputs[n]:nextLine( loopid, `[needed.right]-[needed.left])];
-              [inputs[n]:nextLine( loopid, `[needed.right]-[needed.left], clock, n.kernel.scaleN2, n.kernel.scaleD2)];
+              [inputs[n]:nextLine( loopid, `[needed.right]-[needed.left], clock, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2)];
             else
               -- interior row(s), mixed boundary and calculated region
 
               [outputs[n]:next( loopid, `validVectorized.left-needed.left )];
-              [inputs[n]:next( loopid, `validVectorized.left-needed.left )];
+              [inputs[n]:next( loopid, `validVectorized.left-needed.left, n.kernel.scaleN1, n.kernel.scaleD1 )];
 
               for [x] = validVectorized.left, validVectorized.right, options.V do
                 statements;
@@ -1312,20 +1319,20 @@ return
               for [x] = needed.left, valid.left do
                 [outputs[n]:set( loopid, boundary(n), 1 )];
                 [outputs[n]:next( loopid, 1 )];
-                [inputs[n]:next( loopid, 1 )];
+                [inputs[n]:next( loopid, 1, n.kernel.scaleN1, n.kernel.scaleD1 )];
               end
 
               [outputs[n]:next( loopid, `valid.right-valid.left )];
-              [inputs[n]:next( loopid, `valid.right-valid.left )];
+              [inputs[n]:next( loopid, `valid.right-valid.left, n.kernel.scaleN1, n.kernel.scaleD1 )];
               
               for [x] = valid.right, needed.right do
                 [outputs[n]:set( loopid, boundary(n), 1 )];
                 [outputs[n]:next( loopid, 1 )];
-                [inputs[n]:next( loopid, 1 )];
+                [inputs[n]:next( loopid, 1, n.kernel.scaleN1, n.kernel.scaleD1 )];
               end
           
               [outputs[n]:nextLine( loopid, `needed.right-needed.left)];
-              [inputs[n]:nextLine( loopid, `needed.right-needed.left, clock, n.kernel.scaleN2, n.kernel.scaleD2)];
+              [inputs[n]:nextLine( loopid, `needed.right-needed.left, clock, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2)];
             end
           end
       end)

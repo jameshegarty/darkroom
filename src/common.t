@@ -274,3 +274,16 @@ function nearestPowerOf2(x)
   assert(math.log(r)/math.log(2) == math.ceil(math.log(r)/math.log(2)))
   return r
 end
+
+function gcd(a,b)
+  if b ~= 0 then
+    return gcd(b, a % b)
+  else
+    return math.abs(a)
+  end
+end
+
+function ratioFactor(a,b)
+  local g = gcd(a,b)
+  return a/g, b/g
+end

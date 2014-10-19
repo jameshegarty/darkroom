@@ -223,7 +223,9 @@ function darkroom.typedAST._toTypedAST(inast)
           for i=1,2 do
             if ast["scaleN"..i]==nil or ast["scaleN"..i]==0 then ast["scaleN"..i] = v[1]["scaleN"..i] end
             if ast["scaleD"..i]==nil or ast["scaleD"..i]==0 then ast["scaleD"..i] = v[1]["scaleD"..i] end
-            if (ast["scaleN"..i]~=v[1]["scaleN"..i] or ast["scaleD"..i]~=v[1]["scaleD"..i]) and v[1]["scaleN"..i]~=0 then
+            local n1,d1 = ratioFactor(ast["scaleN"..i],ast["scaleD"..i])
+            local n2,d2 = ratioFactor(v[1]["scaleN"..i],v[1]["scaleD"..i])
+            if (n1~=n2 or d1~=d2) and v[1]["scaleN"..i]~=0 then
               print("kind",ast.kind,"i",i,"key",k,"scaleN_this",ast["scaleN"..i],"scaleN_input",v[1]["scaleN"..i],ast["scaleD"..i],v[1]["scaleD"..i])
               darkroom.error("Operations can only be applied to images that are the same size.",origast:linenumber(), origast:offset(), origast:filename())
             end
