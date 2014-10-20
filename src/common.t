@@ -268,6 +268,14 @@ terra fixedModulus(a : int,b : int)
   return a % b
 end
 
+-- a/b
+-- makes it floor correctly with negative numbers:
+-- -7/7 = -1, -3/7=-1, -8/7 = -2
+-- assumes b is positive
+terra floorDivide(a : int, b: int)
+  return terralib.select(a<0, (a-b+1)/b, a/b)
+end
+
 function nearestPowerOf2(x)
   local r = math.pow(2, math.ceil(math.log(x)/math.log(2)))
   assert(r>=x)

@@ -83,6 +83,16 @@ function calculateStride(producerN, producerD, consumerN, consumerD)
   end
 end
 
+function scaledAbsolute(v,upsampleStride, downsampleStride)
+  assert(terralib.isquote(v) or terralib.issymbol(v))
+  if upsampleStride==1 and downsampleStride==1 then
+    return v
+  elseif downsampleStride==1 then
+    return `floorDivide(v,upsampleStride)
+  elseif upsampleStride==1 then
+    return `v*downsampleStride
+  end
+end
 -----------------------------------
 local vmIV = terralib.includecstring [[
 #include <stdio.h>
@@ -168,6 +178,12 @@ function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightS
                scaleD1=scaleD1,
                scaleN2=scaleN2,
                scaleD2=scaleD2,
+               downsampleStrideX={},
+               upsampleStrideX={},
+               downsampleStrideY={},
+               upsampleStrideY={},
+               readerPosX={}, -- the x,y of the kernel that's reading this image. Not necessarily the same as posX,posY with up/downsample!
+               readerPosY={},
                iv={}, 
                ivDebugX = {}, 
                ivDebugY={}, 
@@ -180,19 +196,30 @@ function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightS
 end
 
 
-function LineBufferWrapperFunctions:declare( loopid, xStripRelative, y, clock, core, stripId, options, linebufferBase )
+function LineBufferWrapperFunctions:declare( loopid, xStripRelative, y, readerClock, core, stripId, options, scaleN1, scaleD1, scaleN2, scaleD2,linebufferBase )
   assert(type(loopid)=="number")
   assert(terralib.isquote(xStripRelative) or terralib.issymbol(xStripRelative))
   assert(terralib.isquote(y) or terralib.issymbol(y)) -- we don't actually use this - we don't care what the actual coord is
-  assert(terralib.isquote(clock) or terralib.issymbol(clock))
+  assert(terralib.isquote(readerClock) or terralib.issymbol(readerClock))
   assert(terralib.isquote(core) or terralib.issymbol(core))
   assert(terralib.issymbol(stripId))
   assert(terralib.issymbol(linebufferBase))
   assert(type(options)=="table")
+  assert(type(scaleD2)=="number")
 
-  local x = `[stripLeft( stripId, options, self.scaleN1, self.scaleD1)]+xStripRelative
+  local readerX = `[stripLeft( stripId, options, scaleN1, scaleD1)]+xStripRelative
 
   local res = {}
+
+  self.downsampleStrideX[loopid], self.upsampleStrideX[loopid] = calculateStride(self.scaleN1, self.scaleD1, scaleN1, scaleD1)
+  self.downsampleStrideY[loopid], self.upsampleStrideY[loopid] = calculateStride(self.scaleN2, self.scaleD2, scaleN2, scaleD2)
+
+  if self.upsampleStrideX[loopid]>1 or self.debug then self.readerPosX[loopid] = symbol(int,"readerPosX"); table.insert(res, quote var [self.readerPosX[loopid]] = readerX; end) end
+  if self.upsampleStrideY[loopid]>1 or self.debug then self.readerPosY[loopid] = symbol(int,"readerPosY"); table.insert(res, quote var [self.readerPosY[loopid]] = readerClock; end) end
+
+  local x = `[stripLeft( stripId, options, self.scaleN1, self.scaleD1)]+[scaledAbsolute(xStripRelative, self.upsampleStrideX[loopid], self.downsampleStrideX[loopid])]
+
+  local clock = scaledAbsolute(readerClock, self.upsampleStrideY[loopid], self.downsampleStrideY[loopid])
 
   if self.iv[loopid]==nil then self.iv[loopid] = symbol(&self.orionType:toTerraType(),"iv") end
     
@@ -200,7 +227,7 @@ function LineBufferWrapperFunctions:declare( loopid, xStripRelative, y, clock, c
     if self.ivDebugX[loopid]==nil then self.ivDebugX[loopid] = symbol(&int,"ivDebugX") end
     if self.ivDebugY[loopid]==nil then self.ivDebugY[loopid] = symbol(&int,"ivDebugY") end
     if self.ivDebugId[loopid]==nil then self.ivDebugId[loopid] = symbol(&int,"ivDebugId") end
-    self.posX[loopid] = symbol(int,"posY")
+    self.posX[loopid] = symbol(int,"posX")
     self.posY[loopid] = symbol(int,"posY")
   end
 
@@ -315,7 +342,7 @@ function LineBufferWrapperFunctions:get(loopid, gather, relX,relY, V, validLeft,
                      -- because we expand out the valid region to the largest vector size (to save having to codegen the non-vectorized dangling region), 
                      -- some of the area we compute is garbage, and thus
                      -- will read invalid values (but we will overwrite it later so its ok). Bypass the debug checks on those regions.
-                     if [self.posX[loopid]]+i >= validLeft and [self.posX[loopid]]+i < validRight then
+                     if [self.readerPosX[loopid]]+i >= validLeft and [self.readerPosX[loopid]]+i < validRight then
                        orionAssert(@([self.ivDebugId[loopid]]+lrelY*[self:lineWidth()]+i+lrelX) == [self.id], "incorrect LB Id")
                        orionAssert(@([self.ivDebugY[loopid]]+lrelY*[self:lineWidth()]+i+lrelX) == [self.posY[loopid]]+lrelY, "incorrect LB Y") 
                        orionAssert(@([self.ivDebugX[loopid]]+lrelY*[self:lineWidth()]+i+lrelX) == [self.posX[loopid]]+i+lrelX, "incorrect LB X")
@@ -328,13 +355,12 @@ function LineBufferWrapperFunctions:get(loopid, gather, relX,relY, V, validLeft,
   return res
 end
 
-function LineBufferWrapperFunctions:next(loopid,v, consumerScaleN1, consumerScaleD1)
+function LineBufferWrapperFunctions:next(loopid,v)
   assert(type(loopid)=="number")
   assert(type(v)=="number" or terralib.isquote(v))
 
-  local downsampleStride, upsampleStride = calculateStride(self.scaleN1, self.scaleD1, consumerScaleN1, consumerScaleD1)
-
-  v = `(v*downsampleStride)/upsampleStride
+  local vorig = v
+  v = `(v*[self.downsampleStrideX[loopid]])
   local res = {}
 
   table.insert(res, quote [self.iv[loopid]] = [self.iv[loopid]] + v end)
@@ -346,24 +372,25 @@ function LineBufferWrapperFunctions:next(loopid,v, consumerScaleN1, consumerScal
     table.insert(res, quote [self.posX[loopid]] = [self.posX[loopid]] + v end)
   end
 
+  if self.debug then
+    table.insert(res, quote [self.readerPosX[loopid]] = [self.readerPosX[loopid]] + vorig end)
+  end
+
   return quote res end
 end
 
 -- sub: this is the number of pixels we looped over since last calling nextline
 -- basically: the number of times we called nextVector this row * the vector width
-function LineBufferWrapperFunctions:nextLine(loopid,  sub, clock, consumerScaleN1, consumerScaleD1, consumerScaleN2, consumerScaleD2)
+function LineBufferWrapperFunctions:nextLine(loopid,  sub)
   assert(terralib.isquote(sub))
-  if clock~=nil then assert(type(consumerScaleN1)=="number");assert(type(consumerScaleD1)=="number");assert(type(consumerScaleN2)=="number");assert(type(consumerScaleD2)=="number"); end
+
   local res = {}
 
   local buf = {self.iv[loopid]}
   local base = {self.base}
   local bufType = {self.orionType:toTerraType()}
 
-  local downsampleStrideY, upsampleStrideY = calculateStride(self.scaleN2, self.scaleD2, consumerScaleN2, consumerScaleD2)
-  local strideY = strideMod(downsampleStrideY, upsampleStrideY, clock)
-
-  local downsampleStrideX, upsampleStrideX = calculateStride(self.scaleN1, self.scaleD1, consumerScaleN1, consumerScaleD1)
+  local strideY = self.downsampleStrideY[loopid]
 
   if self.debug then
     buf = {self.iv[loopid], self.ivDebugX[loopid], self.ivDebugY[loopid], self.ivDebugId[loopid]}
@@ -371,13 +398,17 @@ function LineBufferWrapperFunctions:nextLine(loopid,  sub, clock, consumerScaleN
     bufType = {self.orionType:toTerraType(),int,int,int}
 
     table.insert(res, quote [self.posY[loopid]] = [self.posY[loopid]] + strideY end)
-    table.insert(res, quote [self.posX[loopid]] = [self.posX[loopid]] - sub*[downsampleStrideX] end)
+    table.insert(res, quote [self.posX[loopid]] = [self.posX[loopid]] - sub*[self.downsampleStrideX[loopid]] end)
+  end
+
+  if self.debug then
+    table.insert(res, quote [self.readerPosX[loopid]] = [self.readerPosX[loopid]] - sub end)
   end
 
   for k,v in pairs(buf) do
     table.insert(res, 
       quote 
-        [buf[k]] = [buf[k]] - (sub*[downsampleStrideX]) + [self:lineWidth()]*strideY
+        [buf[k]] = [buf[k]] - (sub*[self.downsampleStrideX[loopid]]) + [self:lineWidth()]*strideY
         if [buf[k]] >= [base[k]]+[self:modularSize(bufType[k])*2] then [buf[k]] = [buf[k]] - [self:modularSize(bufType[k])] end
       end)
   end
@@ -400,12 +431,12 @@ function newImageWrapper( basePtr, orionType, stride, debug, scaleN1, scaleD1, s
   assert(type(scaleN2)=="number")
   assert(type(scaleD2)=="number")
 
-  local tab = {data={},basePtr=basePtr,orionType=orionType, stride=stride, debug=debug, scaleN1=scaleN1, scaleD1=scaleD1, scaleN2=scaleN2, scaleD2=scaleD2}
+  local tab = {data={},basePtr=basePtr,orionType=orionType, stride=stride, debug=debug, scaleN1=scaleN1, scaleD1=scaleD1, scaleN2=scaleN2, scaleD2=scaleD2, downsampleStrideX={}, downsampleStrideY={}, upsampleStrideX={}, upsampleStrideY={}, readerPosX={}, readerPosY={}}
 
   return setmetatable(tab,ImageWrapperMT)
 end
 
-function ImageWrapperFunctions:declare( loopid, xStripRelative, y, clock, core, stripId, options )
+function ImageWrapperFunctions:declare( loopid, xStripRelative, y, clock, core, stripId, options, scaleN1, scaleD1, scaleN2, scaleD2 )
   assert(type(loopid)=="number")
   assert(terralib.isquote(xStripRelative) or terralib.issymbol(xStripRelative))
   assert(terralib.isquote(y) or terralib.issymbol(y))
@@ -413,8 +444,12 @@ function ImageWrapperFunctions:declare( loopid, xStripRelative, y, clock, core, 
   assert(terralib.isquote(core) or terralib.issymbol(core))
   assert(terralib.isquote(stripId) or terralib.issymbol(stripId))
   assert(type(options)=="table")
+  assert(type(scaleD2)=="number")
 
-  local x = `[stripLeft( stripId, options, self.scaleN1, self.scaleD1)]+xStripRelative
+  self.downsampleStrideX[loopid], self.upsampleStrideX[loopid] = calculateStride(self.scaleN1, self.scaleD1, scaleN1, scaleD1)
+  self.downsampleStrideY[loopid], self.upsampleStrideY[loopid] = calculateStride(self.scaleN2, self.scaleD2, scaleN2, scaleD2)
+
+  local x = `[stripLeft( stripId, options, self.scaleN1, self.scaleD1)]+[scaledAbsolute(xStripRelative, self.upsampleStrideX[loopid], self.downsampleStrideX[loopid])]
 
   if self.data[loopid]==nil then self.data[loopid] = symbol(&(self.orionType:toTerraType())) end
   return quote var [self.data[loopid]] =  [&self.orionType:toTerraType()]([self.basePtr] + y*[self.stride] + x) end
@@ -487,22 +522,17 @@ function ImageWrapperFunctions:get(loopid, gather, relX, relY, V)
   return expr
 end
 
-function ImageWrapperFunctions:next(loopid,v,  consumerScaleN1, consumerScaleD1)
+function ImageWrapperFunctions:next( loopid, v )
   assert(type(loopid)=="number")
   assert(type(v)=="number" or terralib.isquote(v))
-  local downsampleStride, upsampleStride = calculateStride(self.scaleN1, self.scaleD1, consumerScaleN1, consumerScaleD1)
-  v = `v*downsampleStride
-  return quote [self.data[loopid]] = [self.data[loopid]] + v end
+  return quote [self.data[loopid]] = [self.data[loopid]] + v*[self.downsampleStrideX[loopid]] end
 end
 
 -- sub: this is the number of pixels we looped over since last calling nextline
 -- basically: the number of times we called nextVector this row * the vector width
-function ImageWrapperFunctions:nextLine(loopid, sub, clock, consumerScaleN1, consumerScaleD1, consumerScaleN2, consumerScaleD2)
+function ImageWrapperFunctions:nextLine( loopid, sub )
   assert(terralib.isquote(sub))
-  if clock~=nil then assert(type(consumerScaleN1)=="number");assert(type(consumerScaleD1)=="number");assert(type(consumerScaleN2)=="number");assert(type(consumerScaleD2)=="number"); end
-  local downsampleStrideY, upsampleStrideY = calculateStride(self.scaleN2, self.scaleD2, consumerScaleN2, consumerScaleD2)
-  local downsampleStrideX, upsampleStrideX = calculateStride(self.scaleN1, self.scaleD1, consumerScaleN1, consumerScaleD1)
-  return quote [self.data[loopid]] = [self.data[loopid]] + [self.stride]*[strideMod(downsampleStrideY,upsampleStrideY,clock)] - (sub*[downsampleStrideX]) end
+  return quote [self.data[loopid]] = [self.data[loopid]] + [self.stride]*[self.downsampleStrideY[loopid]] - (sub*[self.downsampleStrideX[loopid]]) end
 end
 
 
@@ -1114,6 +1144,14 @@ function neededStencil( interior, kernelGraph, kernelNode, shifts)
     local s = Stencil.new()
       
     for node,k in kernelNode:parents(kernelGraph) do
+      local downsampleStrideX, upsampleStrideX
+      local downsampleStrideY, upsampleStrideY
+
+      if node.kernel~=nil then
+        downsampleStrideX, upsampleStrideX = calculateStride(kernelNode.kernel.scaleN1, kernelNode.kernel.scaleD1, node.kernel.scaleN1, node.kernel.scaleD1)
+        downsampleStrideY, upsampleStrideY = calculateStride(kernelNode.kernel.scaleN2, kernelNode.kernel.scaleD2, node.kernel.scaleN2, node.kernel.scaleD2)
+      end
+
       if node.kernel==nil then -- ie, kernelNode is an output
         if shifts==nil then
           s = s:unionWith(Stencil.new():add(0,0,0))
@@ -1121,9 +1159,9 @@ function neededStencil( interior, kernelGraph, kernelNode, shifts)
           s = s:unionWith(Stencil.new():add(0,shifts[kernelNode],0))
         end
       elseif node.kernel.kind=="crop" and interior==false then -- on the interior of strips, crops have no effect
-        s = s:unionWith(node.kernel:stencil(kernelNode):sum(Stencil.new():add(0,node.kernel.shiftY,0)))
+        s = s:unionWith(node.kernel:stencil(kernelNode):sum(Stencil.new():add(0,node.kernel.shiftY,0)):scale(downsampleStrideX,downsampleStrideY,1))
       else
-        s = s:unionWith(node.kernel:stencil(kernelNode):sum(neededStencil( interior,kernelGraph,node, shifts)))
+        s = s:unionWith(node.kernel:stencil(kernelNode):sum(neededStencil( interior,kernelGraph,node, shifts)):scale(downsampleStrideX,downsampleStrideY,1))
       end
     end
     
@@ -1271,8 +1309,8 @@ return
           neededStripRelativeStat; neededStat; neededImageSpaceStat; validStat; validVectorizedStat;
           -- we use image space needed region here b/c These are the actual pixel coords we will write to
           -- since all image accesses use relative coordinates, This doesn't cause problems
-          [inputs[n]:declare( loopid, neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, options, linebufferBase ) ];
-          [outputs[n]:declare( loopid, neededImageSpace.left, neededImageSpace.bottom, neededStripRelative.bottom, core, strip, options, linebufferBase ) ];
+          [inputs[n]:declare( loopid, neededImageSpace.left, neededImageSpace.bottom, neededStripRelative.bottom, core, strip, options, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, linebufferBase ) ];
+          [outputs[n]:declare( loopid, neededImageSpace.left, neededImageSpace.bottom, neededStripRelative.bottom, core, strip, options, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, linebufferBase ) ];
           
           if options.verbose then
             cstdio.printf("--- %s V %d cores %d core %d shift %d\n",[n.kernel:name()],options.V, options.cores, strip, [shifts[n]])
@@ -1295,44 +1333,44 @@ return
               for [x] = [needed.left], [needed.right] do
                 [outputs[n]:set( loopid, boundary(n), 1 )];
                 [outputs[n]:next( loopid, 1 )];
-                [inputs[n]:next( loopid, 1, n.kernel.scaleN1, n.kernel.scaleD1 )];
+                [inputs[n]:next( loopid, 1 )];
               end
               [outputs[n]:nextLine( loopid, `[needed.right]-[needed.left])];
-              [inputs[n]:nextLine( loopid, `[needed.right]-[needed.left], clock, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2)];
+              [inputs[n]:nextLine( loopid, `[needed.right]-[needed.left])];
             else
               -- interior row(s), mixed boundary and calculated region
 
               [outputs[n]:next( loopid, `validVectorized.left-needed.left )];
-              [inputs[n]:next( loopid, `validVectorized.left-needed.left, n.kernel.scaleN1, n.kernel.scaleD1 )];
+              [inputs[n]:next( loopid, `validVectorized.left-needed.left )];
 
               for [x] = validVectorized.left, validVectorized.right, options.V do
                 statements;
                 [outputs[n]:set( loopid, expr, options.V )];
                 [outputs[n]:next( loopid, options.V )];
-                [inputs[n]:next( loopid, options.V, n.kernel.scaleN1, n.kernel.scaleD1 )];
+                [inputs[n]:next( loopid, options.V )];
               end
 
               [outputs[n]:next( loopid, `-(validVectorized.right-needed.left) )];
-              [inputs[n]:next( loopid, `-(validVectorized.right-needed.left), n.kernel.scaleN1, n.kernel.scaleD1 )];
+              [inputs[n]:next( loopid, `-(validVectorized.right-needed.left) )];
               
               -- these need to happen out of order b/c we may _overwrite_ sections of the array that were written by the loop above
               for [x] = needed.left, valid.left do
                 [outputs[n]:set( loopid, boundary(n), 1 )];
                 [outputs[n]:next( loopid, 1 )];
-                [inputs[n]:next( loopid, 1, n.kernel.scaleN1, n.kernel.scaleD1 )];
+                [inputs[n]:next( loopid, 1 )];
               end
 
               [outputs[n]:next( loopid, `valid.right-valid.left )];
-              [inputs[n]:next( loopid, `valid.right-valid.left, n.kernel.scaleN1, n.kernel.scaleD1 )];
+              [inputs[n]:next( loopid, `valid.right-valid.left )];
               
               for [x] = valid.right, needed.right do
                 [outputs[n]:set( loopid, boundary(n), 1 )];
                 [outputs[n]:next( loopid, 1 )];
-                [inputs[n]:next( loopid, 1, n.kernel.scaleN1, n.kernel.scaleD1 )];
+                [inputs[n]:next( loopid, 1 )];
               end
           
               [outputs[n]:nextLine( loopid, `needed.right-needed.left)];
-              [inputs[n]:nextLine( loopid, `needed.right-needed.left, clock, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2)];
+              [inputs[n]:nextLine( loopid, `needed.right-needed.left)];
             end
           end
       end)
