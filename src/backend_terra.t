@@ -93,6 +93,38 @@ function scaledAbsolute(v,upsampleStride, downsampleStride)
     return `v*downsampleStride
   end
 end
+
+function scaledDelta( v, upsampleStride, downsampleStride, readerPos)
+  assert(terralib.isquote(v) or terralib.issymbol(v) or type(v)=="number"); 
+  assert(type(upsampleStride)=="number");
+  if upsampleStride==1 and downsampleStride==1 then
+    return v
+  elseif downsampleStride==1 then
+    if type(v)=="number" then v=`[int](v) end
+    return quote 
+      var res : int = 0
+      if v>0 then
+        var vResidual = v - (v/upsampleStride)*upsampleStride
+        var residual = upsampleStride-fixedModulus(readerPos, upsampleStride)
+        res = terralib.select(vResidual>=residual, (v/upsampleStride)+1, (v/upsampleStride))
+      elseif v<0 then
+        if fixedModulus(readerPos,upsampleStride)==0 then
+          res = floorDivide(v,upsampleStride)
+        else
+          var vResidual = v + fixedModulus(readerPos,upsampleStride)
+          cstdio.printf("NVR %d\n",vResidual)
+          res = terralib.select(vResidual<=0,floorDivide(vResidual,upsampleStride)-1,0)
+        end
+      else res=0 end
+--      cstdio.printf("SD v %d readerPos %d US %d res %d\n",v,readerPos,upsampleStride,res)
+      in res end
+  elseif upsampleStride==1 then
+    return `v*downsampleStride
+  else
+    assert(false)
+  end
+end
+
 -----------------------------------
 local vmIV = terralib.includecstring [[
 #include <stdio.h>
@@ -355,12 +387,11 @@ function LineBufferWrapperFunctions:get(loopid, gather, relX,relY, V, validLeft,
   return res
 end
 
-function LineBufferWrapperFunctions:next(loopid,v)
+function LineBufferWrapperFunctions:next(loopid,vorig)
   assert(type(loopid)=="number")
-  assert(type(v)=="number" or terralib.isquote(v))
+  assert(type(vorig)=="number" or terralib.isquote(vorig))
 
-  local vorig = v
-  v = `(v*[self.downsampleStrideX[loopid]])
+  local v = scaledDelta(vorig, self.upsampleStrideX[loopid], self.downsampleStrideX[loopid], self.readerPosX[loopid])
   local res = {}
 
   table.insert(res, quote [self.iv[loopid]] = [self.iv[loopid]] + v end)
@@ -390,7 +421,10 @@ function LineBufferWrapperFunctions:nextLine(loopid,  sub)
   local base = {self.base}
   local bufType = {self.orionType:toTerraType()}
 
-  local strideY = self.downsampleStrideY[loopid]
+  local subX = symbol(int,"subX")
+  table.insert(res, quote var [subX] = [scaledDelta(`-sub, self.upsampleStrideX[loopid], self.downsampleStrideX[loopid], self.readerPosX[loopid])] end)
+  local strideY = symbol(int,"strideY")
+  table.insert(res, quote var [strideY] = [scaledDelta(1, self.upsampleStrideY[loopid], self.downsampleStrideY[loopid], self.readerPosY[loopid])] end)
 
   if self.debug then
     buf = {self.iv[loopid], self.ivDebugX[loopid], self.ivDebugY[loopid], self.ivDebugId[loopid]}
@@ -398,7 +432,7 @@ function LineBufferWrapperFunctions:nextLine(loopid,  sub)
     bufType = {self.orionType:toTerraType(),int,int,int}
 
     table.insert(res, quote [self.posY[loopid]] = [self.posY[loopid]] + strideY end)
-    table.insert(res, quote [self.posX[loopid]] = [self.posX[loopid]] - sub*[self.downsampleStrideX[loopid]] end)
+    table.insert(res, quote [self.posX[loopid]] = [self.posX[loopid]] + subX end)
   end
 
   if self.debug then
@@ -409,7 +443,7 @@ function LineBufferWrapperFunctions:nextLine(loopid,  sub)
   for k,v in pairs(buf) do
     table.insert(res, 
       quote 
-        [buf[k]] = [buf[k]] - (sub*[self.downsampleStrideX[loopid]]) + [self:lineWidth()]*strideY
+        [buf[k]] = [buf[k]] + subX + [self:lineWidth()]*[strideY]
         if [buf[k]] >= [base[k]]+[self:modularSize(bufType[k])*2] then [buf[k]] = [buf[k]] - [self:modularSize(bufType[k])] end
       end)
   end
