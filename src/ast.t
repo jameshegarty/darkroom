@@ -47,6 +47,10 @@ function astFunctions:optimize()
         return n.rhs
       elseif n.kind=="binop" and n.op=="+" and n.rhs.kind=="value" and n.rhs.value==0 then
         return n.lhs
+      elseif n.kind=="binop" and n.op=="-" and n.lhs.kind=="value" and n.lhs.value==0 and n.rhs.kind=="value" then
+        local r = n.rhs:shallowcopy()
+        r.value=0-n.rhs.value
+        return darkroom.ast.new(r):copyMetadataFrom(n.rhs)
       elseif n.kind=="binop" and n.op=="*" and n.rhs.kind=="value" and n.rhs.value==0 then
         return n.rhs
       elseif n.kind=="binop" and n.op=="*" and n.lhs.kind=="value" and n.lhs.value==0 then

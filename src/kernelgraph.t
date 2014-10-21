@@ -55,7 +55,7 @@ function kernelGraphFunctions:bufferSize(root, HWWidth)
       assert(v:maxUse(1,self)+v:maxUse(2,self)*HWWidth <= 0)
       b = -v:minUse(1,self)-v:minUse(2,self)*HWWidth
     else
-      b = -v:minUse(1,self)+1
+      b = -v:minUse(2,self)+1
     end
 
     if b>bufferSize then bufferSize=b end

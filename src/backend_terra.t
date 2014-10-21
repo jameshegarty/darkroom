@@ -402,6 +402,7 @@ function LineBufferWrapperFunctions:nextLine(loopid,  sub)
   end
 
   if self.debug then
+    table.insert(res, quote [self.readerPosY[loopid]] = [self.readerPosY[loopid]] + 1 end)
     table.insert(res, quote [self.readerPosX[loopid]] = [self.readerPosX[loopid]] - sub end)
   end
 

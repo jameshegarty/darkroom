@@ -68,7 +68,8 @@ function orionSimple.load(filename, boundaryCond)
 
   local terra makeIm( filename : &int8)
     var im : &Image = [&Image](cstdlib.malloc(sizeof(Image)))
-    im:load(filename)
+    var res = im:load(filename)
+    if res==nil then cstdio.printf("Error Loading File %s\n",filename); cstdlib.exit(1); end
     return im
   end
   

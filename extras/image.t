@@ -669,7 +669,7 @@ local terra loadBMP_UC(filename : &int8, width : &int, height : &int, channels :
   var file  = cstdio.fopen(filename,"rb");
 
   if file==nil then
-    cstdio.printf("File not found: %s",filename);
+    cstdio.printf("File not found: %s\n",filename);
     return nil;
   end
 
@@ -1028,7 +1028,7 @@ terra Image:load(filename : &int8)
   var bits : int
 
   var data : &opaque = loadImageUC(filename,&width,&height,&channels,&bits)
-
+  if data==nil then return nil end
   return self:init(width,height,width,channels,bits,false,false,false,data,data)
 end
 
