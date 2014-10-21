@@ -100,24 +100,7 @@ function scaledDelta( v, upsampleStride, downsampleStride, readerPos)
   if upsampleStride==1 and downsampleStride==1 then
     return v
   elseif downsampleStride==1 then
-    if type(v)=="number" then v=`[int](v) end
-    return quote 
-      var res : int = 0
-      if v>0 then
-        var vResidual = v - (v/upsampleStride)*upsampleStride
-        var residual = upsampleStride-fixedModulus(readerPos, upsampleStride)
-        res = terralib.select(vResidual>=residual, (v/upsampleStride)+1, (v/upsampleStride))
-      elseif v<0 then
-        if fixedModulus(readerPos,upsampleStride)==0 then
-          res = floorDivide(v,upsampleStride)
-        else
-          var vResidual = v + fixedModulus(readerPos,upsampleStride)
-          cstdio.printf("NVR %d\n",vResidual)
-          res = terralib.select(vResidual<=0,floorDivide(vResidual,upsampleStride)-1,0)
-        end
-      else res=0 end
---      cstdio.printf("SD v %d readerPos %d US %d res %d\n",v,readerPos,upsampleStride,res)
-      in res end
+    return `floorDivide(readerPos+v, upsampleStride)-floorDivide(readerPos, upsampleStride)
   elseif upsampleStride==1 then
     return `v*downsampleStride
   else
