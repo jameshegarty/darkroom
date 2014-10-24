@@ -169,7 +169,7 @@ LineBufferWrapperMT={__index=LineBufferWrapperFunctions}
 linebufferCount = 7 -- just start with a random id to make the debug checks more effective
 function isLineBufferWrapper(b) return getmetatable(b)==LineBufferWrapperMT end
 
-function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightStencil, debug, scaleN1, scaleD1, scaleN2, scaleD2 )
+function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightStencil, debug, scaleN1, scaleD1, scaleN2, scaleD2, largestScaleY )
   assert(type(lines)=="number")
   assert(type(leftStencil)=="number")
   assert(type(stripWidth)=="number")
@@ -179,6 +179,7 @@ function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightS
   assert(type(scaleD1)=="number")
   assert(type(scaleN2)=="number")
   assert(type(scaleD2)=="number")
+  assert(type(largestScaleY)=="number")
   assert(darkroom.type.isType(orionType))
 
   local tab = {lines=lines, 
@@ -193,6 +194,7 @@ function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightS
                scaleD1=scaleD1,
                scaleN2=scaleN2,
                scaleD2=scaleD2,
+               largestScaleY=largestScaleY,
                downsampleStrideX={},
                upsampleStrideX={},
                downsampleStrideY={},
@@ -211,11 +213,11 @@ function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightS
 end
 
 
-function LineBufferWrapperFunctions:declare( loopid, xStripRelative, y, readerClock, core, stripId, options, scaleN1, scaleD1, scaleN2, scaleD2,linebufferBase )
+function LineBufferWrapperFunctions:declare( loopid, xStripRelative, y, clock, core, stripId, options, scaleN1, scaleD1, scaleN2, scaleD2,linebufferBase )
   assert(type(loopid)=="number")
   assert(terralib.isquote(xStripRelative) or terralib.issymbol(xStripRelative))
   assert(terralib.isquote(y) or terralib.issymbol(y)) -- we don't actually use this - we don't care what the actual coord is
-  assert(terralib.isquote(readerClock) or terralib.issymbol(readerClock))
+  assert(terralib.isquote(clock) or terralib.issymbol(clock))
   assert(terralib.isquote(core) or terralib.issymbol(core))
   assert(terralib.issymbol(stripId))
   assert(terralib.issymbol(linebufferBase))
@@ -224,17 +226,22 @@ function LineBufferWrapperFunctions:declare( loopid, xStripRelative, y, readerCl
 
   local readerX = `[stripLeft( stripId, options, scaleN1, scaleD1)]+xStripRelative
 
+--  clock = `floorDivide(clock,scaleD2)
+
+
   local res = {}
 
   self.downsampleStrideX[loopid], self.upsampleStrideX[loopid] = calculateStride(self.scaleN1, self.scaleD1, scaleN1, scaleD1)
   self.downsampleStrideY[loopid], self.upsampleStrideY[loopid] = calculateStride(self.scaleN2, self.scaleD2, scaleN2, scaleD2)
 
+  clock = `floorDivide(clock,[looprate(self.scaleN2,self.scaleD2,self.largestScaleY)])
+
   if self.upsampleStrideX[loopid]>1 or self.debug then self.readerPosX[loopid] = symbol(int,"readerPosX"); table.insert(res, quote var [self.readerPosX[loopid]] = readerX; end) end
-  if self.upsampleStrideY[loopid]>1 or self.debug then self.readerPosY[loopid] = symbol(int,"readerPosY"); table.insert(res, quote var [self.readerPosY[loopid]] = readerClock; end) end
+  if self.upsampleStrideY[loopid]>1 or self.debug then self.readerPosY[loopid] = symbol(int,"readerPosY"); table.insert(res, quote var [self.readerPosY[loopid]] = clock; end) end
 
   local x = `[stripLeft( stripId, options, self.scaleN1, self.scaleD1)]+[scaledAbsolute(xStripRelative, self.upsampleStrideX[loopid], self.downsampleStrideX[loopid])]
 
-  local clock = scaledAbsolute(readerClock, self.upsampleStrideY[loopid], self.downsampleStrideY[loopid])
+--  local clock = scaledAbsolute(readerClock, self.upsampleStrideY[loopid], self.downsampleStrideY[loopid])
 
   if self.iv[loopid]==nil then self.iv[loopid] = symbol(&self.orionType:toTerraType(),"iv") end
     
@@ -440,7 +447,7 @@ function isImageWrapper(b) return getmetatable(b)==ImageWrapperMT end
 
 -- tab.terraType should be the base type of the data stored in this image
 -- ie, if it's a floating point image, tab.terraType should be float
-function newImageWrapper( basePtr, orionType, stride, debug, scaleN1, scaleD1, scaleN2, scaleD2 )
+function newImageWrapper( basePtr, orionType, stride, debug, scaleN1, scaleD1, scaleN2, scaleD2, largestScaleY )
   assert(darkroom.type.isType(orionType))
   assert(type(stride)=="number")
   assert(type(debug) == "boolean")
@@ -448,8 +455,9 @@ function newImageWrapper( basePtr, orionType, stride, debug, scaleN1, scaleD1, s
   assert(type(scaleD1)=="number")
   assert(type(scaleN2)=="number")
   assert(type(scaleD2)=="number")
+  assert(type(largestScaleY)=="number")
 
-  local tab = {data={},basePtr=basePtr,orionType=orionType, stride=stride, debug=debug, scaleN1=scaleN1, scaleD1=scaleD1, scaleN2=scaleN2, scaleD2=scaleD2, downsampleStrideX={}, downsampleStrideY={}, upsampleStrideX={}, upsampleStrideY={}, readerPosX={}, readerPosY={}}
+  local tab = {data={},basePtr=basePtr,orionType=orionType, stride=stride, debug=debug, scaleN1=scaleN1, scaleD1=scaleD1, scaleN2=scaleN2, scaleD2=scaleD2, largestScaleY=largestScaleY, downsampleStrideX={}, downsampleStrideY={}, upsampleStrideX={}, upsampleStrideY={}, readerPosX={}, readerPosY={}}
 
   return setmetatable(tab,ImageWrapperMT)
 end
@@ -1154,8 +1162,10 @@ _neededCache = {}
 _neededCache[true] = setmetatable({}, {__mode="k"})
 _neededCache[false] = setmetatable({}, {__mode="k"})
 
-function neededStencil( interior, kernelGraph, kernelNode, shifts)
-  assert(type(interior)=="boolean");assert(type(kernelGraph)=="table");assert(type(kernelNode)=="table");
+-- Remember: Y is in terms of clocks, X is in terms of pixels. This is not necessarily the same thing!
+-- Particularly when there are upsample/downsamples.
+function neededStencil( interior, kernelGraph, kernelNode, largestScaleY, shifts)
+  assert(type(interior)=="boolean");assert(type(kernelGraph)=="table");assert(type(kernelNode)=="table");assert(type(largestScaleY)=="number")
   -- assert(type(shifts)=="table"); can be nil for HW backend
 
   if _neededCache[interior][kernelNode]==nil then
@@ -1169,6 +1179,8 @@ function neededStencil( interior, kernelGraph, kernelNode, shifts)
         downsampleStrideX, upsampleStrideX = calculateStride(kernelNode.kernel.scaleN1, kernelNode.kernel.scaleD1, node.kernel.scaleN1, node.kernel.scaleD1)
         downsampleStrideY, upsampleStrideY = calculateStride(kernelNode.kernel.scaleN2, kernelNode.kernel.scaleD2, node.kernel.scaleN2, node.kernel.scaleD2)
       end
+      
+      local clockrate = looprate( kernelNode.kernel.scaleN2, kernelNode.kernel.scaleD2, largestScaleY )
 
       if node.kernel==nil then -- ie, kernelNode is an output
         if shifts==nil then
@@ -1177,9 +1189,9 @@ function neededStencil( interior, kernelGraph, kernelNode, shifts)
           s = s:unionWith(Stencil.new():add(0,shifts[kernelNode],0))
         end
       elseif node.kernel.kind=="crop" and interior==false then -- on the interior of strips, crops have no effect
-        s = s:unionWith(node.kernel:stencil(kernelNode):sum(Stencil.new():add(0,node.kernel.shiftY,0)):scale(downsampleStrideX,downsampleStrideY,1))
+        s = s:unionWith(node.kernel:stencil(kernelNode):scale(1,clockrate,1):sum(Stencil.new():add(0,node.kernel.shiftY,0)))
       else
-        s = s:unionWith(node.kernel:stencil(kernelNode):sum(neededStencil( interior,kernelGraph,node, shifts)):scale(downsampleStrideX,downsampleStrideY,1))
+        s = s:unionWith(node.kernel:stencil(kernelNode):scale(1,clockrate,1):sum(neededStencil( interior, kernelGraph, node, largestScaleY, shifts):scale(downsampleStrideX,1,1)))
       end
     end
     
@@ -1189,11 +1201,11 @@ function neededStencil( interior, kernelGraph, kernelNode, shifts)
   return _neededCache[interior][kernelNode]
 end
 
-function validStencil(kernelGraph, kernelNode, shifts)
+function validStencil(kernelGraph, kernelNode, largestScaleY, shifts)
   if kernelNode.kernel.kind=="crop" then
     return Stencil.new():add(0,kernelNode.kernel.shiftY,0)
   else
-    return neededStencil( false, kernelGraph, kernelNode, shifts)
+    return neededStencil( false, kernelGraph, kernelNode, largestScaleY, shifts)
   end
 end
 
@@ -1214,10 +1226,10 @@ end
 function neededStripRelative(kernelGraph, kernelNode, strip, shifts, largestScaleY, options)
   assert(type(kernelGraph)=="table");assert(type(kernelNode)=="table");assert(type(shifts)=="table");assert(type(largestScaleY)=="number");assert(type(options)=="table");
 
-  return {left = `interiorSelectLeft(strip,[neededStencil( true, kernelGraph, kernelNode, shifts):min(1)], [neededStencil( false, kernelGraph, kernelNode, shifts):min(1)]),
-          right = `interiorSelectRight(strip,[options.stripcount],[neededStencil( true, kernelGraph, kernelNode, shifts):max(1)],[neededStencil( false, kernelGraph, kernelNode, shifts):max(1)]),
-          top = `[neededStencil( false, kernelGraph, kernelNode, shifts):max(2)],
-          bottom = `[neededStencil( false, kernelGraph, kernelNode, shifts):min(2)]}
+  return {left = `interiorSelectLeft(strip,[neededStencil( true, kernelGraph, kernelNode, largestScaleY, shifts):min(1)], [neededStencil( false, kernelGraph, kernelNode, largestScaleY, shifts):min(1)]),
+          right = `interiorSelectRight(strip,[options.stripcount],[neededStencil( true, kernelGraph, kernelNode, largestScaleY, shifts):max(1)],[neededStencil( false, kernelGraph, kernelNode, largestScaleY, shifts):max(1)]),
+          top = `[neededStencil( false, kernelGraph, kernelNode, largestScaleY, shifts):max(2)],
+          bottom = `[neededStencil( false, kernelGraph, kernelNode, largestScaleY, shifts):min(2)]}
 end
 
 function needed(kernelGraph, kernelNode, strip, shifts, largestScaleY, options)
@@ -1228,16 +1240,16 @@ function needed(kernelGraph, kernelNode, strip, shifts, largestScaleY, options)
 
   return {left = `[stripLeft(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+[nsr.left],
           right = `[stripRight(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+[nsr.right],
-          top = `[nsr.top]*[scale]+[options.height*largestScaleY], bottom = `[nsr.bottom]*[scale]}
+          top = `[nsr.top]+[options.height*largestScaleY], bottom = `[nsr.bottom]}
 end
 
 function valid(kernelGraph, kernelNode, strip, shifts, largestScaleY, options)
   assert(type(kernelGraph)=="table");assert(type(kernelNode)=="table");assert(type(shifts)=="table");assert(type(largestScaleY)=="number");assert(type(options)=="table");
 
-  local v = {left = `[stripLeft(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+interiorSelectLeft(strip,[neededStencil( true, kernelGraph, kernelNode, shifts):min(1)],[validStencil(kernelGraph, kernelNode, shifts):min(1)]),
-          right = `[stripRight(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+interiorSelectRight(strip,[options.stripcount], [neededStencil( true, kernelGraph, kernelNode, shifts):max(1)], [validStencil(kernelGraph, kernelNode, shifts):max(1)]),
-          top = `[options.height*largestScaleY]+[validStencil(kernelGraph, kernelNode, shifts):max(2)],
-          bottom = `[validStencil(kernelGraph, kernelNode, shifts):min(2)]}
+  local v = {left = `[stripLeft(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+interiorSelectLeft(strip,[neededStencil( true, kernelGraph, kernelNode, largestScaleY, shifts):min(1)],[validStencil(kernelGraph, kernelNode, largestScaleY, shifts):min(1)]),
+          right = `[stripRight(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+interiorSelectRight(strip,[options.stripcount], [neededStencil( true, kernelGraph, kernelNode, largestScaleY, shifts):max(1)], [validStencil(kernelGraph, kernelNode, largestScaleY, shifts):max(1)]),
+          top = `[options.height*largestScaleY]+[validStencil(kernelGraph, kernelNode, largestScaleY, shifts):max(2)],
+          bottom = `[validStencil(kernelGraph, kernelNode, largestScaleY, shifts):min(2)]}
 
   -- valid should never be larger than needed
   local n = needed( kernelGraph, kernelNode, strip, shifts, largestScaleY, options )
@@ -1335,6 +1347,7 @@ return
             cstdio.printf("valid l %d r %d t %d b %d\n",[valid.left],[valid.right],[valid.top],[valid.bottom])
             cstdio.printf("validVectorized l %d r %d t %d b %d\n",[validVectorized.left],[validVectorized.right],[validVectorized.top],[validVectorized.bottom])
             cstdio.printf("needed l %d r %d t %d b %d\n",[needed.left],[needed.right],[needed.top],[needed.bottom])
+            cstdio.printf("needed strip relative l %d r %d t %d b %d\n",[neededStripRelative.left],[neededStripRelative.right],[neededStripRelative.top],[neededStripRelative.bottom])
             cstdio.printf("needed image space strip relative l %d r %d t %d b %d\n",[neededImageSpace.left],[neededImageSpace.right],[neededImageSpace.top],[neededImageSpace.bottom])
           end
         end)
@@ -1345,6 +1358,7 @@ return
         quote
           if clock >= [needed.bottom] and clock < [needed.top] and (fixedModulus(clock,[looprate(n.kernel.scaleN2,n.kernel.scaleD2,largestScaleY)]) == 0 or [n.kernel.scaleD2]==0) then
             if clock < [valid.bottom] or clock >= [valid.top]  then
+
               -- top/bottom row(s) (all boundary)
               -- theoretically we could do some of this vectorized, but it shouldn't really matter
 
@@ -1429,7 +1443,7 @@ function darkroom.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, sh
   end)
 
   -- add the input lists and output to the kernelGraph
-  local inputs, outputs, linebufferSize = darkroom.terracompiler.allocateImageWrappers(kernelGraph, inputImageSymbolMap, outputImageSymbolMap, shifts, options)
+  local inputs, outputs, linebufferSize = darkroom.terracompiler.allocateImageWrappers(kernelGraph, inputImageSymbolMap, outputImageSymbolMap, shifts, largestScaleY,options)
 
   local loopCode = {}
   assert(options.stripcount % options.cores == 0)
@@ -1463,8 +1477,8 @@ function darkroom.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, sh
     function(n)
       if n.kernel~=nil then
         local scale = looprate( n.kernel.scaleN2, n.kernel.scaleD2, largestScaleY)
-        local a = neededStencil(false, kernelGraph,n, shifts):max(2)*scale
-        local b = neededStencil(false, kernelGraph,n, shifts):min(2)*scale
+        local a = neededStencil(false, kernelGraph, n, largestScaleY, shifts):max(2)
+        local b = neededStencil(false, kernelGraph, n, largestScaleY, shifts):min(2)
         if a > endClock then endClock=a end
         if b<startClock then startClock=b end
       end
@@ -1506,10 +1520,12 @@ function darkroom.terracompiler.allocateImageWrappers(
     inputImageSymbolMap, 
     outputImageSymbolMap, 
     shifts,
+    largestScaleY,
     options)
 
   assert(darkroom.IR.isIR(kernelGraph))
   assert(type(shifts)=="table")
+  assert(type(largestScaleY)=="number")
   assert(type(options)=="table")
 
   local inputs = {} -- kernelGraphNode->{input wrappers}
@@ -1524,7 +1540,7 @@ function darkroom.terracompiler.allocateImageWrappers(
   local function getInputWrapper(id,type)
     if inputWrappers[id]==nil then
       inputWrappers[id] = {}
-      for c = 1,type:channels() do inputWrappers[id][c] = newImageWrapper( channelPointer(c-1,inputImageSymbolMap[id], type:baseType():toTerraType()), type:baseType(), options.width, options.debug ,1,1,1,1) end
+      for c = 1,type:channels() do inputWrappers[id][c] = newImageWrapper( channelPointer(c-1,inputImageSymbolMap[id], type:baseType():toTerraType()), type:baseType(), options.width, options.debug ,1,1,1,1, largestScaleY) end
       setmetatable(inputWrappers[id],pointwiseDispatchMT)
     end
     return inputWrappers[id]
@@ -1558,7 +1574,7 @@ function darkroom.terracompiler.allocateImageWrappers(
         -- make the output
         if parentIsOutput(n)~=nil then
           outputs[n] = {}
-          for c=1,n.kernel.type:channels() do outputs[n][c] = newImageWrapper( channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType()), n.kernel.type:baseType(), upToNearest(options.V, imageSize(options.width,n.kernel.scaleN1,n.kernel.scaleD1)), options.debug, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2) end
+          for c=1,n.kernel.type:channels() do outputs[n][c] = newImageWrapper( channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType()), n.kernel.type:baseType(), upToNearest(options.V, imageSize(options.width,n.kernel.scaleN1,n.kernel.scaleD1)), options.debug, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, largestScaleY) end
           setmetatable(outputs[n],pointwiseDispatchMT)
         else
           outputs[n] = {}
@@ -1567,14 +1583,15 @@ function darkroom.terracompiler.allocateImageWrappers(
             outputs[n][c] = newLineBufferWrapper(
               n:bufferSize(kernelGraph), 
               n.kernel.type:baseType(),
-              downToNearest(options.V, neededStencil(true,kernelGraph,n, shifts):min(1)), -- use the more conservative stencil
+              downToNearest(options.V, neededStencil( true, kernelGraph, n, largestScaleY, shifts):min(1)), -- use the more conservative stencil
               stripWidth(options, n.kernel.scaleN1, n.kernel.scaleD1),
-              upToNearest(options.V, neededStencil(true,kernelGraph,n, shifts):max(1)),
+              upToNearest(options.V, neededStencil(true,kernelGraph,n, largestScaleY,shifts ):max(1)),
               options.debug,
               n.kernel.scaleN1, 
               n.kernel.scaleD1,
               n.kernel.scaleN2, 
-              n.kernel.scaleD2)
+              n.kernel.scaleD2,
+              largestScaleY)
 
             linebufferSize = linebufferSize + outputs[n][c]:allocateSize()
           end

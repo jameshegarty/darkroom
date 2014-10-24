@@ -62,8 +62,8 @@ function darkroom.backEnd( kernelGraph, inputImages, taps, largestScaleY, option
   assert(type(options)=="table")
   assert(type(inputImages)=="table")
 
-  local shifts = schedule(kernelGraph)
-  kernelGraph, shifts = shift(kernelGraph, shifts)
+  local shifts = schedule(kernelGraph, largestScaleY)
+  kernelGraph, shifts = shift(kernelGraph, shifts, largestScaleY)
   
   if options.callbackScheduledKernelGraph~=nil then options.callbackScheduledKernelGraph(kernelGraph) end
   

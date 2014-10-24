@@ -539,8 +539,8 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, stripWidth, stri
 
   local kernelGraph = darkroom.frontEnd( ast, {} )
 
-  local shifts = schedule(kernelGraph, stripWidth)
-  kernelGraph, shifts = shift(kernelGraph, shifts, stripWidth)
+  local shifts = schedule(kernelGraph, 1, stripWidth)
+  kernelGraph, shifts = shift(kernelGraph, shifts, 1, stripWidth)
 
   local inputBytes = inputs[1][1].expr.type:sizeof()
   local outputBytes = kernelGraph.child1.kernel.type:sizeof()

@@ -4,8 +4,9 @@
 -- the smallest and largest use offset that this node accesses.
 --
 -- It returns a map from node -> shift
-function schedule(graph, HWWidth)
+function schedule(graph, largestScaleY, HWWidth)
   assert(darkroom.kernelGraph.isKernelGraph(graph))
+  assert(type(largestScaleY)=="number")
 
   local shifts = {}
   graph:S("*"):traverse(
@@ -25,7 +26,7 @@ function schedule(graph, HWWidth)
               s = node:maxUse(1,v)
             end
           else
-            s = node:maxUse(2,v) + shifts[v]
+            s = node:maxUse(2,v)*looprate(node.kernel.scaleN2,node.kernel.scaleD2,largestScaleY) + shifts[v]
           end
 
           if s > shifts[node] then shifts[node] = s end
@@ -53,8 +54,9 @@ function synthRel(rel,t)
   end
 end
 
-function shift(graph, shifts, HWWidth)
+function shift(graph, shifts, largestScaleY, HWWidth)
   assert(darkroom.kernelGraph.isKernelGraph(graph))
+  assert(type(largestScaleY)=="number")
 
   local oldToNewRemap = {}
   local newToOldRemap = {}
@@ -118,7 +120,9 @@ function shift(graph, shifts, HWWidth)
                   r.relY = synthRel(r.relY, sy):optimize()
                   r.relX = synthRel(r.relX, sx):optimize()
                 else
-                  r.relY = synthRel(r.relY, shifts[newToOldRemap[nn.from]]-shifts[orig]):optimize()
+                  local inputKernel = newToOldRemap[nn.from]
+                  local sy = math.floor( (shifts[inputKernel]-shifts[orig])/looprate(inputKernel.kernel.scaleN2,inputKernel.kernel.scaleD2,largestScaleY))
+                  r.relY = synthRel(r.relY, sy):optimize()
                 end
 
                 if type(nn.from)=="table" then r.from = oldToNewRemap[nn.from]; assert(r.from~=nil) end
@@ -133,13 +137,13 @@ function shift(graph, shifts, HWWidth)
                 r.shiftY = r.shiftY + sy
                 r.shiftX = r.shiftX + (shifts[orig]-sy*HWWidth)
               else
-                r.shiftY = r.shiftY + shifts[orig]
+                r.shiftY = r.shiftY + math.floor(shifts[orig]/looprate(orig.kernel.scaleN2,orig.kernel.scaleD2,largestScaleY))
               end
 
               return darkroom.typedAST.new(r):copyMetadataFrom(nn)
             elseif nn.kind=="position" then
               if nn.coord=="y" and shifts[orig]~=0 then
-                local v = darkroom.typedAST.new({kind="value", value=-shifts[orig], type=nn.type}):copyMetadataFrom(nn)
+                local v = darkroom.typedAST.new({kind="value", value=-math.floor(shifts[orig]/looprate(orig.kernel.scaleN2,orig.kernel.scaleD2,largestScaleY)), type=nn.type}):copyMetadataFrom(nn)
                 return darkroom.typedAST.new({kind="binop", lhs=nn, rhs = v, type = nn.type, op="+"}):copyMetadataFrom(nn)
               end
             else
