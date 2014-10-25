@@ -45,7 +45,8 @@ end
 function looprate(N,D,max)
   if N==1 then return D*max 
   elseif N==0 and D==0 then return 1
-  elseif N==max then return D end
+  elseif N==max then return D 
+  elseif D==1 then assert(math.floor(max/N)==(max/N)); return max/N end
   assert(false)
 end
 
@@ -65,22 +66,19 @@ function calculateStride(producerN, producerD, consumerN, consumerD)
   if producerN==0 and producerD==0 then producerN=1; producerD=1 end
   producerN, producerD = ratioFactor(producerN, producerD)
   consumerN, consumerD = ratioFactor(consumerN, consumerD)
-  if producerN==consumerN then
+
+  if (consumerN/consumerD)<=(producerN/producerD) then
     -- a downsample
-    assert(consumerD>=producerD)
-    local d = consumerD/producerD
+    local d = (producerN/producerD)/(consumerN/consumerD)
     assert(d==math.floor(d))
     return d,1
-  elseif producerD==consumerD then
+  elseif (producerN/producerD)<=(consumerN/consumerD) then
     -- a upsample
-    assert(consumerN>=producerN)
-    local d = consumerN/producerN
+    local d = (consumerN/consumerD)/(producerN/producerD)
     assert(d==math.floor(d))
     return 1,d
-  else
-    print(producerN,producerD,consumerN,consumerD)
-    assert(false) -- Can't upsample and downsample at the same time
   end
+  assert(false)
 end
 
 function scaledAbsolute(v,upsampleStride, downsampleStride)
@@ -237,7 +235,7 @@ function LineBufferWrapperFunctions:declare( loopid, xStripRelative, y, clock, c
   clock = `floorDivide(clock,[looprate(self.scaleN2,self.scaleD2,self.largestScaleY)])
 
   if self.upsampleStrideX[loopid]>1 or self.debug then self.readerPosX[loopid] = symbol(int,"readerPosX"); table.insert(res, quote var [self.readerPosX[loopid]] = readerX; end) end
-  if self.upsampleStrideY[loopid]>1 or self.debug then self.readerPosY[loopid] = symbol(int,"readerPosY"); table.insert(res, quote var [self.readerPosY[loopid]] = clock; end) end
+  if self.upsampleStrideY[loopid]>1 or self.debug then self.readerPosY[loopid] = symbol(int,"readerPosY"); table.insert(res, quote var [self.readerPosY[loopid]] = y; end) end
 
   local x = `[stripLeft( stripId, options, self.scaleN1, self.scaleD1)]+[scaledAbsolute(xStripRelative, self.upsampleStrideX[loopid], self.downsampleStrideX[loopid])]
 
@@ -476,6 +474,7 @@ function ImageWrapperFunctions:declare( loopid, xStripRelative, y, clock, core, 
   self.downsampleStrideY[loopid], self.upsampleStrideY[loopid] = calculateStride(self.scaleN2, self.scaleD2, scaleN2, scaleD2)
 
   local x = `[stripLeft( stripId, options, self.scaleN1, self.scaleD1)]+[scaledAbsolute(xStripRelative, self.upsampleStrideX[loopid], self.downsampleStrideX[loopid])]
+  y = `floorDivide(y,[looprate(self.scaleN2,self.scaleD2,self.largestScaleY)])
 
   if self.data[loopid]==nil then self.data[loopid] = symbol(&(self.orionType:toTerraType())) end
   return quote var [self.data[loopid]] =  [&self.orionType:toTerraType()]([self.basePtr] + y*[self.stride] + x) end
@@ -1194,7 +1193,7 @@ function neededStencil( interior, kernelGraph, kernelNode, largestScaleY, shifts
         s = s:unionWith(node.kernel:stencil(kernelNode):scale(1,clockrate,1):sum(neededStencil( interior, kernelGraph, node, largestScaleY, shifts):scale(downsampleStrideX,1,1)))
       end
     end
-    
+    assert(s:area()>0)
     _neededCache[interior][kernelNode] = s
   end
   
@@ -1356,7 +1355,7 @@ return
 
       table.insert(loopCode,
         quote
-          if clock >= [needed.bottom] and clock < [needed.top] and (fixedModulus(clock,[looprate(n.kernel.scaleN2,n.kernel.scaleD2,largestScaleY)]) == 0 or [n.kernel.scaleD2]==0) then
+          if clock >= [needed.bottom] and clock < [needed.top] and (fixedModulus(clock-neededStripRelative.bottom,[looprate(n.kernel.scaleN2,n.kernel.scaleD2,largestScaleY)]) == 0 or [n.kernel.scaleD2]==0) then
             if clock < [valid.bottom] or clock >= [valid.top]  then
 
               -- top/bottom row(s) (all boundary)

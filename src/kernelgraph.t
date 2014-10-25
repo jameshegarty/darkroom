@@ -82,7 +82,9 @@ function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
     local transformCount = 0
     for v,k in node:parents(typedAST) do 
       if v.kind=="transformBaked" and k=="expr" then transformCount = transformCount+darkroom.typedAST.transformArea(v.translate1,v.translate2):area() end
-      if v.kind=="gather" and k=="input" then return true end end
+      if v.kind=="transformBaked" and k=="expr" and v.scaleD1~=0 and node.scaleD1~=0 and ((v.scaleN1/v.scaleD1)~=(node.scaleN1/node.scaleD1) or (v.scaleN2/v.scaleD2)~=(node.scaleN2/node.scaleD2)) then return true end
+      if v.kind=="gather" and k=="input" then return true end 
+    end
     return transformCount > 1
   end
 

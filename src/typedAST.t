@@ -636,9 +636,6 @@ function darkroom.typedAST._toTypedAST(inast)
       return {ast}
     end)
 
-  -- it shoulden't be possible for the largest scale to be fractional
-  for i=1,2 do assert(largestScaleD[i]==1) end
-
   return res[1], largestScaleN[1], largestScaleN[2]
 end
 

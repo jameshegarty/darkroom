@@ -26,7 +26,7 @@ function schedule(graph, largestScaleY, HWWidth)
               s = node:maxUse(1,v)
             end
           else
-            s = node:maxUse(2,v)*looprate(node.kernel.scaleN2,node.kernel.scaleD2,largestScaleY) + shifts[v]
+            s = node:maxUse(2,v)*looprate(v.kernel.scaleN2,v.kernel.scaleD2,largestScaleY) + shifts[v]
           end
 
           if s > shifts[node] then shifts[node] = s end
