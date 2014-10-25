@@ -1190,7 +1190,7 @@ function neededStencil( interior, kernelGraph, kernelNode, largestScaleY, shifts
       elseif node.kernel.kind=="crop" and interior==false then -- on the interior of strips, crops have no effect
         s = s:unionWith(node.kernel:stencil(kernelNode):scale(1,clockrate,1):sum(Stencil.new():add(0,node.kernel.shiftY,0)))
       else
-        s = s:unionWith(node.kernel:stencil(kernelNode):scale(1,clockrate,1):sum(neededStencil( interior, kernelGraph, node, largestScaleY, shifts):scale(downsampleStrideX,1,1)))
+        s = s:unionWith(node.kernel:stencil(kernelNode):scale(1,clockrate,1):sum(neededStencil( interior, kernelGraph, node, largestScaleY, shifts):scale(downsampleStrideX,1,1):downToNearestY(upsampleStrideY)))
       end
     end
     assert(s:area()>0)

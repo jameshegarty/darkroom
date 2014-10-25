@@ -236,3 +236,12 @@ function Stencil:flipDim(dim)
   end
   return ns
 end
+
+function Stencil:downToNearestY(roundto)
+  local ns = Stencil.new()
+  for k,_ in pairs(self) do
+    ns:add(k[1],downToNearest(roundto,k[2]),k[3])
+    ns:add(k[1],k[2],k[3])
+  end
+  return ns
+end

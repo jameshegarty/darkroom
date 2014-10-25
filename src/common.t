@@ -169,18 +169,18 @@ end
 
 function downToNearest(roundto,x)
   assert(type(x)=="number")
+  assert(roundto>=0)
   --assert(x>=0)
 
   if x % roundto == 0 or roundto == 0 then return x end
 
   local ox
   if x < 0 then
-    ox = x - (roundto+x%roundto)
+    ox = x - x%roundto
   else
     ox = x - x%roundto 
   end
-  
-  assert(ox < x and ox % roundto == 0)
+  assert(ox < x and ox % roundto == 0 and math.abs(x-ox)<=roundto)
   return ox
 end
 
