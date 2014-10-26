@@ -1169,7 +1169,7 @@ function neededStencil( interior, kernelGraph, kernelNode, largestScaleY, shifts
 
   if _neededCache[interior][kernelNode]==nil then
     local s = Stencil.new()
-      
+
     for node,k in kernelNode:parents(kernelGraph) do
       local downsampleStrideX, upsampleStrideX
       local downsampleStrideY, upsampleStrideY
@@ -1193,6 +1193,7 @@ function neededStencil( interior, kernelGraph, kernelNode, largestScaleY, shifts
         s = s:unionWith(node.kernel:stencil(kernelNode):scale(1,clockrate,1):sum(neededStencil( interior, kernelGraph, node, largestScaleY, shifts):scale(downsampleStrideX,1,1):downToNearestY(upsampleStrideY)))
       end
     end
+
     assert(s:area()>0)
     _neededCache[interior][kernelNode] = s
   end

@@ -135,15 +135,15 @@ function darkroom.gather( thisast, input,x,y,maxXV,maxYV)
   assert(darkroom.ast.isAST(x))
   assert(darkroom.ast.isAST(y))
 
-  assert(darkroom.ast.isAST(maxXV))
-  assert(maxXV.kind=="value")
+  if darkroom.ast.isAST(maxXV)==false or maxXV.kind~="value" or type(maxXV.value)~="number" then
+    darkroom.error("Gather expects maxX to be an integer constant, not an expression",thisast:linenumber(), thisast:offset(), thisast:filename())
+  end
   local maxX = maxXV.value
-  assert(type(maxX)=="number")
 
-  assert(darkroom.ast.isAST(maxYV))
-  assert(maxYV.kind=="value")
+  if darkroom.ast.isAST(maxYV)==false or maxYV.kind~="value" or type(maxYV.value)~="number" then
+    darkroom.error("Gather expects maxY to be an integer constant, not an expression",thisast:linenumber(), thisast:offset(), thisast:filename())
+  end
   local maxY = maxYV.value
-  assert(type(maxY)=="number")
 
   return darkroom.ast.new({kind="gather",
                         input=input, 

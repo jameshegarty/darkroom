@@ -92,3 +92,16 @@ function resampleBilinearInt( clamp, input, inputType, maxX, maxY, offsetX, offs
 
   return out
 end
+
+local gaussianKernel={1,4,7,4,1,
+                4,16,26,16,4,
+                7,26,41,26,7,
+                4,16,26,16,4,
+                1,4,7,4,1}
+for k,v in ipairs(gaussianKernel) do gaussianKernel[k] = gaussianKernel[k]/273 end
+
+function downsampleGaussianFloat(inp)
+  return im(x,y)
+    map i=-2,2 j=-2,2 reduce(sum) inp(x*2+i,y*2+j)*gaussianKernel[(j+2)*5+(i+2)] end
+  end
+end

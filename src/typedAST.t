@@ -148,11 +148,11 @@ function typedASTFunctions:stencil(input)
     assert(self.input.kind=="load")
 
     if input~=nil and self.input.from~=input then
-      return Stencil.new() -- not the input we're interested in
+      return self.x:stencil(input):unionWith(self.y:stencil(input)) -- not the input we're interested in
     else
       -- note the kind of nasty hack we're doing here: gathers read from loads, and loads can be shifted.
       -- so we need to shift this the same as the load
-      return darkroom.typedAST.transformArea(self.input.relX, self.input.relY):sum( Stencil.new():add(-self.maxX,-self.maxY,0):add(self.maxX,self.maxY,0))
+      return darkroom.typedAST.transformArea(self.input.relX, self.input.relY):sum( Stencil.new():add(-self.maxX,-self.maxY,0):add(self.maxX,self.maxY,0)):unionWith(self.x:stencil(input)):unionWith(self.y:stencil(input))
     end
   elseif self.kind=="array" then
     local exprsize = self:arraySize("expr")
