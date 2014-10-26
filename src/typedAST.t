@@ -218,7 +218,7 @@ function darkroom.typedAST._toTypedAST(inast)
       assert(darkroom.ast.isAST(origast))
       local ast = origast:shallowcopy()
 
-      if ast.kind~="transform" then
+      if ast.kind~="transform" and ast.kind~="outputs" then
         for k,v in pairs(inputs) do
           for i=1,2 do
             if ast["scaleN"..i]==nil or ast["scaleN"..i]==0 then ast["scaleN"..i] = v[1]["scaleN"..i] end
@@ -562,6 +562,10 @@ function darkroom.typedAST._toTypedAST(inast)
       elseif ast.kind=="outputs" then
         -- doesn't matter, this is always the root and we never need to get its type
         ast.type = inputs.expr1[1].type
+        ast.scaleN1 = 0
+        ast.scaleD1 = 0
+        ast.scaleN2 = 0
+        ast.scaleD2 = 0
 
         local i=1
         while ast["expr"..i] do
@@ -630,7 +634,8 @@ function darkroom.typedAST._toTypedAST(inast)
       assert(darkroom.type.isType(ast.type))
       for i=1,2 do 
         if type(ast["scaleN"..i])~="number" or type(ast["scaleD"..i])~="number" then print("missingrate",ast.kind); assert(false) end 
-        if (ast["scaleN"..i]/ast["scaleD"..i])>(largestScaleN[i]/largestScaleD[i]) then largestScaleN[i] = ast["scaleN"..i]; largestScaleD[i] = ast["scaleD"..i]; end
+        local lcd = (ast["scaleN"..i]*largestScaleN[i])/gcd(ast["scaleN"..i],largestScaleN[i])
+        if lcd>largestScaleN[i] then largestScaleN[i] = lcd end
       end
 
       return {ast}

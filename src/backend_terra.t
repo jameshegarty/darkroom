@@ -43,11 +43,12 @@ function strideMod(downsampleStride, upsampleStride, clock)
 end
 
 function looprate(N,D,max)
-  if N==1 then return D*max 
-  elseif N==0 and D==0 then return 1
-  elseif N==max then return D 
-  elseif D==1 then assert(math.floor(max/N)==(max/N)); return max/N end
-  assert(false)
+  if N==0 or D==0 then return 1
+  else
+    local r = (D*max)/N
+    assert(r==math.floor(r))
+    return r
+  end
 end
 
 function imageSize(w,N,D)
@@ -863,8 +864,11 @@ function darkroom.terracompiler.codegen(
           else
             local vres = {}
             local yres = {}
-            if downsampleStride==1 then for i = 0,V-1 do table.insert(vres,math.floor(i/upsampleStride)-i); table.insert(yres,0) end
-            else for i = 0,V-1 do table.insert(vres,i*(downsampleStride-1)); table.insert(yres,0) end end
+
+            if downsampleStride==1 and (upsampleStride==2 or upsampleStride==4) then for i = 0,V-1 do table.insert(vres,math.floor(i/upsampleStride)-i); table.insert(yres,0) end
+            elseif downsampleStride==1 and upsampleStride~=1 then for i = 0,V-1 do table.insert(vres,`floorDivide(xsymb+i,upsampleStride)-floorDivide(xsymb,upsampleStride)-i); table.insert(yres,0) end 
+            elseif upsampleStride==1 and downsampleStride~=1 then for i = 0,V-1 do table.insert(vres,i*(downsampleStride-1)); table.insert(yres,0) end
+            else assert(false) end
             out = inputImages[kernelNode][node.from][c]:get(loopid, true,  `vectorof(int,vres)+relX, `vectorof(int,yres)+relY,  V, validLeft, validRight);
           end
         elseif node.kind=="binop" then
