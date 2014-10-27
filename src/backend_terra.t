@@ -446,7 +446,7 @@ function isImageWrapper(b) return getmetatable(b)==ImageWrapperMT end
 
 -- tab.terraType should be the base type of the data stored in this image
 -- ie, if it's a floating point image, tab.terraType should be float
-function newImageWrapper( basePtr, orionType, stride, debug, scaleN1, scaleD1, scaleN2, scaleD2, largestScaleY )
+function newImageWrapper( basePtr, orionType, stride, debug, scaleN1, scaleD1, scaleN2, scaleD2, largestScaleY, sparse )
   assert(darkroom.type.isType(orionType))
   assert(type(stride)=="number")
   assert(type(debug) == "boolean")
@@ -455,8 +455,9 @@ function newImageWrapper( basePtr, orionType, stride, debug, scaleN1, scaleD1, s
   assert(type(scaleN2)=="number")
   assert(type(scaleD2)=="number")
   assert(type(largestScaleY)=="number")
+  assert(type(sparse)=="boolean")
 
-  local tab = {data={},basePtr=basePtr,orionType=orionType, stride=stride, debug=debug, scaleN1=scaleN1, scaleD1=scaleD1, scaleN2=scaleN2, scaleD2=scaleD2, largestScaleY=largestScaleY, downsampleStrideX={}, downsampleStrideY={}, upsampleStrideX={}, upsampleStrideY={}, readerPosX={}, readerPosY={}}
+  local tab = {data={},basePtr=basePtr,orionType=orionType, stride=stride, debug=debug, scaleN1=scaleN1, scaleD1=scaleD1, scaleN2=scaleN2, scaleD2=scaleD2, largestScaleY=largestScaleY, downsampleStrideX={}, downsampleStrideY={}, upsampleStrideX={}, upsampleStrideY={}, readerPosX={}, readerPosY={}, sparse=sparse, posX={}, posY={}}
 
   return setmetatable(tab,ImageWrapperMT)
 end
@@ -478,10 +479,18 @@ function ImageWrapperFunctions:declare( loopid, xStripRelative, y, clock, core, 
   y = `floorDivide(y,[looprate(self.scaleN2,self.scaleD2,self.largestScaleY)])
 
   if self.data[loopid]==nil then self.data[loopid] = symbol(&(self.orionType:toTerraType())) end
-  return quote var [self.data[loopid]] =  [&self.orionType:toTerraType()]([self.basePtr] + y*[self.stride] + x) end
+
+  local res = {}
+  if self.sparse then 
+    self.posX[loopid] = symbol(int, "sparsePosX")
+    self.posY[loopid] = symbol(int, "sparsePosY")
+    return quote var [self.posX[loopid]] = x; var [self.posY[loopid]] = y; @[&uint](self.basePtr) = 0; var [self.data[loopid]] =  [&self.orionType:toTerraType()]([&int]([self.basePtr])+1) end
+  else
+    return quote var [self.data[loopid]] =  [&self.orionType:toTerraType()]([self.basePtr] + y*[self.stride] + x) end
+  end
 end
 
-function ImageWrapperFunctions:set( loopid, value, V )
+function ImageWrapperFunctions:set( loopid, value, V, notFiltered )
   assert(terralib.isquote(value))
   assert(type(loopid)=="number")
   assert(type(V)=="number")
@@ -495,10 +504,26 @@ function ImageWrapperFunctions:set( loopid, value, V )
                      orionAssert( (int64([self.data[loopid]])-int64([self.basePtr]))>=0,"wrote before start of array")
                      orionAssert( uint64([self.data[loopid]]) % (V*sizeof([self.orionType:toTerraType()])) == 0, "write is not aligned!")
       end)
+  end
+
+  if self.sparse then
+    if terralib.isquote(notFiltered) then
+      return quote 
+        for v=0,V do
+          if notFiltered[v] then
+            @[&uint]([self.basePtr]) = @[&uint]([self.basePtr]) + 1
+            @[&int]([self.data[loopid]]) = [self.posX[loopid]]+v;
+            @([&int]([self.data[loopid]])+1) = [self.posY[loopid]];
+            [self.data[loopid]] = [&self.orionType:toTerraType()]([&int]([self.data[loopid]])+2)
+            @([self.data[loopid]]) = value[v];
+            [self.data[loopid]] = [self.data[loopid]] + 1;
+          end
+        end
+      end
     end
-
-
-  table.insert(res,quote terralib.attrstore([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]]),value,{nontemporal=true}) end)
+  else
+    table.insert(res,quote terralib.attrstore([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]]),value,{nontemporal=true}) end)
+  end
 
   return quote res end
 end
@@ -511,6 +536,8 @@ function ImageWrapperFunctions:get(loopid, gather, relX, relY, V)
   assert(type(relX)=="number" or terralib.isquote(relX))
   assert(type(relY)=="number" or terralib.isquote(relY))
   assert(type(V)=="number")
+
+  assert(self.sparse==false)
 
   local expr
 
@@ -551,14 +578,17 @@ end
 function ImageWrapperFunctions:next( loopid, v )
   assert(type(loopid)=="number")
   assert(type(v)=="number" or terralib.isquote(v))
-  return quote [self.data[loopid]] = [self.data[loopid]] + v*[self.downsampleStrideX[loopid]] end
+  local res = {}
+  if self.sparse then return quote [self.posX[loopid]] = [self.posX[loopid]]+v*[self.downsampleStrideX[loopid]] end
+  else return quote [self.data[loopid]] = [self.data[loopid]] + v*[self.downsampleStrideX[loopid]] end end
 end
 
 -- sub: this is the number of pixels we looped over since last calling nextline
 -- basically: the number of times we called nextVector this row * the vector width
 function ImageWrapperFunctions:nextLine( loopid, sub )
   assert(terralib.isquote(sub))
-  return quote [self.data[loopid]] = [self.data[loopid]] + [self.stride]*[self.downsampleStrideY[loopid]] - (sub*[self.downsampleStrideX[loopid]]) end
+  if self.sparse then return quote [self.posX[loopid]] = [self.posX[loopid]] - (sub*[self.downsampleStrideX[loopid]]); [self.posY[loopid]] = [self.posY[loopid]] + [self.downsampleStrideY[loopid]]; end
+  else return quote [self.data[loopid]] = [self.data[loopid]] + [self.stride]*[self.downsampleStrideY[loopid]] - (sub*[self.downsampleStrideX[loopid]]) end end
 end
 
 
@@ -832,7 +862,37 @@ function darkroom.terracompiler.codegen(
           print(node.reduceop)
           assert(false)
         end
+
+      elseif node.kind=="filter" then
+        local finalOut = {}
+        local statOut = {}
+
+        -- we need to sparate out the statements that relate to the condition vs the value
+        local statCond = {}
+        local statCondSeen = {}
+        for kk, vv in pairs(args.cond[3]) do assert(terralib.isquote(vv)); if statCondSeen[vv]==nil then table.insert(statCond, vv); statCondSeen[vv]=1 end end
+
+        local statExpr = {}
+        local statExprSeen = {}
+        for kk, vv in pairs(args.expr[3]) do assert(terralib.isquote(vv)); if statCondSeen[vv]==nil and statExprSeen[vv]==nil then table.insert(statExpr, vv); statExprSeen[vv]=1 end end
+
+        for c = 1, node.type:channels() do
+          table.insert(finalOut, symbol(darkroom.type.toTerraType(node.type:baseType(),false,V),"filteredOut"))
+          local cond = `[inputs.cond[c]][0]
+          for v=1,V-1 do cond = `[cond] or [inputs.cond[c]][v] end
+          table.insert(statOut,quote
+                         var [finalOut[c]] = 0
+                         statCond;
+                         if cond then
+                           statExpr;
+                           [finalOut[c]] = [inputs.expr[c]];
+                         end end)
+           finalOut[c] = `[finalOut[c]]
+        end
         
+        local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
+        table.insert(statOut, quote var [packedSymbol] = array(finalOut) end)
+        return {finalOut, `[packedSymbol], statOut, inputs.cond}
       end
 
       for c=1,node.type:channels() do
@@ -1150,7 +1210,7 @@ function darkroom.terracompiler.codegen(
     print("terracompiler.codegen astNodes:",inkernel:S("*"):count()," statements:",#res[3],inkernel:name())
   end
 
-  return res[1],res[3]
+  return res[1],res[3],res[4]
 end
 
 -- user is expected to allocate an image that is padded to the (vector size)*(stripCount)
@@ -1356,7 +1416,7 @@ return
           end
         end)
 
-      local expr,statements=darkroom.terracompiler.codegen( n.kernel,  options.V, x, clock, loopid, options.stripcount, n, inputs, outputs, taps, TapStruct, valid.left, valid.right, options.debug)
+      local expr, statements, notFiltered = darkroom.terracompiler.codegen( n.kernel,  options.V, x, clock, loopid, options.stripcount, n, inputs, outputs, taps, TapStruct, valid.left, valid.right, options.debug)
 
       table.insert(loopCode,
         quote
@@ -1381,7 +1441,7 @@ return
 
               for [x] = validVectorized.left, validVectorized.right, options.V do
                 statements;
-                [outputs[n]:set( loopid, expr, options.V )];
+                [outputs[n]:set( loopid, expr, options.V, notFiltered )];
                 [outputs[n]:next( loopid, options.V )];
                 [inputs[n]:next( loopid, options.V )];
               end
@@ -1544,7 +1604,7 @@ function darkroom.terracompiler.allocateImageWrappers(
   local function getInputWrapper(id,type)
     if inputWrappers[id]==nil then
       inputWrappers[id] = {}
-      for c = 1,type:channels() do inputWrappers[id][c] = newImageWrapper( channelPointer(c-1,inputImageSymbolMap[id], type:baseType():toTerraType()), type:baseType(), options.width, options.debug ,1,1,1,1, largestScaleY) end
+      for c = 1,type:channels() do inputWrappers[id][c] = newImageWrapper( channelPointer(c-1,inputImageSymbolMap[id], type:baseType():toTerraType()), type:baseType(), options.width, options.debug ,1,1,1,1, largestScaleY, false) end
       setmetatable(inputWrappers[id],pointwiseDispatchMT)
     end
     return inputWrappers[id]
@@ -1578,7 +1638,7 @@ function darkroom.terracompiler.allocateImageWrappers(
         -- make the output
         if parentIsOutput(n)~=nil then
           outputs[n] = {}
-          for c=1,n.kernel.type:channels() do outputs[n][c] = newImageWrapper( channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType()), n.kernel.type:baseType(), upToNearest(options.V, imageSize(options.width,n.kernel.scaleN1,n.kernel.scaleD1)), options.debug, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, largestScaleY) end
+          for c=1,n.kernel.type:channels() do outputs[n][c] = newImageWrapper( channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType()), n.kernel.type:baseType(), upToNearest(options.V, imageSize(options.width,n.kernel.scaleN1,n.kernel.scaleD1)), options.debug, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, largestScaleY, n.kernel.kind=="filter") end
           setmetatable(outputs[n],pointwiseDispatchMT)
         else
           outputs[n] = {}
@@ -1657,7 +1717,7 @@ function darkroom.terracompiler.compile(
   marshalBytes = marshalBytes + terralib.sizeof(TapStruct)
 
   local threadCode = darkroom.terracompiler.codegenThread( kernelGraph, inputImages, TapStruct, shifts, largestScaleY, options )
-  --threadCode:printpretty(false)
+--  threadCode:printpretty(false)
 
   local fin = terra([inputImageSymbolTable], [outputImageSymbolTable], tapsIn : &opaque)
     var start = darkroom.currentTimeInSeconds()

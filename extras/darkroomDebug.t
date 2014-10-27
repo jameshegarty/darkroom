@@ -387,6 +387,8 @@ function astPrintPrettys(root)
   elseif self.kind=="var" then
 --    out = self.name
     out = "VAR"..self.name
+  elseif self.kind=="filter" then
+    out = "filter( "..inputs.cond..", "..inputs.expr.." )"
   else
     print(self.kind)
     assert(false)
@@ -635,9 +637,11 @@ function typedASTPrintPrettys(root)
       vars = vars.."_mr_"..self["varname"..i]..tostring(self["varid"..i]).."="..self["varlow"..i]..","..self["varhigh"..i].." "
       i=i+1
     end
-    out="map "..vars.." reduce("..self.reduceop..") "..inputs.expr.." end"
+    out = "map "..vars.." reduce("..self.reduceop..") "..inputs.expr.." end"
   elseif self.kind=="mapreducevar" then
-    out="_mr_"..self.variable..tostring(self.id).."["..self.low.." to "..self.high.."]"
+    out = "_mr_"..self.variable..tostring(self.id).."["..self.low.." to "..self.high.."]"
+  elseif self.kind=="filter" then
+    out = "filter( "..inputs.cond..", "..inputs.expr.." )"
   else
     print(self.kind)  
     assert(false)

@@ -180,6 +180,8 @@ function typedASTFunctions:stencil(input)
     return self.expr:stencil(input)
   elseif self.kind=="mapreducevar" then
     return Stencil.new()
+  elseif self.kind=="filter" then
+    return self.expr:stencil(input):unionWith(self.cond:stencil(input))
   end
 
   print(self.kind, debug.traceback())
@@ -229,6 +231,14 @@ function darkroom.typedAST._toTypedAST(inast)
               print("kind",ast.kind,"i",i,"key",k,"scaleN_this",ast["scaleN"..i],"scaleN_input",v[1]["scaleN"..i],ast["scaleD"..i],v[1]["scaleD"..i])
               darkroom.error("Operations can only be applied to images that are the same size.",origast:linenumber(), origast:offset(), origast:filename())
             end
+          end
+        end
+      end
+
+      if ast.kind~="outputs" then
+        for k,v in pairs(inputs) do
+          if v[1].kind=="filter" then
+            darkroom.error("Operations can not be performed on sparse (filtered) images",origast:linenumber(), origast:offset(), origast:filename())
           end
         end
       end
@@ -623,7 +633,10 @@ function darkroom.typedAST._toTypedAST(inast)
 
           i = i + 1
         end
-
+      elseif ast.kind=="filter" then
+        ast.cond = inputs.cond[1]
+        ast.expr = inputs.expr[1]
+        ast.type = ast.expr.type
       else
         darkroom.error("Internal error, typechecking for "..ast.kind.." isn't implemented!",ast.line,ast.char)
         return nil

@@ -127,7 +127,7 @@ function doDeconvolution()
      observed:load(inputFile):toDarkroomFormat()
 
      var observedFloat : Image
-     observedFloat:allocateDarkroomFormat(W,H,4,3,32,true,false)
+     observedFloat:allocateDarkroomFormat(W,H,4,3,32,true,false,false)
 
      tofloatfn(observed.data, observedFloat.data, &tapStruct)
   
@@ -135,14 +135,14 @@ function doDeconvolution()
 
      -- allocate the output
      var latent_est : Image
-     latent_est:allocateDarkroomFormat(W,H,4,3,32,true,false)
+     latent_est:allocateDarkroomFormat(W,H,4,3,32,true,false,false)
      var latent_est_ptr = latent_est.data
      for c=0,3 do for y=0,H do for x=0,W do
            ([&float](latent_est.data))[c*W*H+y*W+x] = 0.5
      end end end
 
      var out : Image
-     out:allocateDarkroomFormat(W,H,4,3,32,true,false)
+     out:allocateDarkroomFormat(W,H,4,3,32,true,false,false)
      var out_ptr = out.data
 
      -- run the pipeline multiple times
@@ -158,7 +158,7 @@ function doDeconvolution()
   
      -- save out
      var result : Image
-     result:allocateDarkroomFormat(W,H,4,3,8,false,false)
+     result:allocateDarkroomFormat(W,H,4,3,8,false,false,false)
      tobytefn( out_ptr, result.data, &tapStruct )
      result:fromDarkroomFormat():save("out/deconvolution.bmp")
    end)()  

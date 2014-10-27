@@ -1,5 +1,5 @@
 local ffi = require("ffi")
-
+TEST_OUTPUT_OVERRIDE = nil
 -- LINE COVERAGE INFORMATION                                                                                                                              
 if false then
   local CV = "out/coverageinfo."..arg[0]..arg[1]..".lua"
@@ -76,7 +76,7 @@ function test(inast)
     print(v)
     local st = ""
     if k>1 then st = "."..k end
-      dosave(v,"out/"..arg[0]..st..corest..".bmp")
+      dosave(v,TEST_OUTPUT_OVERRIDE or "out/"..arg[0]..st..corest..".bmp")
     end
 
 end

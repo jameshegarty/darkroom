@@ -294,7 +294,7 @@ function orionSimple.compile(outList, options)
           var [s] 
           var data : &opaque
           cstdlib.posix_memalign( [&&opaque](&data), 4*1024, [upToNearest(options.V,w)*h*v.kernel.type:sizeof()])
-          s:init([w],[h],[upToNearest(options.V,w)],[v.kernel.type:channels()],[v.kernel.type:baseType():sizeof()]*8,[v.kernel.type:isFloat()],[v.kernel.type:isInt()],true,data,data)
+          s:init([w],[h],[upToNearest(options.V,w)],[v.kernel.type:channels()],[v.kernel.type:baseType():sizeof()]*8,[v.kernel.type:isFloat()],[v.kernel.type:isInt()],true,[v.kernel.kind=="filter"],data,data)
         end)
       table.insert(outRes, quote s:toAOS() in s end)
       table.insert(outArgs, `s.data)

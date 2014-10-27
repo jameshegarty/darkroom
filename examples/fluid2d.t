@@ -171,7 +171,7 @@ terra normalizeAndSave( img : &opaque, filename : &int8 )
   end end
 
   var output : Image
-  output:allocateDarkroomFormat(N,N,4,1,8,false,false)
+  output:allocateDarkroomFormat(N,N,4,1,8,false,false,false)
   var ts = ftuStruct {min,max}
   floatToUint8( img, output.data, &ts )
   output:save("out/fluid2d.bmp")

@@ -153,6 +153,10 @@ function darkroom.gather( thisast, input,x,y,maxXV,maxYV)
                         maxY=maxY}):copyMetadataFrom(thisast)
 end
 
+function darkroom.filter( thisast, cond, expr )
+  assert(darkroom.ast.isAST(expr))
+  return darkroom.ast.new({kind="filter",cond=cond,expr=expr}):copyMetadataFrom(thisast)
+end
 ---------------------------------
 
 darkroom._currentBlock = ""

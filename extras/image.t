@@ -963,6 +963,39 @@ terra saveRaw(
   return chack.writeRawImgToFile(filename,width,height,stride,bits,data)
 end
 
+local terra saveCSV( filename : &int8, channels : int, bits : int, floating : bool, isSigned : bool, data : &opaque)
+  -- first 4 bytes is the count
+  var count = @[&uint](data)
+
+  var file  = cstdio.fopen(filename,"wb");
+  cstdio.fprintf(file, "x, y");
+  for c=0,channels do
+    if floating==false and isSigned==false then
+      cstdio.fprintf(file,",uint%d_%d ",bits,c)
+    end
+  end
+  cstdio.fprintf(file,"\n")
+
+  var ptr = [&uint8](data)
+  ptr = ptr + 4
+  for d=0,count do
+    var x = @[&int](ptr)
+    ptr = ptr + 4
+    var y = @[&int](ptr)
+    ptr = ptr + 4
+    cstdio.fprintf(file, "%d, %d",x,y)
+    for c=0,channels do
+      if floating==false and isSigned==false and bits==8 then
+        cstdio.fprintf(file,",%d ",@ptr)
+        ptr = ptr + 1
+      end
+    end
+    cstdio.fprintf(file,"\n")
+  end
+
+  cstdio.fclose(file);
+end
+
 struct Image { 
   width : int, 
   height : int, 
@@ -972,6 +1005,7 @@ struct Image {
   floating : bool, -- is this floating point?
   isSigned : bool, -- is this signed?
   SOA : bool, -- is this stored as SOA?
+  sparse : bool,
   data : &opaque,
   -- it's possible that data doesn't point to the start of the array (strided images)
   -- dataPtr points to the start of the array
@@ -987,6 +1021,7 @@ terra Image:init(
   floating : bool,
   isSigned : bool,
   SOA : bool,
+  sparse : bool,
   data : &opaque,
   dataPtr : &opaque)
 
@@ -1001,6 +1036,7 @@ terra Image:init(
   self.floating = floating
   self.isSigned = isSigned
   self.SOA = SOA
+  self.sparse = sparse
   self.data = data
   self.dataPtr = dataPtr
 
@@ -1015,9 +1051,10 @@ terra Image:initSimple(
   floating : bool,
   isSigned : bool,
   SOA : bool,
+  sparse : bool,
   data : &opaque)
 
-  self:init(width, height, width, channels, bits, floating, isSigned, SOA, data, data)
+  self:init(width, height, width, channels, bits, floating, isSigned, SOA, sparse, data, data)
 end
 
 terra Image:load(filename : &int8)
@@ -1029,7 +1066,7 @@ terra Image:load(filename : &int8)
 
   var data : &opaque = loadImageUC(filename,&width,&height,&channels,&bits)
   if data==nil then return nil end
-  return self:init(width,height,width,channels,bits,false,false,false,data,data)
+  return self:init(width,height,width,channels,bits,false,false,false,false,data,data)
 end
 
 terra Image:loadRaw(filename : &int8, w:int, h:int, bits:int)
@@ -1057,7 +1094,8 @@ terra Image:allocateDarkroomFormat(
   channels : int,
   bits : int,
   floating : bool,
-  isSigned : bool)
+  isSigned : bool,
+  sparse : bool)
   
   self.width = width
   self.height = height
@@ -1067,6 +1105,7 @@ terra Image:allocateDarkroomFormat(
   self.floating = floating
   self.isSigned = isSigned
   self.SOA = true
+  self.sparse = sparse
   
   self.dataPtr = cstdlib.malloc(self.height*self.stride*(bits/8)*channels)
   self.data = self.dataPtr
@@ -1119,7 +1158,7 @@ terra Image:save(filename : &int8)
   var ext = filename + cstring.strlen(filename) - 3
   --cstdio.printf("EXT %s\n",ext)
 
-  if self.bits==8 and (self.channels==1 or self.channels==3) and self.floating==false and self.isSigned==false and (self.SOA==false or self.channels==1) then
+  if self.bits==8 and (self.channels==1 or self.channels==3) and self.floating==false and self.isSigned==false and (self.SOA==false or self.channels==1) and self.sparse==false then
     if verbose then cstdio.printf("Assuming uint8\n") end
     if cstring.strcmp(ext,"jjm")==0 then
        var us = self:deepcopyUnstride()
@@ -1135,14 +1174,22 @@ terra Image:save(filename : &int8)
 	  [&uint8](self.data))
     end 
     return true
-  elseif self.bits==32 and self.channels==1 and self.floating==false and cstring.strcmp(ext,"jjm")>0 and self.SOA==false then
+  elseif self.bits==32 and self.channels==1 and self.floating==false and cstring.strcmp(ext,"jjm")>0 and self.SOA==false and self.sparse==false then
     if verbose then cstdio.printf("saving a 32 bit 1 channel float\n") end
     saveImageI( filename, self.width, self.height, self.stride, 1, [&int](self.data) )
     return true
-  elseif self.bits==32 and (self.channels==2 or self.channels==3) and self.floating and self.SOA==false then
+  elseif self.bits==32 and (self.channels==2 or self.channels==3) and self.floating and self.SOA==false and self.sparse==false then
     --cstdio.printf("Assuming that a 32 bit 3 channel image is float!!!!!!!!!\n")
     saveImageF( filename, self.width, self.height, self.stride, self.channels, [&float](self.data) )
     return true
+  elseif self.sparse then
+    if cstring.strcmp(ext,"csv")==0 then
+      saveCSV( filename, self.channels, self.bits, self.floating, self.isSigned, self.data )
+      return true
+    else
+      cstdio.printf("Unknown sparse format %s\n",filename)
+      return false
+    end
   end
 
   if self.floating then
@@ -1153,7 +1200,7 @@ terra Image:save(filename : &int8)
      saveImageJJM( filename, self.width, self.height, self.width, self.channels, self.bits, self.floating, self.isSigned, us.data ) -- self.data )
      us:free()
   else
-    cstdio.printf("Error saving, unimplemented type float:%d signed:%d bits:%d channels:%d SOA:%d\n",self.floating,self.isSigned,self.bits,self.channels,self.SOA)
+    cstdio.printf("Error saving, unimplemented type float:%d signed:%d bits:%d channels:%d SOA:%d sparse:%d\n", self.floating, self.isSigned, self.bits, self.channels, self.SOA, self.sparse)
   end
 
 
@@ -1375,18 +1422,55 @@ terra Image:SOAAOS(toAOS : bool)
 
     cstdlib.posix_memalign( [&&opaque](&dst), pageSize, size)
 
-    for y=0,self.height do
-      for x=0,self.width do
-        for c=0,self.channels do
-          var targetOffset = (y*self.stride+x)*bytes*self.channels+bytes*c
-          var sourceOffset = (self.stride*self.height*c*bytes)+(y*self.stride+x)*bytes
-          if toAOS==false then var t = targetOffset; targetOffset = sourceOffset; sourceOffset = t; end
+    if self.sparse and self.SOA and toAOS then
+      var fieldOffset = (self.stride*self.height*bytes)
+      var cnt = @[&uint](self.data)
+      var dstPtr = dst
+      @[&uint](dstPtr) = cnt
+      dstPtr = dstPtr + 4
+      for c=1,self.channels do 
+        orionAssert(@[&uint]([&uint8](self.data)+fieldOffset*c)==cnt, "SOAAOS mismatched count")
+      end
+
+      var src = [&uint8](self.data)+4
+
+      for item=0,cnt do
+        var x = @[&int](src)
+        var y = @([&int](src)+1)
+        for c=1,self.channels do 
+          orionAssert(@[&uint](src + fieldOffset*c)==x, "SOAAOS mismatched x")
+          orionAssert(@[&uint](src + fieldOffset*c + 4)==y, "SOAAOS mismatched y")
+        end
+
+        @[&int](dstPtr) = x
+        @([&int](dstPtr)+1) = y
+        dstPtr = dstPtr + 8
+        src = src + 8
+
+        for c=0,self.channels do 
           for b=0,bytes do
-            @([&uint8](dst)+targetOffset+b)=@([&uint8](self.data)+sourceOffset+b)
+            @dstPtr = @[&uint](src + fieldOffset*c)
+            dstPtr = dstPtr + 1; src = src + 1;
+          end
+        end
+      end
+    elseif self.sparse and self.SOA==false and toAOS==false then
+      orionAssert(false,"unsupported operation")
+    else
+      for y=0,self.height do
+        for x=0,self.width do
+          for c=0,self.channels do
+            var targetOffset = (y*self.stride+x)*bytes*self.channels+bytes*c
+            var sourceOffset = (self.stride*self.height*c*bytes)+(y*self.stride+x)*bytes
+            if toAOS==false then var t = targetOffset; targetOffset = sourceOffset; sourceOffset = t; end
+            for b=0,bytes do
+              @([&uint8](dst)+targetOffset+b)=@([&uint8](self.data)+sourceOffset+b)
+            end
           end
         end
       end
     end
+
     self:free()
     self.data = dst
     self.dataPtr = dst
