@@ -554,7 +554,7 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, stripWidth, stri
       for k,v in node:inputs() do
         if node.kernel~=nil then print("ST",node.kernel:stencil(v):min(1),node.kernel:stencil(v):max(1),"Y",node.kernel:stencil(v):min(2),node.kernel:stencil(v):max(2)) end
       end
-      maxStencil = maxStencil:unionWith(neededStencil(true,kernelGraph,node,nil))
+      if node.kernel~=nil then maxStencil = maxStencil:unionWith(neededStencil(true,kernelGraph,node,1,nil)) end
     end)
 
   print("S",shifts[kernelGraph.child1])

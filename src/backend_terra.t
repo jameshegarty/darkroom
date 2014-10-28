@@ -1230,6 +1230,7 @@ _neededCache[false] = setmetatable({}, {__mode="k"})
 function neededStencil( interior, kernelGraph, kernelNode, largestScaleY, shifts)
   assert(type(interior)=="boolean");assert(type(kernelGraph)=="table");assert(type(kernelNode)=="table");assert(type(largestScaleY)=="number")
   -- assert(type(shifts)=="table"); can be nil for HW backend
+  assert(kernelNode.kernel~=nil)
 
   if _neededCache[interior][kernelNode]==nil then
     local s = Stencil.new()
