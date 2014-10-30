@@ -8,7 +8,8 @@ RES += $(patsubst %.lua,out/%.fpga.bmp,$(SRCS))
 RES += $(patsubst %.lua,out/%.correct.txt,$(SRCS))
 BITS = $(patsubst %.lua,out/%.bit,$(SRCS))
 BITS += $(patsubst %.lua,out/%.lua.bmp,$(SRCS))
-BITS += $(patsubst %.lua,out/%.lua.est.txt,$(SRCS))
+BITS += $(patsubst %.lua,out/%.lua.est.lua,$(SRCS))
+BITS += $(patsubst %.lua,out/%.lua.actual.lua,$(SRCS))
 RES += $(BITS)
 
 TERRA = $(TERRADIR)/terra
@@ -23,8 +24,11 @@ clean:
 	rm -rf out/*
 	rm -rf build_*
 
-out/%.lua.est.txt : %.lua
+out/%.lua.est.lua : %.lua
 	$(TERRA) $< est
+
+out/%.lua.actual.lua : out/%.bit
+	$(TERRA) ../extractStats.t out/$*.par.txt $@
 
 out/%.v : %.lua
 	$(TERRA) $< build frame_128.bmp $(DARKROOM_CHIP)

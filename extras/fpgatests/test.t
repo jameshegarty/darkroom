@@ -38,7 +38,7 @@ function test(inast, inputList)
     end
 
     local est,pl = fpgaEstimate.compile(cpuinast, 640)
-    io.output("out/"..arg[0]..".est.txt")
+    io.output("out/"..arg[0]..".est.lua")
     io.write(est)
     io.close()
     io.output("out/"..arg[0]..".perlineest.txt")

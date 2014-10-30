@@ -287,10 +287,10 @@ function estimate(kernelGraph, imageWidth)
       end
     end)
 
-  local s = ""
-  for k,v in pairs(cnt) do s = s..k.." = "..v.."\n" end
+  local s = "{"
+  for k,v in pairs(cnt) do s = s.."'"..k.."' = "..v..",\n" end
 
-  return s, displayPerline()
+  return s.."rofl=0}", displayPerline()
 end
 
 function fpgaEstimate.compile(outputs, imageWidth)
@@ -312,8 +312,8 @@ function fpgaEstimate.compile(outputs, imageWidth)
   end
 
   local kernelGraph = darkroom.frontEnd( ast, {} )
-  local shifts = schedule(kernelGraph)
-  kernelGraph, shifts = shift(kernelGraph, shifts)
+  local shifts = schedule(kernelGraph,1)
+  kernelGraph, shifts = shift(kernelGraph, shifts,1)
 
   --kernelGraphPrintPretty(kernelGraph)
   return estimate(kernelGraph, imageWidth)

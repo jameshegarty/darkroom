@@ -26,17 +26,17 @@ function bilinearDemosaic(in1)
     -- build the red channel
     r_tr_a = in1(x,y+1)
     r_tr_b = in1(x,y-1)
-    r_tr = (r_tr_a+r_tr_b) >> 1
+    r_tr = (r_tr_a+r_tr_b) >> [uint8](1)
 
     r_bl_a = in1(x-1,y)
     r_bl_b = in1(x+1,y)
-    r_bl = (r_bl_a+r_bl_b) >> 1
+    r_bl = (r_bl_a+r_bl_b) >> [uint8](1)
     
     r_tl_a = in1(x+1,y+1)
     r_tl_b = in1(x-1,y-1)
     r_tl_c = in1(x-1,y+1)
     r_tl_d = in1(x+1,y-1)
-    r_tl = (r_tl_a+r_tl_b+r_tl_c+r_tl_d) >> 2
+    r_tl = (r_tl_a+r_tl_b+r_tl_c+r_tl_d) >> [uint8](2)
 
     phase = {x+xoff,y+yoff} and 1
     out_r = if phase[0]==1 and phase[1]==1 then in1(x,y) else
@@ -49,14 +49,14 @@ function bilinearDemosaic(in1)
     g_tl_b = in1(x-1,y)
     g_tl_c = in1(x,y+1)
     g_tl_d = in1(x,y-1)
-    g_tl = ( g_tl_a + g_tl_b + g_tl_c + g_tl_d ) >> 2
+    g_tl = ( g_tl_a + g_tl_b + g_tl_c + g_tl_d ) >> [uint8](2)
 
 
     g_br_a = in1(x+1,y)
     g_br_b = in1(x-1,y)
     g_br_c = in1(x,y+1)
     g_br_d = in1(x,y-1)
-    g_br = (g_br_a+g_br_b+g_br_c+g_br_d) >> 2
+    g_br = (g_br_a+g_br_b+g_br_c+g_br_d) >> [uint8](2)
 
     out_g = if phase[0]==0 and phase[1]==0 then g_tl else
       if phase[0]==1 and phase[1]==1 then g_br else
@@ -65,17 +65,17 @@ function bilinearDemosaic(in1)
     -- build blue
     b_bl_a = in1(x,y+1)
     b_bl_b = in1(x,y-1)
-    b_bl = (b_bl_a+b_bl_b) >> 1
+    b_bl = (b_bl_a+b_bl_b) >> [uint8](1)
 
     b_tr_a = in1(x-1,y)
     b_tr_b = in1(x+1,y)
-    b_tr = (b_tr_a+b_tr_b) >> 1
+    b_tr = (b_tr_a+b_tr_b) >> [uint8](1)
     
     b_br_a = in1(x+1,y+1)
     b_br_b = in1(x-1,y-1)
     b_br_c = in1(x-1,y+1)
     b_br_d = in1(x+1,y-1)
-    b_br = (b_br_a+b_br_b+b_br_c+b_br_d) >> 2
+    b_br = (b_br_a+b_br_b+b_br_c+b_br_d) >> [uint8](2)
 
     out_b = if phase[0]==0 and phase[1]==0 then in1(x,y) else
         if phase[0]==0 and phase[1]==1 then b_bl else

@@ -9,7 +9,7 @@ DARKROOM_CHIP?=xc6slx9
 all: $(RES)
 
 clean: 
-	rm out/*
+	rm -f out/*
 	rm -rf build_*
 
 out/%.v : %.t
