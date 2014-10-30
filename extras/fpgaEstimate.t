@@ -287,8 +287,8 @@ function estimate(kernelGraph, imageWidth)
       end
     end)
 
-  local s = "{"
-  for k,v in pairs(cnt) do s = s.."'"..k.."' = "..v..",\n" end
+  local s = "return {"
+  for k,v in pairs(cnt) do s = s.."['"..k.."'] = "..v..",\n" end
 
   return s.."rofl=0}", displayPerline()
 end

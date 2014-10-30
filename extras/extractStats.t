@@ -16,5 +16,5 @@ local brams = extract(t,"Number of RAMB18E1s","out")
 local luts = extract(t,"Number of Slice LUTS","out")
 
 io.output(arg[2])
-io.write("{dsps="..dsps..", luts="..luts..", brams="..brams.."}")
+io.write("return {dsps="..dsps..", luts="..luts..", brams="..brams.."}")
 io.close()
