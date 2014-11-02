@@ -2,10 +2,6 @@ local fpga = {}
 fpga.util = terralib.require("fpgautil")
 
 
---UART_CLOCK = 115200
-UART_CLOCK = 57600
---UART_CLOCK = 19200
-
 BRAM_SIZE_BYTES = 2048
 
 function concat(t1,t2)
@@ -60,6 +56,11 @@ end
 
 function pointerToVarname(x)
   return tostring(x):sub(10)
+end
+
+function kernelToVarname(x)
+  if type(x)=="number" then return ""
+  else return "_"..x:name() end
 end
 
 fpga.modules = terralib.require("fpgamodules")
@@ -157,10 +158,13 @@ function fpga.reduce(compilerState, op, cnt, datatype)
     -- codegen the dangle
     assert(remain-r*2 == 0 or remain-r*2==1)
     if remain-r*2==1 then
-      assert(level==0) -- should only be a remainder on the first iteration
       local n = "partial_l"..(level+1).."_"..r
       table.insert(module, declareReg(datatype,n))
-      table.insert(clockedLogic, n.." <= partial_"..(remain-1)..";\n")	
+      if level==0 then
+        table.insert(clockedLogic, n.." <= partial_"..(remain-1)..";\n")	
+      else
+        table.insert(clockedLogic, n.." <= partial_l"..level.."_"..(remain-1)..";\n")	
+      end
     end
 
     remain = remain-r
@@ -330,33 +334,17 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           i=i+1
         end
 
-        local loadSeen = {}
-        local loadList = {}
-        n:S("load"):traverse(
-        function(node)
-          print("LOAD",getStencilCoord(node.relX), getStencilCoord(node.relY))
-           local inp
-          if type(node.from)=="number" then
-            inp = "in_x"..getStencilCoord(node.relX).."_y"..getStencilCoord(node.relY)
-          else
-            inp = "in_"..node.from:name().."_x"..getStencilCoord(node.relX).."_y"..getStencilCoord(node.relY)
-          end
-        if loadSeen[inp]==nil then
-        loadSeen[inp]=1
-        table.insert(moduledef,"input["..(node.type:sizeof()*8-1)..":0] "..inp..",\n")
-        table.insert(loadList,node)
-	      end
-        end)
-
+        local inputListPos = #moduledef
+        local inputsSeen = {}
         local function loadInputList(mrvValues)
           local res = ""
-          for _,node in pairs(loadList) do
-            if type(node.from)=="number" then
-              res = res..",.in_x"..getStencilCoord(node.relX).."_y"..getStencilCoord(node.relY).."(in_x"..getStencilCoordFunrolled(node.relX,mrvValues).."_y"..getStencilCoordFunrolled(node.relY,mrvValues)..")"
-            else
-              res = res..",.in_"..node.from:name().."_x"..getStencilCoord(node.relX).."_y"..getStencilCoord(node.relY).."(in_"..node.from:name().."_x"..getStencilCoordFunrolled(node.relX,mrvValues).."_y"..getStencilCoordFunrolled(node.relY,mrvValues)..")"
-            end
-          end
+          local argumentsSeen = {}
+          n:S("load"):traverse(
+            function(node)
+              local vn = "in"..kernelToVarname(node.from).."_x"..getStencilCoord(node.relX).."_y"..getStencilCoord(node.relY)
+              if argumentsSeen[vn]==nil then res = res..",."..vn.."(in"..kernelToVarname(node.from).."_x"..getStencilCoordFunrolled(node.relX,mrvValues).."_y"..getStencilCoordFunrolled(node.relY,mrvValues)..")"; argumentsSeen[vn]=1 end
+              if inputsSeen[vn]==nil then table.insert(moduledef,inputListPos,"input["..(node.type:sizeof()*8-1)..":0] "..vn..",\n"); inputsSeen[vn]=1 end
+            end)
           return res
         end
 
@@ -441,11 +429,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           table.insert(clockedLogic, n:cname(c).." <= ("..inputs.cond[condC]..")?("..inputs.a[c].."):("..inputs.b[c]..");\n")
           res = n:cname(c)
         elseif n.kind=="load" then
-          if type(n.from)=="number" then
-            res = "in_x"..getStencilCoord(n.relX).."_y"..getStencilCoord(n.relY)
-          else
-            res = "in_"..n.from:name().."_x"..getStencilCoord(n.relX).."_y"..getStencilCoord(n.relY)
-          end
+          res = "in"..kernelToVarname(n.from).."_x"..getStencilCoord(n.relX).."_y"..getStencilCoord(n.relY)
         elseif n.kind=="position" then
           local str = "inX"
           if n.coord=="y" then str="inY" end
@@ -468,7 +452,9 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           table.insert(declarations, declareWire(n.type:baseType(), n:cname(c), expr," //cast"))
           res = n:cname(c)
         elseif n.kind=="value" then
-          table.insert(declarations,declareWire(n.type:baseType(), n:cname(c), tostring(n.value), " //value" ))
+          local v = tostring(n.value)
+          if type(n.value)=="table" then v = tostring(n.value[c]) end
+          table.insert(declarations,declareWire(n.type:baseType(), n:cname(c), v, " //value" ))
           res = n:cname(c)
         elseif n.kind=="mapreducevar" then
           res = "mrvar_"..n.variable
@@ -523,6 +509,7 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, stripWidth, stri
   local compilerState = {declaredReductionModules = {}}
 
   if options.clockMhz==nil then options.clockMhz=32 end
+  if options.uartClock==nil then options.uartClock=57600 end
 
   -- do the compile
   local newnode = {kind="outputs"}
@@ -689,7 +676,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
 --  totalDelay = pipelineRetiming[kernelGraph.child1] + shifts[kernelGraph.child1]
   totalDelay = pipelineRetiming[kernelGraph.child1]
 
-  local metadata = {maxStencil = maxStencil, outputShift = shifts[kernelGraph.child1], outputChannels = outputChannels, outputBytes = outputBytes, stripWidth = stripWidth, stripHeight=stripHeight}
+  local metadata = {maxStencil = maxStencil, outputShift = shifts[kernelGraph.child1], outputChannels = outputChannels, outputBytes = outputBytes, stripWidth = stripWidth, stripHeight=stripHeight, uartClock=options.uartClock}
 
   table.insert(pipeline, "assign out = kernelOut_"..kernelGraph.child1:name()..";\n")
   table.insert(pipeline,"endmodule\n\n")

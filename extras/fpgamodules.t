@@ -332,7 +332,9 @@ module sim;
 endmodule // sim        ]=]
 end
 
-function modules.tx(clockMhz)
+function modules.tx(clockMhz, uartClock)
+assert(type(clockMhz)=="number")
+assert(type(uartClock)=="number")
   return {[=[module TXMOD(
 input CLK,
 output TX,
@@ -345,7 +347,7 @@ output ready // when true, we're ready to transmit a new bit
   assign TX = TXd;
 
   reg [28:0] d;
-  wire [28:0] dInc = d[28] ? (]=]..UART_CLOCK..[=[) : (]=]..UART_CLOCK..[=[ - ]=]..clockMhz..[=[000000);
+  wire [28:0] dInc = d[28] ? (]=]..uartClock..[=[) : (]=]..uartClock..[=[ - ]=]..clockMhz..[=[000000);
   wire [28:0] dNxt = d + dInc;
   always @(posedge CLK)
   begin
@@ -395,7 +397,9 @@ endmodule
 ]=]}
 end
 
-function modules.rx(clockMhz)
+function modules.rx(clockMhz, uartClock)
+assert(type(clockMhz)=="number")
+assert(type(uartClock)=="number")
 return {[=[module RXMOD(
 input RX, 
 input CLK,
@@ -418,7 +422,7 @@ assign outvalid = outvalidReg;
 //reg [7:0] started = 0;
 
 reg [28:0] d;
-  wire [28:0] dInc = d[28] ? (]=]..(UART_CLOCK*16)..[=[) : (]=]..(UART_CLOCK*16)..[=[ - ]=]..clockMhz..[=[000000);
+  wire [28:0] dInc = d[28] ? (]=]..(uartClock*16)..[=[) : (]=]..(uartClock*16)..[=[ - ]=]..clockMhz..[=[000000);
   wire [28:0] dNxt = d + dInc;
   always @(posedge CLK)
   begin
@@ -470,8 +474,8 @@ end
 function modules.stageUART(options, inputBytes, outputBytes, stripWidth, stripHeight)
 
   local result = {}
-  result = concat(result, fpga.modules.tx(options.clockMhz))
-  result = concat(result, fpga.modules.rx(options.clockMhz))
+  result = concat(result, fpga.modules.tx(options.clockMhz, options.uartClock))
+  result = concat(result, fpga.modules.rx(options.clockMhz, options.uartClock))
   result = concat(result, fpga.modules.buffer("InputBuffer",stripWidth*stripHeight,1,inputBytes))
   result = concat(result, fpga.modules.buffer("OutputBuffer",stripWidth*stripHeight,outputBytes,1))
 

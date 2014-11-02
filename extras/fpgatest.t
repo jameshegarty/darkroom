@@ -10,7 +10,7 @@ local terra test()
   var inputImg : Image
   inputImg:load(metadata.inputFile)
 
-  var outputImg = fpga.util.test(uartDevice, &inputImg, metadata.stripWidth, metadata.stripHeight, metadata.minX, metadata.minY, metadata.maxX, metadata.maxY, metadata.outputShift, metadata.outputChannels, metadata.outputBytes )
+  var outputImg = fpga.util.test(uartDevice, &inputImg, metadata.stripWidth, metadata.stripHeight, metadata.minX, metadata.minY, metadata.maxX, metadata.maxY, metadata.outputShift, metadata.outputChannels, metadata.outputBytes, metadata.uartClock )
 
   outputImg:save(outputFile)
 end

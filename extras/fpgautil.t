@@ -1,7 +1,7 @@
 local fpgaUtil = {}
 terralib.require("image")
 
-local UART_DELAY = 300000
+
 
 local uart = terralib.includecstring [[
 #include <stdio.h>
@@ -13,7 +13,7 @@ local uart = terralib.includecstring [[
 
 int uart0_filestream;
 
-void init(char* device){
+void init(char* device, int uartClock){
   //-------------------------
   //----- SETUP USART 0 -----
   //-------------------------
@@ -58,15 +58,22 @@ void init(char* device){
   //PARODD - Odd parity (else even)
   struct termios options;
   tcgetattr(uart0_filestream, &options);
-  options.c_cflag = B57600 | CS8 | CLOCAL | CREAD;//<Set baud rate
+  if(uartClock==57600){
+    options.c_cflag = B57600 | CS8 | CLOCAL | CREAD;//<Set baud rate
+  }else if(uartClock==19200){
+    options.c_cflag = B19200 | CS8 | CLOCAL | CREAD;//<Set baud rate
+  }else if(uartClock==9600){
+    options.c_cflag = B9600 | CS8 | CLOCAL | CREAD;//<Set baud rate
+printf("9600 B \n");
+  }else{
+    printf("Unsupported uart clock %d\n",uartClock);
+    exit(1);
+  } 
   options.c_iflag = IGNPAR;
   options.c_oflag = 0;
   options.c_lflag = 0;
 
   cfmakeraw(&options); 
-//  cfsetspeed(&options, B230400);
-//  cfsetspeed(&options, B115200);
-  cfsetspeed(&options, B57600);
 
   tcflush(uart0_filestream, TCIFLUSH);
   tcsetattr(uart0_filestream, TCSANOW, &options);
@@ -135,7 +142,7 @@ local terra pad(infile : &int8, outfile : &int8, left:int, right:int, bottom:int
   end
 
   var imgOut : Image
-  imgOut:initSimple(w,h,imgIn.channels, imgIn.bits,imgIn.floating, imgIn.isSigned,imgIn.SOA,d)
+  imgOut:initSimple(w,h,imgIn.channels, imgIn.bits,imgIn.floating, imgIn.isSigned,imgIn.SOA,false,d)
   imgOut:save(outfile)
 
 end
@@ -160,7 +167,7 @@ local terra padImg(imgIn : &Image, left:int, right:int, bottom:int, top:int)
   end
 
   var imgOut : Image
-  imgOut:initSimple(w,h,imgIn.channels, imgIn.bits,imgIn.floating, imgIn.isSigned,imgIn.SOA,d)
+  imgOut:initSimple(w,h,imgIn.channels, imgIn.bits,imgIn.floating, imgIn.isSigned,imgIn.SOA,false,d)
 --  imgOut:save(outfile)
   return imgOut
 
@@ -186,9 +193,13 @@ terra fpgaUtil.test(
   stencilMaxY : int,
   outputShift : int,
   outputChannels : int,
-  outputBytes : int)
+  outputBytes : int,
+  uartClock : int)
 
-  uart.init(uartDevice)
+  var UART_DELAY = 750*(BLOCKX*BLOCKY*outputBytes)*(57600/uartClock)
+  cstdio.printf("UART_DELAY %d\n", UART_DELAY)
+
+  uart.init(uartDevice, uartClock)
 
   var txbuf = [&uint8](uart.malloc(2048));
   var txbufInt16 = [&int16](txbuf)
@@ -197,7 +208,7 @@ terra fpgaUtil.test(
   var paddedImg = padImg(inputImage, stencilMinX, stencilMaxX, stencilMinY, stencilMaxY)
   
   var imgOut : Image
-  imgOut:allocateDarkroomFormat(inputImage.width, inputImage.height, 1, outputChannels, (outputBytes/outputChannels)*8,false,false)
+  imgOut:allocateDarkroomFormat(inputImage.width, inputImage.height, 1, outputChannels, (outputBytes/outputChannels)*8,false,false,false)
   imgOut.SOA=false
 
   -- each block has an area around its perimeter that's invalid b/c the stencil
@@ -334,7 +345,7 @@ end
 
 function fpgaUtil.writeMetadata(filename, metadata)
     io.output(filename)
-    io.write("return {minX="..metadata.maxStencil:min(1)..",maxX="..metadata.maxStencil:max(1)..",minY="..metadata.maxStencil:min(2)..",maxY="..metadata.maxStencil:max(2)..",outputShift="..metadata.outputShift..",outputChannels="..metadata.outputChannels..",outputBytes="..metadata.outputBytes..",stripWidth="..metadata.stripWidth..",stripHeight="..metadata.stripHeight..",inputFile='"..metadata.inputFile.."'}")
+    io.write("return {minX="..metadata.maxStencil:min(1)..",maxX="..metadata.maxStencil:max(1)..",minY="..metadata.maxStencil:min(2)..",maxY="..metadata.maxStencil:max(2)..",outputShift="..metadata.outputShift..",outputChannels="..metadata.outputChannels..",outputBytes="..metadata.outputBytes..",stripWidth="..metadata.stripWidth..",stripHeight="..metadata.stripHeight..",inputFile='"..metadata.inputFile.."',uartClock="..metadata.uartClock.."}")
     io.close()
 end
 
