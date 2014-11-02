@@ -196,7 +196,7 @@ terra fpgaUtil.test(
   outputBytes : int,
   uartClock : int)
 
-  var UART_DELAY = 750*(BLOCKX*BLOCKY*outputBytes)*(57600/uartClock)
+  var UART_DELAY = 800*(BLOCKX*BLOCKY*outputBytes)*(57600/uartClock)
   cstdio.printf("UART_DELAY %d\n", UART_DELAY)
 
   uart.init(uartDevice, uartClock)
