@@ -392,9 +392,7 @@ function LineBufferWrapperFunctions:next(loopid,vorig)
     table.insert(res, quote [self.posX[loopid]] = [self.posX[loopid]] + v end)
   end
 
-  if self.debug then
-    table.insert(res, quote [self.readerPosX[loopid]] = [self.readerPosX[loopid]] + vorig end)
-  end
+  if self.debug or self.upsampleStrideX[loopid]>1 then table.insert(res, quote [self.readerPosX[loopid]] = [self.readerPosX[loopid]] + vorig end) end
 
   return quote res end
 end
@@ -424,10 +422,8 @@ function LineBufferWrapperFunctions:nextLine(loopid,  sub)
     table.insert(res, quote [self.posX[loopid]] = [self.posX[loopid]] + subX end)
   end
 
-  if self.debug then
-    table.insert(res, quote [self.readerPosY[loopid]] = [self.readerPosY[loopid]] + 1 end)
-    table.insert(res, quote [self.readerPosX[loopid]] = [self.readerPosX[loopid]] - sub end)
-  end
+  if self.debug or self.upsampleStrideY[loopid]>1 then table.insert(res, quote [self.readerPosY[loopid]] = [self.readerPosY[loopid]] + 1 end) end
+  if self.debug or self.upsampleStrideX[loopid]>1 then table.insert(res, quote [self.readerPosX[loopid]] = [self.readerPosX[loopid]] - sub end) end
 
   for k,v in pairs(buf) do
     table.insert(res, 
@@ -1409,6 +1405,7 @@ return
           
           if options.verbose then
             cstdio.printf("--- %s V %d cores %d core %d shift %d\n",[n.kernel:name()],options.V, options.cores, strip, [shifts[n]])
+            cstdio.printf("looprate %d largest %d\n",[looprate(n.kernel.scaleN2,n.kernel.scaleD2,largestScaleY)], largestScaleY)
             cstdio.printf("valid l %d r %d t %d b %d\n",[valid.left],[valid.right],[valid.top],[valid.bottom])
             cstdio.printf("validVectorized l %d r %d t %d b %d\n",[validVectorized.left],[validVectorized.right],[validVectorized.top],[validVectorized.bottom])
             cstdio.printf("needed l %d r %d t %d b %d\n",[needed.left],[needed.right],[needed.top],[needed.bottom])

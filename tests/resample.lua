@@ -22,7 +22,7 @@ end
 local terra makeIm(data : &float)
   var img : Image
   cstdio.printf("make Im %d %d\n",[testinput:width()],[testinput:height()])
-  img:initSimple([testinput:width()],[testinput:height()],1,32,true,false,true,data)
+  img:initSimple([testinput:width()],[testinput:height()],1,32,true,false,true,false,data)
   return img
 end
 

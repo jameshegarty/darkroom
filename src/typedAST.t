@@ -647,14 +647,24 @@ function darkroom.typedAST._toTypedAST(inast)
       assert(darkroom.type.isType(ast.type))
       for i=1,2 do 
         if type(ast["scaleN"..i])~="number" or type(ast["scaleD"..i])~="number" then print("missingrate",ast.kind); assert(false) end 
-        local lcd = (ast["scaleN"..i]*largestScaleN[i])/gcd(ast["scaleN"..i],largestScaleN[i])
-        if lcd>largestScaleN[i] then largestScaleN[i] = lcd end
+        local lcdN = (ast["scaleN"..i]*largestScaleN[i])/gcd(ast["scaleN"..i],largestScaleN[i])
+        if lcdN>largestScaleN[i] then largestScaleN[i] = lcdN end
+        local lcdD = (ast["scaleD"..i]*largestScaleD[i])/gcd(ast["scaleD"..i],largestScaleD[i])
+        if lcdD>largestScaleD[i] then largestScaleD[i] = lcdD end
       end
 
       return {ast}
     end)
 
-  return res[1], largestScaleN[1], largestScaleN[2]
+  local largestScale = {}
+  for i=1,2 do 
+    local g = gcd(largestScaleN[i], largestScaleD[i])
+    largestScaleN[i] = largestScaleN[i] / g
+    largestScaleD[i] = largestScaleD[i] / g
+    largestScale[i] = (largestScaleN[i]*largestScaleD[i])/gcd(largestScaleN[i],largestScaleD[i])
+  end
+
+  return res[1], largestScale[1], largestScale[2]
 end
 
 function darkroom.typedAST.astToTypedAST(ast, options)
