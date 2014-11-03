@@ -261,7 +261,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
     assert(kernel:S("load"):count()<=1)
     kernel:S("load"):traverse(
       function(n)
-        inputs = "input [7:0] in_"..n.from.."_x0_y0,\n"
+        inputs = "input ["..(n.type:sizeof()*8-1)..":0] in_"..n.from.."_x0_y0,\n"
       end)
   end
 
@@ -434,7 +434,8 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           table.insert(clockedLogic, n:cname(c).." <= ("..inputs.cond[condC]..")?("..inputs.a[c].."):("..inputs.b[c]..");\n")
           res = n:cname(c)
         elseif n.kind=="load" then
-          res = "in"..kernelToVarname(n.from).."_x"..getStencilCoord(n.relX).."_y"..getStencilCoord(n.relY)
+          local tys = n.type:baseType():sizeof()*8
+          res = "in"..kernelToVarname(n.from).."_x"..getStencilCoord(n.relX).."_y"..getStencilCoord(n.relY).."["..(c*tys-1)..":"..((c-1)*tys).."]"
         elseif n.kind=="position" then
           local str = "inX"
           if n.coord=="y" then str="inY" end

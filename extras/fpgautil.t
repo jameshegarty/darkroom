@@ -148,20 +148,24 @@ local terra pad(infile : &int8, outfile : &int8, left:int, right:int, bottom:int
 end
 
 local terra padImg(imgIn : &Image, left:int, right:int, bottom:int, top:int)
-
+  if imgIn.bits~=8 then uart.printf("padImg unsupported bits\n");uart.exit(1); end
+  if imgIn.SOA==true then uart.printf("padImg unsupported SOA\n");uart.exit(1); end
+  
   var w = imgIn.width+(right-left)
   var h = imgIn.height+(top-bottom)
-  var d = uart.malloc(w*h*(imgIn.bits/8))
+  var d = uart.malloc(w*h*(imgIn.bits/8)*imgIn.channels)
 
   var id = [&uint8](d)
   for y=bottom,imgIn.height+top do
     for x=left,imgIn.width+right do
       var rx = x-left
       var ry = y-bottom
-      if y<0 or x<0 or y>=imgIn.height or x>=imgIn.width then
-        id[ry*w+rx] = 0
-      else
-        id[ry*w+rx] = [&uint8](imgIn.data)[y*imgIn.width+x]
+      for c=0,imgIn.channels do
+        if y<0 or x<0 or y>=imgIn.height or x>=imgIn.width then
+          id[ry*w*imgIn.channels+(rx*imgIn.channels)+c] = 0
+        else
+          id[ry*w*imgIn.channels+(rx*imgIn.channels)+c] = [&uint8](imgIn.data)[y*imgIn.width*imgIn.channels+(x*imgIn.channels)+c]
+        end
       end
     end
   end
@@ -201,9 +205,13 @@ terra fpgaUtil.test(
 
   uart.init(uartDevice, uartClock)
 
-  var txbuf = [&uint8](uart.malloc(2048));
+  var metadataBytes = 4
+
+  var txsize = BLOCKX*BLOCKY*inputImage.channels+metadataBytes
+  var txbuf = [&uint8](uart.malloc(txsize));
   var txbufInt16 = [&int16](txbuf)
-  var rxbuf = [&uint8](uart.malloc(2048));
+  var rxsize = BLOCKX*BLOCKY*outputBytes+2
+  var rxbuf = [&uint8](uart.malloc(rxsize));
   
   var paddedImg = padImg(inputImage, stencilMinX, stencilMaxX, stencilMinY, stencilMaxY)
   
@@ -226,7 +234,7 @@ terra fpgaUtil.test(
   
   var retries = 0
   
-  var metadataBytes = 4
+
   
   for by=0,bh do
     for bx=0,bw do
@@ -244,30 +252,31 @@ terra fpgaUtil.test(
         for x=0,BLOCKX do
           var px = bx*BLOCKX_core+x
           var py = by*BLOCKY_core+y
-          
-          if px>=paddedImg.width or py>=paddedImg.height then
-            txbuf[y*BLOCKX+x+metadataBytes] = 0
-          else
-            txbuf[y*BLOCKX+x+metadataBytes] = [&uint8](paddedImg.data)[py*paddedImg.width+px]
+
+          for c=0,paddedImg.channels do
+            if px>=paddedImg.width or py>=paddedImg.height then
+              txbuf[y*BLOCKX*paddedImg.channels+x*paddedImg.channels+c+metadataBytes] = 0
+            else
+              txbuf[y*BLOCKX*paddedImg.channels+x*paddedImg.channels+c+metadataBytes] = [&uint8](paddedImg.data)[py*paddedImg.width*paddedImg.channels+px*paddedImg.channels+c]
+            end
           end
-          
-          rxbuf[y*BLOCKX+x] = 0;
         end
       end
       
+      for i=0,rxsize do rxbuf[i] = 0; end
+
       var txcrc : uint8 
       txcrc = 0
-      for i=0,BLOCKX*BLOCKY+metadataBytes do 
+      for i=0,txsize do 
         txcrc = txcrc + txbuf[i] 
 --            uart.printf("tx CRC %d %d\n",txbuf[i],txcrc)
       end
       
-      uart.transmit(txbuf,BLOCKX*BLOCKY+metadataBytes)
+      uart.transmit(txbuf,txsize)
       uart.usleep(UART_DELAY);
       var rsx : int
-      rsx = uart.receive(rxbuf,BLOCKX*BLOCKY*outputBytes+2)
-      
---          if rsx <= 0 then
+      rsx = uart.receive(rxbuf,rxsize)
+
       if rsx <= 0 then
         uart.printf("no data, assuming tx got dropped. attempting to restart. press key\n")
         --            while uart.getchar()~=32 do end
@@ -275,7 +284,7 @@ terra fpgaUtil.test(
           uart.printf("SENDBYTE\n")
           uart.transmit(txbuf,1)
           uart.usleep(UART_DELAY);
-          var rsxx = uart.receive(rxbuf,BLOCKX*BLOCKY*outputBytes+2)
+          var rsxx = uart.receive(rxbuf,rxsize)
           if rsxx>0 then break end
         end
         uart.printf("DONe\n")
@@ -284,7 +293,7 @@ terra fpgaUtil.test(
         retries = retries + 1
         goto RESTART
         --            uart.exit(1);
-      elseif rsx < BLOCKX*BLOCKY*outputBytes+2 then
+      elseif rsx < rxsize then
         uart.printf("missing data, retrying\n")
         goto RESTART
       end
