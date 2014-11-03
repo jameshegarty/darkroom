@@ -14,18 +14,6 @@ end
 
 function test(inast, inputList)
 
-  local BLOCKX = 74
-  local BLOCKY = 6
-
-  if darkroom.ast.isAST(inast) then
-  elseif type(inast)=="table" then
-    for k,v in ipairs(inast) do
-      local sz = math.floor(74/v[3]:sizeof())
-      BLOCKX = math.min(sz,BLOCKX)
-    end
-  else
-    assert(false)
-  end
 
   print("TEST",arg[1],arg[2])
   if arg[1]=="est" then
@@ -46,19 +34,18 @@ function test(inast, inputList)
     io.close()
   elseif arg[1]=="build" then
     local hwinputs = inputList
-    if hwinputs==nil then hwinputs={{testinput,"uart",darkroom.type.uint(8)}} end
+    if hwinputs==nil then hwinputs={{testinput,"uart","frame_128.bmp"}} end
     local hwoutputs = inast
     if darkroom.ast.isAST(hwoutputs) then
-      hwoutputs = {{inast,"uart", darkroom.type.uint(8)}}
+      hwoutputs = {{inast,"uart"}}
     end
 
-    local v, metadata = fpga.compile(hwinputs, hwoutputs, 128, 64, BLOCKX, BLOCKY, fpga.util.deviceToOptions(arg[3]))
+    local v, metadata = fpga.compile(hwinputs, hwoutputs, 128, 64, fpga.util.deviceToOptions(arg[3]))
     local s = string.sub(arg[0],1,#arg[0]-4)
     io.output("out/"..s..".v")
     io.write(v)
     io.close()
 
-    metadata.inputFile = arg[2]
     fpga.util.writeMetadata("out/"..s..".metadata.lua", metadata)
 
   else

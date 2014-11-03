@@ -505,9 +505,26 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
   return result
 end
 
-function fpga.compile(inputs, outputs, imageWidth, imageHeight, stripWidth, stripHeight, options)
+local function chooseStrip(options, inputs, kernelGraph)
+  if options.stripWidth~=nil or options.stripHeight~=nil then 
+    assert(type(options.stripWidth)=="number")
+    assert(type(options.stripHeight)=="number")
+    return options.stripWidth, options.stripHeight
+  end
+
+  local BLOCKX = 74
+  local BLOCKY = 6
+
+  for k,v in ipairs(inputs) do
+    assert(v[1].kind=="crop" and v[1].expr.kind=="load")
+    BLOCKX = math.floor(BLOCKX/v[1].expr.type:sizeof())
+  end
+
+  return BLOCKX, BLOCKY
+end
+
+function fpga.compile(inputs, outputs, imageWidth, imageHeight, options)
   assert(#outputs==1)
-  assert(type(stripHeight)=="number")
   assert(type(options)=="table" or options==nil)
 
   local compilerState = {declaredReductionModules = {}}
@@ -530,8 +547,10 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, stripWidth, stri
 
   local kernelGraph = darkroom.frontEnd( ast, {} )
 
-  local shifts = schedule(kernelGraph, 1, stripWidth)
-  kernelGraph, shifts = shift(kernelGraph, shifts, 1, stripWidth)
+  options.stripWidth, options.stripHeight = chooseStrip(options,inputs,kernelGraph)
+
+  local shifts = schedule(kernelGraph, 1, options.stripWidth)
+  kernelGraph, shifts = shift(kernelGraph, shifts, 1, options.stripWidth)
 
   local totalInputBytes = 0
   for k,v in ipairs(inputs) do totalInputBytes = totalInputBytes + inputs[k][1].expr.type:sizeof() end
@@ -550,7 +569,7 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, stripWidth, stri
     end)
 
   print("S",shifts[kernelGraph.child1])
-  local shiftX, shiftY = delayToXY(shifts[kernelGraph.child1], stripWidth)
+  local shiftX, shiftY = delayToXY(shifts[kernelGraph.child1], options.stripWidth)
   maxStencil = maxStencil:translate(shiftX,shiftY,0)
   print("Max Stencil x="..maxStencil:min(1)..","..maxStencil:max(1).." y="..maxStencil:min(2)..","..maxStencil:max(2))
 
@@ -566,9 +585,12 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
 ]=]}
 
   -- map the packed input bytes into a variable for each image
+  local packedInputPos = 0
   for k,v in ipairs(inputs) do 
     assert(inputs[k][1].expr.kind=="load")
-    table.insert(pipeline, declareWire(inputs[k][1].expr.type, "in_"..inputs[k][1].expr.from,"packedinput"," // unpack input"))
+    local ty = inputs[k][1].expr.type
+    table.insert(pipeline, declareWire(ty, "in_"..inputs[k][1].expr.from,"packedinput["..(packedInputPos+ty:sizeof()*8-1)..":"..packedInputPos.."]"," // unpack input"))
+    packedInputPos = packedInputPos + ty:sizeof()*8
   end
 
   local function parentIsOutput(node)
@@ -583,7 +605,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
         kernelRetiming[node] = fpga.trivialRetime(node.kernel)
         STUPIDGLOBALinternalDelays[node] = kernelRetiming[node][node.kernel]
         assert(type(STUPIDGLOBALinternalDelays[node])=="number")
-        if parentIsOutput(node)==false and node:bufferSize(kernelGraph,stripWidth)>0 then 
+        if parentIsOutput(node)==false and node:bufferSize(kernelGraph,options.stripWidth)>0 then 
           STUPIDGLOBALinternalDelays[node] = STUPIDGLOBALinternalDelays[node]
         end
       else
@@ -646,7 +668,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
             table.insert(consumers, stencil)
 	    
 	    -- note: this code duplicates kernelGraph:bufferSize()
-	    local b = -stencil:min(1)-stencil:min(2)*stripWidth
+	    local b = -stencil:min(1)-stencil:min(2)*options.stripWidth
 	    linebufferSize = math.max(linebufferSize,b)
 
             for x=stencil:min(1),stencil:max(1) do
@@ -660,7 +682,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
         end
         
         if parentIsOutput(node)==false then -- output nodes don't write to linebuffer
-          local lbname, lbmod = fpga.modules.linebuffer(linebufferSize, node.kernel.type, stripWidth, consumers)
+          local lbname, lbmod = fpga.modules.linebuffer(linebufferSize, node.kernel.type, options.stripWidth, consumers)
           result = concat(result, lbmod)
           table.insert(pipeline,lbname.." kernelBuffer_"..node:name().."(.CLK(CLK),"..lboutputs..".in(kernelOut_"..node:name().."));\n")
         end
@@ -691,7 +713,11 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
 --  totalDelay = pipelineRetiming[kernelGraph.child1] + shifts[kernelGraph.child1]
   totalDelay = pipelineRetiming[kernelGraph.child1]
 
-  local metadata = {maxStencil = maxStencil, outputShift = shifts[kernelGraph.child1], outputChannels = outputChannels, outputBytes = outputBytes, stripWidth = stripWidth, stripHeight=stripHeight, uartClock=options.uartClock}
+  local metadata = {minX = maxStencil:min(1), maxX=maxStencil:max(1), minY=maxStencil:min(2), maxY = maxStencil:max(2), outputShift = shifts[kernelGraph.child1], outputChannels = outputChannels, outputBytes = outputBytes, stripWidth = options.stripWidth, stripHeight=options.stripHeight, uartClock=options.uartClock}
+
+  for k,v in ipairs(inputs) do
+    metadata["inputFile"..k] = v[3]
+  end
 
   table.insert(pipeline, "assign out = kernelOut_"..kernelGraph.child1:name()..";\n")
   table.insert(pipeline,"endmodule\n\n")
@@ -701,7 +727,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
   if outputs[1][2]=="vga" then
     table.insert(result, fpga.modules.stageVGA())
   else
-    table.insert(result, fpga.modules.stageUART(options, totalInputBytes, outputBytes, stripWidth, stripHeight))
+    table.insert(result, fpga.modules.stageUART(options, totalInputBytes, outputBytes, options.stripWidth, options.stripHeight))
   end
 
   return table.concat(result,""), metadata

@@ -159,6 +159,32 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
   return name, t
 end
 
+local function fixedBram(conf)
+  local A = "A"
+  local B = "B"
+  if conf.A.chunk>conf.B.chunk then A,B=B,A end
+  local res = {}
+  table.insert(res,"RAMB16_S"..(conf[A].chunk*9).."_S"..(conf[B].chunk*9).." "..conf.name.."(\n")
+    table.insert(res,".DIPA(1'b0),\n")
+    table.insert(res,".DIPB(1'b0),\n")
+    if conf[A].DI~=nil then table.insert(res,".DIA("..conf[A].DI.."),\n") end
+    if conf[B].DI~=nil then table.insert(res,".DIB("..conf[B].DI.."),\n") end
+    if conf[A].DO~=nil then table.insert(res,".DOA("..conf[A].DO.."),\n") end
+    if conf[B].DO~=nil then table.insert(res,".DOB("..conf[B].DO.."),\n") end
+    table.insert(res,".ADDRA("..conf[A].ADDR.."),\n")
+    table.insert(res,".ADDRB("..conf[B].ADDR.."),\n")
+    table.insert(res,".WEA("..conf[A].WE.."),\n")
+    table.insert(res,".WEB("..conf[B].WE.."),\n")
+    table.insert(res,".ENA(1'b1),\n")
+    table.insert(res,".ENB(1'b1),\n")
+    table.insert(res,".CLKA("..conf[A].CLK.."),\n")
+    table.insert(res,".CLKB("..conf[B].CLK.."),\n")
+    table.insert(res,".SSRA(1'b0),\n")
+    table.insert(res,".SSRB(1'b0)\n")
+    table.insert(res,");\n\n")
+  return res
+end
+
 function modules.buffer(moduleName, sizeBytes, inputBytes, outputBytes)
   assert(type(inputBytes)=="number")
   assert(type(outputBytes)=="number")
@@ -166,83 +192,56 @@ function modules.buffer(moduleName, sizeBytes, inputBytes, outputBytes)
   local bramCnt = math.ceil(sizeBytes / 2048)
   local extraBits = math.ceil(math.log(bramCnt)/math.log(2))
 
-  local chunkSize
+  local chunkBits = {}
   local outputChunkSize = nearestPowerOf2(outputBytes)
-  local outputChunkAddrBits = math.log(outputChunkSize)/math.log(2)
+  chunkBits.outaddr = math.log(outputChunkSize)/math.log(2)
   local inputChunkSize = nearestPowerOf2(inputBytes)
-  local inputChunkAddrBits = math.log(outputChunkSize)/math.log(2)
-  local contiguous
-  local writePort = "A"
-  local readPort = "B"
+  chunkBits.inaddr = math.log(inputChunkSize)/math.log(2)
 
-  local addrA = "inaddr"
-  local addrB = "outaddr"
-
-  local clkA = "CLK_INPUT"
-  local clkB = "CLK_OUTPUT"
-
-  local chunkSizeA = inputChunkSize
-  local chunkSizeB = outputChunkSize
+  -- if inputBytes==1
+  local chunkSize, contiguous, strideAddr, nonstrideAddr, strideClk
 
   if inputBytes==1 then
     chunkSize = nearestPowerOf2(outputBytes)
     contiguous = outputBytes
+    strideAddr = "inaddr"
+    nonstrideAddr = "outaddr"
+    strideClk = "CLK_INPUT"
   elseif outputBytes==1 then
     chunkSize = nearestPowerOf2(inputBytes)
     contiguous = inputBytes
-    readPort = "A"
-    writePort = "B"
-    addrA = "outaddr"
-    addrB = "inaddr"
-    clkA = "CLK_OUTPUT"
-    clkB = "CLK_INPUT"
-    chunkSizeA = outputChunkSize
-    chunkSizeB = inputChunkSize
+    strideAddr = "outaddr"
+    nonstrideAddr = "inaddr"
+    strideClk = "CLK_OUTPUT"
   elseif inputBytes==outputBytes then
-    chunkSize = nearestPowerOf2(inputBytes)
-    contiguous = inputBytes
   else
     assert(false)
   end
 
   assert(chunkSize<=4)
 
-  local res = {"module "..moduleName.."(\ninput CLK_INPUT, \ninput CLK_OUTPUT,\ninput ["..(10+extraBits-inputChunkAddrBits)..":0] inaddr,\ninput WE,\ninput ["..(inputBytes*8-1)..":0] indata,\ninput ["..(10+extraBits-outputChunkAddrBits)..":0] outaddr,\noutput ["..(outputBytes*8-1)..":0] outdata\n);\n\n"}
+  local res = {"module "..moduleName.."(\ninput CLK_INPUT, \ninput CLK_OUTPUT,\ninput ["..(10+extraBits-chunkBits.inaddr)..":0] inaddr,\ninput WE,\ninput ["..(inputBytes*8-1)..":0] indata,\ninput ["..(10+extraBits-chunkBits.outaddr)..":0] outaddr,\noutput ["..(outputBytes*8-1)..":0] outdata\n);\n\n"}
 
   if contiguous~=chunkSize and (outputBytes~=inputBytes) then
-    table.insert(res,"reg [10:0] lastaddr = 0;\n")
+    table.insert(res,"reg ["..(10+extraBits-chunkBits[strideAddr])..":0] lastaddr = 0;\n")
     table.insert(res,"reg [4:0] cycleCNT = 0;\n")
-    table.insert(res,"reg [10:0] addrA = 0;\n")
+    table.insert(res,"reg ["..(10+extraBits-chunkBits[strideAddr])..":0] "..strideAddr.."Internal = 0;\n")
+    table.insert(res,"wire ["..(10+extraBits-chunkBits[nonstrideAddr])..":0] "..nonstrideAddr.."Internal = "..nonstrideAddr..";\n")
   else
-    table.insert(res,"wire [10:0] addrA;\n")
-    table.insert(res,"assign addrA=inaddr;\n")
+    table.insert(res,"wire ["..(10+extraBits-chunkBits.inaddr)..":0] inaddrInternal = inaddr;\n")
+    table.insert(res,"wire ["..(10+extraBits-chunkBits.outaddr)..":0] outaddrInternal = outaddr;\n")
   end
-
 
   local assn = "outdata0"
   for i=0,bramCnt-1 do
     table.insert(res,"wire ["..(outputChunkSize*8-1)..":0] outdata"..i..";\n")
-    table.insert(res,"RAMB16_S"..(chunkSizeA*9).."_S"..(chunkSizeB*9).." #(.INIT_00(256'h0123456789ABCDEF00000000000000000000000000000000000000000000BBBB)\n")
-    table.insert(res,") ram"..i.."(\n")
-    table.insert(res,".DIPA(1'b0),\n")
-    table.insert(res,".DI"..writePort.."(indata),\n")
-    table.insert(res,".DO"..readPort.."(outdata"..i.."),\n")
-    table.insert(res,".ADDRA(addrA),\n")
-if bramCnt > 1 then
-    table.insert(res,".WE"..writePort.."(WE && (inaddr["..(10+extraBits-inputChunkAddrBits)..":"..(11-inputChunkAddrBits).."]=="..extraBits.."'d"..i..")),\n")
-else
-    table.insert(res,".WE"..writePort.."(WE),\n")
-end
 
-    table.insert(res,".WE"..readPort.."(1'b0),\n")
-    table.insert(res,".ENA(1'b1),\n")
-    table.insert(res,".ENB(1'b1),\n")
-    table.insert(res,".ADDRB("..addrB.."[10:0]),\n")
-    table.insert(res,".CLKA("..clkA.."),\n")
-    table.insert(res,".CLKB("..clkB.."),\n")
-    table.insert(res,".SSRA(1'b0),\n")
-    table.insert(res,".SSRB(1'b0)\n")
-    table.insert(res,");\n\n")
+    local bramconf = {name="ram"..i,A={DI="indata",WE="WE", ADDR="inaddrInternal", CLK="CLK_INPUT", chunk=inputChunkSize},
+                     B={DO="outdata"..i, WE="1'b0", ADDR="outaddrInternal", CLK="CLK_OUTPUT", chunk=outputChunkSize}}
+    if bramCnt > 1 then
+      bramconf.A.WE = "(WE && (inaddr["..(10+extraBits-inputChunkAddrBits)..":"..(11-inputChunkAddrBits).."]=="..extraBits.."'d"..i.."))"
+    end
+    res = concat(res, fixedBram(bramconf))
 
     if i>0 then assn = "(outaddr["..(10+extraBits-outputChunkAddrBits)..":"..(11-outputChunkAddrBits).."]=="..extraBits.."'d"..i..")? outdata"..i.." : ("..assn..")" end
   end
@@ -252,22 +251,21 @@ end
   table.insert(res, "assign outdata = outdata_tmp["..(outputBytes*8-1)..":0];\n")
 
   if contiguous~=chunkSize and (outputBytes~=inputBytes) then
-
-    table.insert(res,[=[always @(posedge ]=]..clkA..[=[) begin
-  if(]=]..addrA..[=[ != lastaddr) begin
-    if(]=]..addrA..[=[==0) begin
+    table.insert(res,[=[always @(posedge ]=]..strideClk..[=[) begin
+  if(]=]..strideAddr..[=[ != lastaddr) begin
+    if(]=]..strideAddr..[=[==0) begin
       cycleCNT <= 0;
-      addrA <= 0;
+      ]=]..strideAddr..[=[Internal <= 0;
     end else if(cycleCNT == ]=]..(contiguous-1)..[=[) begin
       cycleCNT <= 0;
-      addrA <= addrA+1+]=]..(chunkSize-contiguous)..[=[;
+      ]=]..strideAddr..[=[Internal <= ]=]..strideAddr..[=[Internal+1+]=]..(chunkSize-contiguous)..[=[;
     end else begin
       cycleCNT <= cycleCNT+1;
-      addrA <= addrA+1;
+      ]=]..strideAddr..[=[Internal <= ]=]..strideAddr..[=[Internal+1;
     end
 
   end
-  lastaddr <= ]=]..addrA..[=[;
+  lastaddr <= ]=]..strideAddr..[=[;
 end
 ]=])
 
@@ -508,7 +506,7 @@ reg processing = 0;
 reg sending = 0;
 
 wire [7:0] rxbits;
-wire [7:0] pipelineInput;
+wire []=]..(inputBytes*8-1)..[=[:0] pipelineInput;
 reg [12:0] pipelineReadAddr = 0; 
 InputBuffer inputBuffer(.CLK_INPUT(CLK), .CLK_OUTPUT(CLK), .inaddr(addr), .WE(receiving), .indata(rxbits), .outaddr(pipelineReadAddr), .outdata(pipelineInput));
 

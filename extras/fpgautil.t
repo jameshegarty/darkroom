@@ -345,7 +345,11 @@ end
 
 function fpgaUtil.writeMetadata(filename, metadata)
     io.output(filename)
-    io.write("return {minX="..metadata.maxStencil:min(1)..",maxX="..metadata.maxStencil:max(1)..",minY="..metadata.maxStencil:min(2)..",maxY="..metadata.maxStencil:max(2)..",outputShift="..metadata.outputShift..",outputChannels="..metadata.outputChannels..",outputBytes="..metadata.outputBytes..",stripWidth="..metadata.stripWidth..",stripHeight="..metadata.stripHeight..",inputFile='"..metadata.inputFile.."',uartClock="..metadata.uartClock.."}")
+    io.write("return {")
+    for k,v in pairs(metadata) do
+      if type(v)=="number" then io.write(k.."="..v..",") elseif type(v)=="string" then io.write(k.."='"..v.."',") else print("BT",type(v),k);assert(false) end
+    end
+    io.write("rofl=1}")
     io.close()
 end
 

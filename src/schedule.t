@@ -121,9 +121,7 @@ function shift(graph, shifts, largestScaleY, HWWidth)
                   local sx = s-sy*HWWidth
                   r.relY = synthRel(r.relY, sy):optimize()
                   r.relX = synthRel(r.relX, sx):optimize()
-                  print("HWSHIFT",s,sx,sy)
                 else
-                  print("CPUSHIFT")
                   local inputKernel = newToOldRemap[nn.from]
                   local sy = math.floor( (shifts[inputKernel]-shifts[orig])/looprate(inputKernel.kernel.scaleN2,inputKernel.kernel.scaleD2,largestScaleY))
                   r.relY = synthRel(r.relY, sy):optimize()
@@ -140,9 +138,7 @@ function shift(graph, shifts, largestScaleY, HWWidth)
                 local sy = math.floor(shifts[orig]/HWWidth)
                 r.shiftY = r.shiftY + sy
                 r.shiftX = r.shiftX + (shifts[orig]-sy*HWWidth)
-                print("HWSHIFT")
               else
-                print("CPUSHIFT")
                 r.shiftY = r.shiftY + math.floor(shifts[orig]/looprate(orig.kernel.scaleN2,orig.kernel.scaleD2,largestScaleY))
               end
 
