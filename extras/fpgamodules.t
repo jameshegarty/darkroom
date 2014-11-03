@@ -74,7 +74,9 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
 
     local smallestX = 0
     for k,v in ipairs(consumers) do
-      assert(v:max(1)==0)
+      -- HACK: we restrict the entire stencil X to always be <=0 to simplify the linebuffer design
+      -- this wouldn't have to be the case if our linebuffer supported more general access patterns
+      assert(v:max(1)<=0)
       if v:min(1) < smallestX then smallestX = v:min(1) end
     end
 
@@ -515,7 +517,7 @@ wire [7:0] outbuf;
 reg [12:0] pipelineWriteAddr = -PIPE_DELAY; // pipe delay
 OutputBuffer outputBuffer(.CLK_INPUT(CLK), .CLK_OUTPUT(CLK), .inaddr(pipelineWriteAddr), .WE(processing), .indata(pipelineOutput), .outaddr(sendAddr), .outdata(outbuf));
 
-Pipeline pipeline(.CLK(CLK), .inX(posX+metadata[12:0]), .inY(posY+metadata[28:16]), .in(pipelineInput), .out(pipelineOutput));
+Pipeline pipeline(.CLK(CLK), .inX(posX+metadata[12:0]), .inY(posY+metadata[28:16]), .packedinput(pipelineInput), .out(pipelineOutput));
 
 reg [7:0] rxCRC = 0;
 reg [7:0] sendCRC = 0;

@@ -16,7 +16,8 @@ function displayProcstats(cnt)
   for k,v in pairs(procstats) do
     s = s..k.."\n"
     for kk,vv in pairs(v) do
-      s = s..kk.." : "..cnt[kk].."/"..v[kk].."  "..math.ceil((cnt[kk]/v[kk])*100).."%\n"
+      local cntkk = cnt[kk] or 0
+      s = s..kk.." : "..cntkk.."/"..v[kk].."  "..math.ceil((cntkk/v[kk])*100).."%\n"
     end
   end
   return s

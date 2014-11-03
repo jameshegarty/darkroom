@@ -86,6 +86,7 @@ function astFunctions:evalFunrolled(dim, mrvValues)
   elseif self.kind=="unary" and self.op=="-" then
     return self.expr:evalFunrolled(dim, mrvValues):flipDim(dim)
   elseif self.kind=="mapreducevar" then
+    print(type(mrvValues[self.variable]))
     assert(type(mrvValues[self.variable])=="number")
     return Stencil.new():addDim(dim, mrvValues[self.variable])
   elseif self.kind=="binop" and self.op=="+" then
@@ -257,7 +258,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
   end
 
   if kernelGraphNode:inputCount()==0 then
-    assert(kernel:S("load"):count()==1)
+    assert(kernel:S("load"):count()<=1)
     kernel:S("load"):traverse(
       function(n)
         inputs = "input [7:0] in_"..n.from.."_x0_y0,\n"
@@ -560,14 +561,14 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, stripWidth, stri
 
   local pipeline = {[=[module Pipeline(
 input CLK, input[12:0] inX, input[12:0] inY,
-input []=]..(totalInputBytes*8-1)..[=[:0] rawinput,
+input []=]..(totalInputBytes*8-1)..[=[:0] packedinput,
 output []=]..(outputBytes*8-1)..[=[:0] out);
 ]=]}
 
   -- map the packed input bytes into a variable for each image
   for k,v in ipairs(inputs) do 
     assert(inputs[k][1].expr.kind=="load")
-    table.insert(pipeline, declareWire(inputs[k][1].expr.type, "in_"..inputs[k][1].expr.from,"rawinput"," // unpack input"))
+    table.insert(pipeline, declareWire(inputs[k][1].expr.type, "in_"..inputs[k][1].expr.from,"packedinput"," // unpack input"))
   end
 
   local function parentIsOutput(node)
@@ -602,10 +603,10 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
         local inputs = ""
         local inputXY = ""
         if node:inputCount()==0 then
-          assert(node.kernel:S("load"):count()==1)
+          assert(node.kernel:S("load"):count()<=1)
           node.kernel:S("load"):traverse(
             function(n)
-              inputs = ".in_"..n.from.."_x0_y0(in),"
+              inputs = ".in_"..n.from.."_x0_y0(in_"..n.from.."),"
             end)
           inputXY = ".inX(inX),.inY(inY)"
         else

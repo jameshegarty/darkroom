@@ -16,6 +16,8 @@ function schedule(graph, largestScaleY, HWWidth)
         for k,v in node:inputs() do
           local s
           if type(HWWidth)=="number" then
+            -- this is an impossible situation - our math won't work anymore if this is the case
+            assert(node:maxUse(1,v)<HWWidth)
             s = node:maxUse(2,v)*HWWidth + node:maxUse(1,v) + shifts[v]
 
             if s<0 and node:maxUse(1,v)>0 then
@@ -119,7 +121,9 @@ function shift(graph, shifts, largestScaleY, HWWidth)
                   local sx = s-sy*HWWidth
                   r.relY = synthRel(r.relY, sy):optimize()
                   r.relX = synthRel(r.relX, sx):optimize()
+                  print("HWSHIFT",s,sx,sy)
                 else
+                  print("CPUSHIFT")
                   local inputKernel = newToOldRemap[nn.from]
                   local sy = math.floor( (shifts[inputKernel]-shifts[orig])/looprate(inputKernel.kernel.scaleN2,inputKernel.kernel.scaleD2,largestScaleY))
                   r.relY = synthRel(r.relY, sy):optimize()
@@ -136,7 +140,9 @@ function shift(graph, shifts, largestScaleY, HWWidth)
                 local sy = math.floor(shifts[orig]/HWWidth)
                 r.shiftY = r.shiftY + sy
                 r.shiftX = r.shiftX + (shifts[orig]-sy*HWWidth)
+                print("HWSHIFT")
               else
+                print("CPUSHIFT")
                 r.shiftY = r.shiftY + math.floor(shifts[orig]/looprate(orig.kernel.scaleN2,orig.kernel.scaleD2,largestScaleY))
               end
 

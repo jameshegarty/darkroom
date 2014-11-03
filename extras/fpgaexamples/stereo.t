@@ -1,4 +1,5 @@
 import "darkroom"
+--terralib.require("darkroomDebug")
 darkroomSimple = terralib.require("darkroomSimple")
 terralib.require("bilinear")
 fpga = terralib.require("fpga")
@@ -14,14 +15,14 @@ function rectify( img, remapX, remapY )
 end
 
 function makeOF( searchRadius, windowRadius, frame1, frame2 )
-  frame1 = im(x,y) [int32](frame1) end
-  frame2 = im(x,y) [int32](frame2) end
+--  frame1 = im(x,y) [int32](frame1) end
+--  frame2 = im(x,y) [int32](frame2) end
 
   local SAD = {}
   local offset = im(x,y)
     map i = 20, 20+searchRadius reduce(argmin)
       map ii=-windowRadius, windowRadius jj=-windowRadius, windowRadius reduce(sum) -- SAD
-        darkroom.abs(frame1(x+ii,y+jj)-frame2(x+i+ii,y+jj))
+        [uint16](darkroom.abs([int16](frame1(x+ii,y+jj))-[int16](frame2(x+i+ii,y+jj))))
       end
     end
   end
@@ -60,7 +61,7 @@ io.output("out/stereoEstimatePerline.txt")
 io.write(perline)
 io.close()
 ------------
-BLOCKX = 20
+BLOCKX = 30
 BLOCKY = 9
 print("Build For: "..arg[1])
 local o = fpga.util.deviceToOptions(arg[1])
