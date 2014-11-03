@@ -6,6 +6,22 @@
 local fpgaEstimate = {}
 local perline = {}
 
+local procstats = {}
+procstats["xc7z020"] = {dsps = 220, brams=280, luts=53200}
+procstats["xc7z100"] = {dsps = 2020, brams=1510, luts=277400}
+procstats["xc6slx9"] = {dsps = 16, brams=32, luts=5720}
+
+function displayProcstats(cnt)
+  local s = ""
+  for k,v in pairs(procstats) do
+    s = s..k.."\n"
+    for kk,vv in pairs(v) do
+      s = s..kk.." : "..cnt[kk].."/"..v[kk].."  "..math.ceil((cnt[kk]/v[kk])*100).."%\n"
+    end
+  end
+  return s
+end
+
 function displayPerline()
 
   local s = ""
@@ -97,10 +113,14 @@ end
 
 function reduce(op, ty, width)
   assert(width>0)
-  if op=="sum" or op=="max" or op=="min" or op=="+" then
+  if op=="sum" or op=="max" or op=="min" or op=="+"  then
     local r = mult(binopToCost(op,ty),(width/2)*2-1)
     print("reduce",width,"luts:",r.luts)
 --    r["reduce"..op..width]=1
+    return r
+  elseif op=="argmin" or op=="argmax" then
+    local r = mult(binopToCost("min",ty),(width/2)*2-1)
+    print("reduce",width,"luts:",r.luts)
     return r
   else
     print("reduce",op)
@@ -254,7 +274,7 @@ function estimate(kernelGraph, imageWidth)
               end
               resThis.luts = resThis.luts + reduceLuts*k.type:sizeof()*8
 
-              print("gather total luts:",r.luts)
+              print("gather total luts:",resThis.luts)
             elseif k.kind=="tap" then
               resThis = {tap=1,luts=k.type:sizeof()*(8/4)} -- hold values in DFF?
             elseif k.kind=="select" or k.kind=="vectorSelect" then
@@ -290,7 +310,7 @@ function estimate(kernelGraph, imageWidth)
   local s = "return {"
   for k,v in pairs(cnt) do s = s.."['"..k.."'] = "..v..",\n" end
 
-  return s.."rofl=0}", displayPerline()
+  return s.."rofl=0}", displayPerline()..displayProcstats(cnt)
 end
 
 function fpgaEstimate.compile(outputs, imageWidth)

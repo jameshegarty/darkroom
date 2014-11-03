@@ -59,7 +59,7 @@ function pointerToVarname(x)
 end
 
 function kernelToVarname(x)
-  if type(x)=="number" then return ""
+  if type(x)=="number" then return "_"..x
   else return "_"..x:name() end
 end
 
@@ -257,7 +257,11 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
   end
 
   if kernelGraphNode:inputCount()==0 then
-    inputs = "input [7:0] in_x0_y0,\n"
+    assert(kernel:S("load"):count()==1)
+    kernel:S("load"):traverse(
+      function(n)
+        inputs = "input [7:0] in_"..n.from.."_x0_y0,\n"
+      end)
   end
 
   local result = {"module Kernel_"..kernelGraphNode:name().."(input CLK, input[12:0] inX, input[12:0] inY, output[12:0] outX, output[12:0] outY, \n"..inputs.."output ["..(kernel.type:sizeof()*8-1)..":0] out);\n"}
@@ -501,7 +505,6 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
 end
 
 function fpga.compile(inputs, outputs, imageWidth, imageHeight, stripWidth, stripHeight, options)
-  assert(#inputs==1)
   assert(#outputs==1)
   assert(type(stripHeight)=="number")
   assert(type(options)=="table" or options==nil)
@@ -529,10 +532,11 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, stripWidth, stri
   local shifts = schedule(kernelGraph, 1, stripWidth)
   kernelGraph, shifts = shift(kernelGraph, shifts, 1, stripWidth)
 
-  local inputBytes = inputs[1][1].expr.type:sizeof()
+  local totalInputBytes = 0
+  for k,v in ipairs(inputs) do totalInputBytes = totalInputBytes + inputs[k][1].expr.type:sizeof() end
   local outputBytes = kernelGraph.child1.kernel.type:sizeof()
   local outputChannels = kernelGraph.child1.kernel.type:channels()
-  print("INPUTBYTeS",inputBytes,"OUTPUTBYTES",outputBytes)
+  print("INPUTBYTeS",totalInputBytes,"OUTPUTBYTES",outputBytes)
 
   local maxStencil = Stencil.new()
   kernelGraph:visitEach(
@@ -556,9 +560,15 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, stripWidth, stri
 
   local pipeline = {[=[module Pipeline(
 input CLK, input[12:0] inX, input[12:0] inY,
-input []=]..(inputBytes*8-1)..[=[:0] in,
+input []=]..(totalInputBytes*8-1)..[=[:0] rawinput,
 output []=]..(outputBytes*8-1)..[=[:0] out);
 ]=]}
+
+  -- map the packed input bytes into a variable for each image
+  for k,v in ipairs(inputs) do 
+    assert(inputs[k][1].expr.kind=="load")
+    table.insert(pipeline, declareWire(inputs[k][1].expr.type, "in_"..inputs[k][1].expr.from,"rawinput"," // unpack input"))
+  end
 
   local function parentIsOutput(node)
     for v,k in node:parents(kernelGraph) do if v==kernelGraph then return true end end
@@ -592,7 +602,11 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
         local inputs = ""
         local inputXY = ""
         if node:inputCount()==0 then
-          inputs = ".in_x0_y0(in),"
+          assert(node.kernel:S("load"):count()==1)
+          node.kernel:S("load"):traverse(
+            function(n)
+              inputs = ".in_"..n.from.."_x0_y0(in),"
+            end)
           inputXY = ".inX(inX),.inY(inY)"
         else
           for _,v in node:inputs() do
@@ -686,7 +700,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
   if outputs[1][2]=="vga" then
     table.insert(result, fpga.modules.stageVGA())
   else
-    table.insert(result, fpga.modules.stageUART(options,inputBytes, outputBytes, stripWidth, stripHeight))
+    table.insert(result, fpga.modules.stageUART(options, totalInputBytes, outputBytes, stripWidth, stripHeight))
   end
 
   return table.concat(result,""), metadata
