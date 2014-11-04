@@ -115,75 +115,6 @@ function delayToXY(delay, width)
   return xpixels, lines
 end
 
-function fpga.reduce(compilerState, op, cnt, datatype)
-  assert(type(op)=="string")
-  assert(darkroom.type.isType(datatype))
-
-  local name = "Reduce_"..op.."_"..cnt
-
-  if compilerState.declaredReductionModules[name] then
-    return name, {} -- already declared somewhere
-  end
-  compilerState.declaredReductionModules[name] = 1
-
-  local module = {"module "..name.."(input CLK, output["..(datatype:sizeof()*8-1)..":0] out"}
-  for i=0,cnt-1 do table.insert(module,", input["..(datatype:sizeof()*8-1)..":0] partial_"..i.."") end
-  table.insert(module,");\n")
-
-  local clockedLogic = {}
-
-  local remain = cnt
-  local level = 0
-  while remain>1 do
-    local r = math.floor(remain/2)
-    print("remain",remain,r)
-
-    local l = ""
-    if level>0 then l="_l"..level end
-
-    for i=0,r-1 do
-      local n = "partial_l"..(level+1).."_"..i
-      table.insert(module, declareReg(datatype,n))
-      
-      if op=="sum" then
-        table.insert(clockedLogic, n.." <= partial"..l.."_"..(i*2).." + partial"..l.."_"..(i*2+1)..";\n")
-      elseif op=="max" then
-        local a = "partial"..l.."_"..(i*2)
-        local b = "partial"..l.."_"..(i*2+1)
-        table.insert(clockedLogic, n.." <= ("..a..">"..b..")?("..a.."):("..b..");\n")
-      else
-        assert(false)
-      end
-    end
-
-    -- codegen the dangle
-    assert(remain-r*2 == 0 or remain-r*2==1)
-    if remain-r*2==1 then
-      local n = "partial_l"..(level+1).."_"..r
-      table.insert(module, declareReg(datatype,n))
-      if level==0 then
-        table.insert(clockedLogic, n.." <= partial_"..(remain-1)..";\n")	
-      else
-        table.insert(clockedLogic, n.." <= partial_l"..level.."_"..(remain-1)..";\n")	
-      end
-    end
-
-    remain = remain-r
-    level=level+1
-  end
-
-  table.insert(module, "assign out = partial_l"..level.."_0;\n")
-  table.insert(module, "always @ (posedge CLK) begin\n")
-  module = concat(module, clockedLogic)
-  table.insert(module,"end\nendmodule\n")
-
-
-  return name, module
-end
-
-
-
-
 STUPIDGLOBALinternalDelays = {}
 
 function kernelGraphFunctions:internalDelay()
@@ -383,7 +314,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         
         declarations = concat(declarations, funroll[#funroll]("",{}))
 
-        local rname, rmod = fpga.reduce(compilerState, n.reduceop, partials+1, n.expr.type)
+        local rname, rmod = fpga.modules.reduce(compilerState, n.reduceop, partials+1, n.expr.type)
 
         result = concat(rmod, result)
 
@@ -473,7 +404,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
             assert(false)
           end
         elseif n.kind=="reduce" then
-          local rname, rmod = fpga.reduce(compilerState, n.op, n:arraySize("expr"), n.type)
+          local rname, rmod = fpga.modules.reduce(compilerState, n.op, n:arraySize("expr"), n.type)
           result = concat(rmod, result)
           table.insert(declarations, declareWire(n.type, n:cname(c),"", "// reduce result"))
           local str = rname.." reduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(c)..")"

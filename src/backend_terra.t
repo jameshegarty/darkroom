@@ -849,6 +849,7 @@ function darkroom.terracompiler.codegen(
           local statOut = {quote var [set] = false; var [value] = 0; declareResults; out end}
           local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
           
+          table.insert(results, value) -- last value returned is the extremal value
           table.insert(statOut, quote var [packedSymbol] = array(results) end)
           local finalOut = {}
           for c=0,node.type:channels()-1 do finalOut[c+1] = `[packedSymbol][c] end

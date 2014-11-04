@@ -1,9 +1,7 @@
 local fpgaUtil = {}
 terralib.require("image")
 
-
-
-local uart = terralib.includecstring [[
+local c = terralib.includecstring [[
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>//Used for UART
@@ -126,7 +124,7 @@ local terra pad(infile : &int8, outfile : &int8, left:int, right:int, bottom:int
 
   var w = imgIn.width+(right-left)
   var h = imgIn.height+(top-bottom)
-  var d = uart.malloc(w*h*(imgIn.bits/8))
+  var d = c.malloc(w*h*(imgIn.bits/8))
 
   var id = [&uint8](d)
   for y=bottom,imgIn.height+top do
@@ -148,12 +146,12 @@ local terra pad(infile : &int8, outfile : &int8, left:int, right:int, bottom:int
 end
 
 local terra padImg(imgIn : &Image, left:int, right:int, bottom:int, top:int)
-  if imgIn.bits~=8 then uart.printf("padImg unsupported bits\n");uart.exit(1); end
-  if imgIn.SOA==true then uart.printf("padImg unsupported SOA\n");uart.exit(1); end
+  if imgIn.bits~=8 then c.printf("padImg unsupported bits\n");c.exit(1); end
+  if imgIn.SOA==true then c.printf("padImg unsupported SOA\n");c.exit(1); end
   
   var w = imgIn.width+(right-left)
   var h = imgIn.height+(top-bottom)
-  var d = uart.malloc(w*h*(imgIn.bits/8)*imgIn.channels)
+  var d = c.malloc(w*h*(imgIn.bits/8)*imgIn.channels)
 
   var id = [&uint8](d)
   for y=bottom,imgIn.height+top do
@@ -188,7 +186,8 @@ end
 
 terra fpgaUtil.test(
   uartDevice : &int8,
-  inputImage : &Image, 
+  inputImageCnt : int,
+  inputImages : &Image, 
   BLOCKX : uint, 
   BLOCKY : int, 
   stencilMinX : int, 
@@ -203,20 +202,27 @@ terra fpgaUtil.test(
   var UART_DELAY = 800*(BLOCKX*BLOCKY*outputBytes)*(57600/uartClock)
   cstdio.printf("UART_DELAY %d\n", UART_DELAY)
 
-  uart.init(uartDevice, uartClock)
+  c.init(uartDevice, uartClock)
 
   var metadataBytes = 4
 
-  var txsize = BLOCKX*BLOCKY*inputImage.channels+metadataBytes
-  var txbuf = [&uint8](uart.malloc(txsize));
+
+  var inputBytes = 0
+  for i=0,inputImageCnt do inputBytes = inputBytes + inputImages[i].channels end
+  var txsize = BLOCKX*BLOCKY*inputBytes + metadataBytes
+  var txbuf = [&uint8](c.malloc(txsize));
   var txbufInt16 = [&int16](txbuf)
   var rxsize = BLOCKX*BLOCKY*outputBytes+2
-  var rxbuf = [&uint8](uart.malloc(rxsize));
-  
-  var paddedImg = padImg(inputImage, stencilMinX, stencilMaxX, stencilMinY, stencilMaxY)
-  
+  var rxbuf = [&uint8](c.malloc(rxsize));
+
+  var paddedImgs = [&Image](c.malloc(terralib.sizeof(Image)*inputImageCnt))
+
+  for i=0,inputImageCnt do
+    paddedImgs[i] = padImg(&inputImages[i], stencilMinX, stencilMaxX, stencilMinY, stencilMaxY)
+  end
+
   var imgOut : Image
-  imgOut:allocateDarkroomFormat(inputImage.width, inputImage.height, 1, outputChannels, (outputBytes/outputChannels)*8,false,false,false)
+  imgOut:allocateDarkroomFormat(inputImages[0].width, inputImages[0].height, 1, outputChannels, (outputBytes/outputChannels)*8,false,false,false)
   imgOut.SOA=false
 
   -- each block has an area around its perimeter that's invalid b/c the stencil
@@ -225,12 +231,12 @@ terra fpgaUtil.test(
   var BLOCKY_core = BLOCKY + stencilMinY - stencilMaxY
   
   if BLOCKX_core<=0 or BLOCKY_core<=0 then
-    uart.printf("ERROR: block too small for this stencil %d %d\n",BLOCKX_core, BLOCKY_core)
-    uart.exit(1)
+    c.printf("ERROR: block too small for this stencil %d %d\n",BLOCKX_core, BLOCKY_core)
+    c.exit(1)
   end
   
-  var bw = [int](uart.ceil([float](inputImage.width)/[float](BLOCKX_core)))
-  var bh = [int](uart.ceil([float](inputImage.height)/[float](BLOCKY_core)))
+  var bw = [int](c.ceil([float](inputImages[0].width)/[float](BLOCKX_core)))
+  var bh = [int](c.ceil([float](inputImages[0].height)/[float](BLOCKY_core)))
   
   var retries = 0
   
@@ -239,26 +245,30 @@ terra fpgaUtil.test(
   for by=0,bh do
     for bx=0,bw do
       ::RESTART::
-      uart.printf("BX %d/%d BY %d/%d\n",bx,bw,by,bh)
+      c.printf("BX %d/%d BY %d/%d\n",bx,bw,by,bh)
       
       for i=0,metadataBytes do
         txbuf[i] = 0
       end
       txbufInt16[0]=[int16](bx*BLOCKX_core+stencilMinX) -- x coord of first input pixel
       txbufInt16[1]=[int16](by*BLOCKY_core+stencilMinY) -- y coord of first input pixel
-      uart.printf("SENT XY %d %d\n",txbufInt16[0], txbufInt16[1])
+      c.printf("SENT XY %d %d\n",txbufInt16[0], txbufInt16[1])
       
       for y=0,BLOCKY do
         for x=0,BLOCKX do
           var px = bx*BLOCKX_core+x
           var py = by*BLOCKY_core+y
 
-          for c=0,paddedImg.channels do
-            if px>=paddedImg.width or py>=paddedImg.height then
-              txbuf[y*BLOCKX*paddedImg.channels+x*paddedImg.channels+c+metadataBytes] = 0
-            else
-              txbuf[y*BLOCKX*paddedImg.channels+x*paddedImg.channels+c+metadataBytes] = [&uint8](paddedImg.data)[py*paddedImg.width*paddedImg.channels+px*paddedImg.channels+c]
+          var ipos = 0
+          for i=0,inputImageCnt do
+            for c=0,paddedImgs[i].channels do
+              if px>=paddedImgs[i].width or py>=paddedImgs[i].height then
+                txbuf[y*BLOCKX*inputBytes+x*inputBytes+ipos+c+metadataBytes] = 0
+              else
+                txbuf[y*BLOCKX*inputBytes+x*inputBytes+ipos+c+metadataBytes] = [&uint8](paddedImgs[i].data)[py*paddedImgs[i].width*paddedImgs[i].channels+px*paddedImgs[i].channels+c]
+              end
             end
+            ipos = ipos + paddedImgs[i].channels
           end
         end
       end
@@ -269,32 +279,32 @@ terra fpgaUtil.test(
       txcrc = 0
       for i=0,txsize do 
         txcrc = txcrc + txbuf[i] 
---            uart.printf("tx CRC %d %d\n",txbuf[i],txcrc)
+--            c.printf("tx CRC %d %d\n",txbuf[i],txcrc)
       end
       
-      uart.transmit(txbuf,txsize)
-      uart.usleep(UART_DELAY);
+      c.transmit(txbuf,txsize)
+      c.usleep(UART_DELAY);
       var rsx : int
-      rsx = uart.receive(rxbuf,rxsize)
+      rsx = c.receive(rxbuf,rxsize)
 
       if rsx <= 0 then
-        uart.printf("no data, assuming tx got dropped. attempting to restart. press key\n")
-        --            while uart.getchar()~=32 do end
+        c.printf("no data, assuming tx got dropped. attempting to restart. press key\n")
+        --            while c.getchar()~=32 do end
         while true do
-          uart.printf("SENDBYTE\n")
-          uart.transmit(txbuf,1)
-          uart.usleep(UART_DELAY);
-          var rsxx = uart.receive(rxbuf,rxsize)
+          c.printf("SENDBYTE\n")
+          c.transmit(txbuf,1)
+          c.usleep(UART_DELAY);
+          var rsxx = c.receive(rxbuf,rxsize)
           if rsxx>0 then break end
         end
-        uart.printf("DONe\n")
+        c.printf("DONe\n")
         
-        uart.printf("RESTART\n")
+        c.printf("RESTART\n")
         retries = retries + 1
         goto RESTART
-        --            uart.exit(1);
+        --            c.exit(1);
       elseif rsx < rxsize then
-        uart.printf("missing data, retrying\n")
+        c.printf("missing data, retrying\n")
         goto RESTART
       end
       
@@ -303,31 +313,31 @@ terra fpgaUtil.test(
       crc = 0
       for i=0,BLOCKX*BLOCKY*outputBytes do 
         crc = crc + rxbuf[i] 
---            uart.printf("CRC %d %d\n",rxbuf[i],crc)
+--            c.printf("CRC %d %d\n",rxbuf[i],crc)
       end
       
       if crc ~= rxbuf[BLOCKX*BLOCKY*outputBytes] then
-        uart.printf("CRC ERROR %d %d\n",crc,rxbuf[BLOCKX*BLOCKY])
+        c.printf("CRC ERROR %d %d\n",crc,rxbuf[BLOCKX*BLOCKY])
         retries = retries + 1
         goto RESTART
-        --            uart.exit(1)
+        --            c.exit(1)
       end
       
       if txcrc ~= rxbuf[BLOCKX*BLOCKY*outputBytes+1] then
-        uart.printf("tx CRC ERROR %d %d\n",txcrc,rxbuf[BLOCKX*BLOCKY*outputBytes+1])
+        c.printf("tx CRC ERROR %d %d\n",txcrc,rxbuf[BLOCKX*BLOCKY*outputBytes+1])
         retries = retries + 1
         goto RESTART
-        --            uart.exit(1)
+        --            c.exit(1)
       end
       
       
-      uart.printf("Write Out\n")
+      c.printf("Write Out\n")
       
       var shiftY = [int](outputShift)/[int](BLOCKX)
       var shiftX = [int](outputShift)-shiftY*[int](BLOCKX)
       var tlX = [int](txbufInt16[0])
       var tlY = [int](txbufInt16[1])
-      uart.printf("SHIFT %d %d, %d %d\n", shiftX, shiftY, tlX,tlY)
+      c.printf("SHIFT %d %d, %d %d\n", shiftX, shiftY, tlX,tlY)
       
       for y=-stencilMinY+shiftY, BLOCKY_core-stencilMinY+shiftY do
         for x=-stencilMinX+shiftX, BLOCKX_core-stencilMinX+shiftX do
@@ -346,9 +356,9 @@ terra fpgaUtil.test(
     end
   end
   
-  uart.printf("RETRIES: %d\n",retries)
+  c.printf("RETRIES: %d\n",retries)
   
-  uart.closeuart()
+  c.closeuart()
   return imgOut
 end
 

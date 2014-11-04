@@ -610,7 +610,7 @@ function darkroom.typedAST._toTypedAST(inast)
             darkroom.error("argmin and argmax can only be applied to scalar quantities", origast:linenumber(), origast:offset(), origast:filename())
           end
 
-          ast.type = darkroom.type.array(darkroom.type.int(32),origast:arraySize("varname"))
+          ast.type = darkroom.type.array(darkroom.type.int(32),origast:arraySize("varname")+1)
         else
           darkroom.error("Unknown reduce operator '"..ast.reduceop.."'")
         end
