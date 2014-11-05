@@ -61,15 +61,18 @@ function modules.reduce(compilerState, op, cnt, datatype, argminVars)
       elseif op=="max" then
         local a = "partial"..l.."_"..(i*2)
         local b = "partial"..l.."_"..(i*2+1)
-        table.insert(clockedLogic, n.." <= ("..a..">"..b..")?("..a.."):("..b..");\n")
+        table.insert(clockedLogic, n.." <= ("..a..">="..b..")?("..a.."):("..b..");\n")
       elseif op=="argmin" then
         local a = "partial"..l.."_"..(i*2)
         local b = "partial"..l.."_"..(i*2+1)
-        table.insert(clockedLogic, n.." <= ("..a.."<"..b..")?("..a.."):("..b..");\n")
+        -- we have to do <= here so that at least one signal gets a value (eg if all values in the input are the same).
+        -- similarly, this will me we will choose the lowest map reduce index values by default if all input values are
+        -- the same, which matches the behavior on the CPU
+        table.insert(clockedLogic, n.." <= ("..a.."<="..b..")?("..a.."):("..b..");\n")
         local i = 1
         while argminVars["varname"..i] do
           table.insert(module, declareReg(datatype,n.."_"..argminVars["varname"..i]))
-          table.insert(clockedLogic, n.."_"..argminVars["varname"..i].." <= ("..a.."<"..b..")?("..a.."_"..argminVars["varname"..i].."):("..b.."_"..argminVars["varname"..i]..");\n")
+          table.insert(clockedLogic, n.."_"..argminVars["varname"..i].." <= ("..a.."<="..b..")?("..a.."_"..argminVars["varname"..i].."):("..b.."_"..argminVars["varname"..i]..");\n")
           i = i + 1
         end
       else

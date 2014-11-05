@@ -371,8 +371,8 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         if n.kind=="binop" then
           table.insert(declarations, declareReg( n.type:baseType(), n:cname(c) ))
 
-          if n.op=="<" then
-            table.insert(clockedLogic, n:name().."_c"..c.." <= ($signed("..inputs.lhs[c]..")"..op.."$signed("..inputs.rhs[c].."));\n")
+          if n.op=="<" or n.op==">" or n.op=="<=" or n.op==">=" then
+            table.insert(clockedLogic, n:name().."_c"..c.." <= ($signed("..inputs.lhs[c]..")"..n.op.."$signed("..inputs.rhs[c].."));\n")
           else
             local op = binopToVerilog[n.op]
             if type(op)~="string" then print("OP",n.op); assert(false) end
