@@ -4,7 +4,8 @@ RES = $(patsubst %.lua,out/%.v,$(SRCS))
 RES += $(patsubst %.lua,out/%.lua.bmp,$(SRCS))
 #RES += $(patsubst %.lua,out/%.sim.bmp,$(SRCS))
 RES += $(patsubst %.lua,out/%.bit,$(SRCS))
-RES += $(patsubst %.lua,out/%.fpga.bmp,$(SRCS))
+IMAGES = $(patsubst %.lua,out/%.fpga.bmp,$(SRCS))
+RES += $(IMAGES)
 RES += $(patsubst %.lua,out/%.correct.txt,$(SRCS))
 BITS = $(patsubst %.lua,out/%.bit,$(SRCS))
 BITS += $(patsubst %.lua,out/%.lua.bmp,$(SRCS))
@@ -19,6 +20,8 @@ DARKROOM_CHIP?=xc6slx9
 all: $(RES)
 
 bits: $(BITS)
+
+images: $(IMAGES)
 
 clean: 
 	rm -rf out/*

@@ -1,9 +1,9 @@
 local modules = {}
 
-function modules.reduce(compilerState, op, cnt, datatype)
+function modules.reduce(compilerState, op, cnt, datatype, argminVars)
   assert(type(op)=="string")
   assert(darkroom.type.isType(datatype))
-
+  print("REDUCE",datatype:str())
   local name = "Reduce_"..op.."_"..cnt
 
   if compilerState.declaredReductionModules[name] then
@@ -12,8 +12,34 @@ function modules.reduce(compilerState, op, cnt, datatype)
   compilerState.declaredReductionModules[name] = 1
 
   local module = {"module "..name.."(input CLK, output["..(datatype:sizeof()*8-1)..":0] out"}
-  for i=0,cnt-1 do table.insert(module,", input["..(datatype:sizeof()*8-1)..":0] partial_"..i.."") end
+  local argmindecl = {}
+  if op=="argmin" then
+    assert(type(argminVars)=="table")
+    local partials=0
+    local funroll = {function(vals, mrvValues) 
+                       table.insert(module,", input["..(datatype:sizeof()*8-1)..":0] partial"..vals) 
+                       table.insert(argmindecl,"wire["..(datatype:sizeof()*8-1)..":0] partial_"..partials.." = partial"..vals..";\n")
+                       local r = 1
+                       while argminVars["varname"..r] do
+                         table.insert(argmindecl,"wire["..(datatype:sizeof()*8-1)..":0] partial_"..partials.."_"..argminVars["varname"..r].." = "..valueToVerilog(mrvValues[argminVars["varname"..r]],datatype)..";\n")
+                         r = r + 1
+                       end
+                       partials = partials+1
+                     end}
+    local i = 1
+    while argminVars["varname"..i] do
+      table.insert(module, ", output [31:0] out_"..argminVars["varname"..i])
+      local ii = i
+      table.insert(funroll, function(vals, mrvValues) for j=argminVars["varlow"..ii],argminVars["varhigh"..ii] do mrvValues[argminVars["varname"..ii]]=j;funroll[ii]("_"..argminVars["varname"..ii]..numToVarname(j)..vals, mrvValues ) end end)
+      i = i + 1
+    end
+    funroll[#funroll]("",{})
+  else
+    for i=0,cnt-1 do table.insert(module,", input["..(datatype:sizeof()*8-1)..":0] partial_"..i.."") end
+  end
+
   table.insert(module,");\n")
+  module = concat(module,argmindecl)
 
   local clockedLogic = {}
 
@@ -36,6 +62,16 @@ function modules.reduce(compilerState, op, cnt, datatype)
         local a = "partial"..l.."_"..(i*2)
         local b = "partial"..l.."_"..(i*2+1)
         table.insert(clockedLogic, n.." <= ("..a..">"..b..")?("..a.."):("..b..");\n")
+      elseif op=="argmin" then
+        local a = "partial"..l.."_"..(i*2)
+        local b = "partial"..l.."_"..(i*2+1)
+        table.insert(clockedLogic, n.." <= ("..a.."<"..b..")?("..a.."):("..b..");\n")
+        local i = 1
+        while argminVars["varname"..i] do
+          table.insert(module, declareReg(datatype,n.."_"..argminVars["varname"..i]))
+          table.insert(clockedLogic, n.."_"..argminVars["varname"..i].." <= ("..a.."<"..b..")?("..a.."_"..argminVars["varname"..i].."):("..b.."_"..argminVars["varname"..i]..");\n")
+          i = i + 1
+        end
       else
         assert(false)
       end
@@ -48,8 +84,17 @@ function modules.reduce(compilerState, op, cnt, datatype)
       table.insert(module, declareReg(datatype,n))
       if level==0 then
         table.insert(clockedLogic, n.." <= partial_"..(remain-1)..";\n")	
+        if op=="argmin" then
+          local i = 1
+          while argminVars["varname"..i] do table.insert(clockedLogic, n.."_"..argminVars["varname"..i].." <= partial_"..(remain-1).."_"..argminVars["varname"..i]..";\n"); table.insert(module, declareReg(datatype,n.."_"..argminVars["varname"..i])); i=i+1 end
+        end
       else
         table.insert(clockedLogic, n.." <= partial_l"..level.."_"..(remain-1)..";\n")	
+        if op=="argmin" then
+          local i = 1
+          while argminVars["varname"..i] do table.insert(clockedLogic, n.."_"..argminVars["varname"..i].." <= partial_l"..level.."_"..(remain-1).."_"..argminVars["varname"..i]..";\n"); table.insert(module, declareReg(datatype,n.."_"..argminVars["varname"..i])); i=i+1 end
+        end
+
       end
     end
 
@@ -58,6 +103,15 @@ function modules.reduce(compilerState, op, cnt, datatype)
   end
 
   table.insert(module, "assign out = partial_l"..level.."_0;\n")
+
+  if op=="argmin" then
+    local i = 1
+    while argminVars["varname"..i] do 
+      table.insert(module, "assign out_"..argminVars["varname"..i].." = partial_l"..level.."_0_"..argminVars["varname"..i]..";\n")
+      i = i + 1
+    end
+  end
+
   table.insert(module, "always @ (posedge CLK) begin\n")
   module = concat(module, clockedLogic)
   table.insert(module,"end\nendmodule\n")

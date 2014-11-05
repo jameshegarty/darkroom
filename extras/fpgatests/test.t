@@ -3,6 +3,7 @@ fpga = terralib.require("fpga")
 fpgaEstimate = terralib.require("fpgaEstimate")
 darkroomSimple = terralib.require("darkroomSimple")
 terralib.require("image")
+terralib.require("darkroomDebug")
 
 if arg[1]=="cpu" then
   testinput = darkroomSimple.load(arg[2])

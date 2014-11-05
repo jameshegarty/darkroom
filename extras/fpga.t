@@ -76,6 +76,24 @@ function getStencilCoord(rel)
   end
 end
 
+function valueToVerilog(value,ty)
+
+  if ty:isInt() then
+    assert(type(value)=="number")
+    if value<0 then
+      return "-"..(ty:sizeof()*8).."'d"..math.abs(value)
+    else
+      return (ty:sizeof()*8).."'d"..value
+    end
+  elseif ty:isUint() then
+    assert(type(value)=="number")
+    assert(value>=0)
+    return (ty:sizeof()*8).."'d"..value
+  else
+    assert(false)
+  end
+end
+
 function astFunctions:evalFunrolled(dim, mrvValues)
   assert(type(dim)=="number")
   assert(type(mrvValues)=="table")
@@ -302,11 +320,18 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
 
         -- funroll
         local partials = -1
-        local funroll = {function(inputList, mrvValues) partials = partials+1; return {declareWire(n.type,n:name().."_partial"..partials).."Map_"..n:name().." map_"..n:name().."_"..partials.."(.CLK(CLK),.out("..n:name().."_partial"..partials.."),.inX(inX),.inY(inY)"..inputList..loadInputList(mrvValues)..");\n"} end}
+        local argminPartials = ""
+        local funroll = {function(inputList, mrvValues) 
+                           partials = partials+1; 
+                           if n.reduceop=="argmin" then argminPartials = argminPartials..",.partial"
+                             local i=1
+                             while n["varname"..i] do argminPartials = argminPartials.."_"..n["varname"..i]..numToVarname(mrvValues[n["varname"..i]]); i=i+1; end
+                             argminPartials = argminPartials.."("..n:name().."_partial"..partials..")"
+                           end
+                           return {declareWire(n.type,n:name().."_partial"..partials).."Map_"..n:name().." map_"..n:name().."_"..partials.."(.CLK(CLK),.out("..n:name().."_partial"..partials.."),.inX(inX),.inY(inY)"..inputList..loadInputList(mrvValues)..");\n"} end}
 
         local i = 1
         while n["varname"..i] do
-          print(n["varlow"..i],n["varhigh"..i],type(n["varlow"..i]),type(n["varhigh"..i]))
           local ii = i
           table.insert(funroll, function(inputList, mrvValues) local res = {}; for j=n["varlow"..ii],n["varhigh"..ii] do mrvValues[n["varname"..ii]]=j; res = concat(res, funroll[ii](",.mrvar_"..n["varname"..ii].."("..j..")"..inputList, mrvValues)) end; return res end)
           i=i+1
@@ -314,18 +339,28 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         
         declarations = concat(declarations, funroll[#funroll]("",{}))
 
-        local rname, rmod = fpga.modules.reduce(compilerState, n.reduceop, partials+1, n.expr.type)
+        local rtype = n.expr.type
+        if n.reduceop=="argmin" then rtype=n.type:baseType() end
+        local rname, rmod = fpga.modules.reduce(compilerState, n.reduceop, partials+1, rtype, n)
 
         result = concat(rmod, result)
 
         local finalOut = {}
 
-        for c=1,n.type:channels() do
-          table.insert(declarations, declareWire(n.type, n:cname(c)))
-          table.insert(declarations,rname.." reduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(c)..")")
-          for i=0,partials do table.insert(declarations,",.partial_"..i.."("..n:name().."_partial"..i..")") end
-          table.insert(declarations,");\n")
-          table.insert(finalOut, n:cname(c))
+        if n.reduceop=="argmin" then
+          for c=1,n.type:channels() do table.insert(declarations, declareWire(rtype, n:cname(c))) end
+          table.insert(declarations,rname.." reduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(n.type:channels())..")")
+          for c=1,n.type:channels()-1 do table.insert(declarations, ",.out_"..n["varname"..c].."("..n:cname(c)..")") end
+          table.insert(declarations,argminPartials..");\n")
+          for c=1,n.type:channels() do table.insert(finalOut, n:cname(c)) end
+        else
+          for c=1,n.type:channels() do
+            table.insert(declarations, declareWire(n.type, n:cname(c)))
+            table.insert(declarations,rname.." reduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(c)..")")
+            for i=0,partials do table.insert(declarations,",.partial_"..i.."("..n:name().."_partial"..i..")") end
+            table.insert(declarations,");\n")
+            table.insert(finalOut, n:cname(c))
+          end
         end
 
         return {finalOut, clockedLogic, declarations}
@@ -335,9 +370,15 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         local res
         if n.kind=="binop" then
           table.insert(declarations, declareReg( n.type:baseType(), n:cname(c) ))
-          local op = binopToVerilog[n.op]
-          if type(op)~="string" then print("OP",n.op); assert(false) end
-          table.insert(clockedLogic, n:name().."_c"..c.." <= "..inputs.lhs[c]..op..inputs.rhs[c]..";\n")
+
+          if n.op=="<" then
+            table.insert(clockedLogic, n:name().."_c"..c.." <= ($signed("..inputs.lhs[c]..")"..op.."$signed("..inputs.rhs[c].."));\n")
+          else
+            local op = binopToVerilog[n.op]
+            if type(op)~="string" then print("OP",n.op); assert(false) end
+            table.insert(clockedLogic, n:name().."_c"..c.." <= "..inputs.lhs[c]..op..inputs.rhs[c]..";\n")
+          end
+
           res = n:name().."_c"..c
         elseif n.kind=="unary" then
           if n.op=="abs" then
@@ -365,8 +406,9 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           table.insert(clockedLogic, n:cname(c).." <= ("..inputs.cond[condC]..")?("..inputs.a[c].."):("..inputs.b[c]..");\n")
           res = n:cname(c)
         elseif n.kind=="load" then
+          res = "in"..kernelToVarname(n.from).."_x"..getStencilCoord(n.relX).."_y"..getStencilCoord(n.relY)
           local tys = n.type:baseType():sizeof()*8
-          res = "in"..kernelToVarname(n.from).."_x"..getStencilCoord(n.relX).."_y"..getStencilCoord(n.relY).."["..(c*tys-1)..":"..((c-1)*tys).."]"
+          table.insert(declarations,declareWire( n.type:baseType(), n:cname(c), res.."["..(c*tys-1)..":"..((c-1)*tys).."]" ))
         elseif n.kind=="position" then
           local str = "inX"
           if n.coord=="y" then str="inY" end
@@ -386,11 +428,16 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
             expr = inputs["expr"][c]
           end
 
+          if n.type:isInt() and n.expr.type:isInt() and n.type:sizeof()>n.expr.type:sizeof() then
+            -- must sign extend
+            expr = "{ {"..(8*(n.type:sizeof()-n.expr.type:sizeof())).."{"..expr.."["..(n.expr.type:sizeof()*8-1).."]}},"..expr.."["..(n.expr.type:sizeof()*8-1)..":0]}"
+          end
+          
           table.insert(declarations, declareWire(n.type:baseType(), n:cname(c), expr," //cast"))
           res = n:cname(c)
         elseif n.kind=="value" then
-          local v = tostring(n.value)
-          if type(n.value)=="table" then v = tostring(n.value[c]) end
+          local v = valueToVerilog(n.value, n.type:baseType())
+          if type(n.value)=="table" then v = valueToVerilog(n.value[c], n.type:baseType()) end
           table.insert(declarations,declareWire(n.type:baseType(), n:cname(c), v, " //value" ))
           res = n:cname(c)
         elseif n.kind=="mapreducevar" then
@@ -417,6 +464,8 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         end
 
         assert(type(res)=="string")
+        print(n.kind,res)
+        assert(res:match("[%w%[%]]")) -- should only be alphanumeric
         finalOut[c] = res
       end
 
