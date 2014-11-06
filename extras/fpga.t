@@ -146,7 +146,7 @@ end
 function typedASTFunctions:internalDelay()
   if self.kind=="binop" or self.kind=="unary" or self.kind=="select" or self.kind=="crop" or self.kind=="vectorSelect" then
     return 1
-  elseif self.kind=="load" or self.kind=="value" or self.kind=="cast" or self.kind=="position" or self.kind=="mapreducevar" or self.kind=="array" or self.kind=="index" then
+  elseif self.kind=="load" or self.kind=="value" or self.kind=="cast" or self.kind=="position" or self.kind=="mapreducevar" or self.kind=="array" or self.kind=="index" or self.kind=="lifted" then
     return 0
   elseif self.kind=="mapreduce" then
     local area = 1
@@ -288,24 +288,14 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           i=i+1
         end
 
-        local inputListPos = #moduledef
-        local inputsSeen = {}
-        local function loadInputList(mrvValues)
-          local res = ""
-          local argumentsSeen = {}
-          n:S("load"):traverse(
-            function(node)
-              local vn = "in"..kernelToVarname(node.from).."_x"..getStencilCoord(node.relX).."_y"..getStencilCoord(node.relY)
-              if argumentsSeen[vn]==nil then res = res..",."..vn.."(in"..kernelToVarname(node.from).."_x"..getStencilCoordFunrolled(node.relX,mrvValues).."_y"..getStencilCoordFunrolled(node.relY,mrvValues)..")"; argumentsSeen[vn]=1 end
-              if inputsSeen[vn]==nil then table.insert(moduledef,inputListPos,"input["..(node.type:sizeof()*8-1)..":0] "..vn..",\n"); inputsSeen[vn]=1 end
-            end)
-          return res
+        for i=1,n["countLifted"] do
+          table.insert(moduledef,"input ["..(n["typeLifted"..i]:sizeof()*8-1)..":0] lifted"..i..",\n")
         end
-
+        
         table.insert(moduledef,"output ["..(n.expr.type:sizeof()*8-1)..":0] out);\n\n")
 
-        table.insert(moduledef,table.concat(declarations,""))
-        table.insert(moduledef,"always @ (posedge CLK) begin\n"..table.concat(clockedLogic,"").."end\n")
+        table.insert(moduledef,table.concat(args.expr[3],""))
+        table.insert(moduledef,"always @ (posedge CLK) begin\n"..table.concat(args.expr[2],"").."end\n")
 
         table.insert(moduledef,"assign out = {"..inputs.expr[#inputs.expr])
         local c = #inputs.expr-1
@@ -318,6 +308,13 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         clockedLogic = {}
         declarations = {}
 
+        local declSeen={}
+        for k,v in pairs(n) do
+          if k:sub(0,6)=="lifted" then
+            assert(retiming[v]==0) -- we don't support pipelining lifted stuff
+            merge(args[k][3], declarations, declSeen)
+          end
+        end
         -- funroll
         local partials = -1
         local argminPartials = ""
@@ -328,7 +325,19 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
                              while n["varname"..i] do argminPartials = argminPartials.."_"..n["varname"..i]..numToVarname(mrvValues[n["varname"..i]]); i=i+1; end
                              argminPartials = argminPartials.."("..n:name().."_partial"..partials..")"
                            end
-                           return {declareWire(n.type,n:name().."_partial"..partials).."Map_"..n:name().." map_"..n:name().."_"..partials.."(.CLK(CLK),.out("..n:name().."_partial"..partials.."),.inX(inX),.inY(inY)"..inputList..loadInputList(mrvValues)..");\n"} end}
+                           local liftedInputs = ""
+                           local term = ""
+                           local i=1
+                           while n["varname"..i] do
+                             term = term.."_"..n["varname"..i]..numToVarname(mrvValues[n["varname"..i]])
+                             i = i + 1
+                           end
+                           for i=1,n["countLifted"] do
+                             local v = "lifted"..i..term
+                             liftedInputs = liftedInputs..",.lifted"..i.."("..args[v][1][1]..")"
+                           end
+
+                           return {declareWire(n.type,n:name().."_partial"..partials).."Map_"..n:name().." map_"..n:name().."_"..partials.."(.CLK(CLK),.out("..n:name().."_partial"..partials.."),.inX(inX),.inY(inY)"..inputList..liftedInputs..");\n"} end}
 
         local i = 1
         while n["varname"..i] do
@@ -439,8 +448,12 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           table.insert(declarations, declareWire(n.type:baseType(), n:cname(c), expr,cmt))
           res = n:cname(c)
         elseif n.kind=="value" then
-          local v = valueToVerilog(n.value, n.type:baseType())
-          if type(n.value)=="table" then v = valueToVerilog(n.value[c], n.type:baseType()) end
+          local v
+          if type(n.value)=="table" then 
+            v = valueToVerilog(n.value[c], n.type:baseType()) 
+          else
+            v = valueToVerilog(n.value, n.type:baseType())
+          end
           table.insert(declarations,declareWire(n.type:baseType(), n:cname(c), v, " //value" ))
           res = n:cname(c)
         elseif n.kind=="mapreducevar" then
@@ -461,13 +474,14 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           n:map("expr",function(_,i) str = str..",.partial_"..(i-1).."("..inputs["expr"..i][c]..")" end)
           table.insert(declarations,str..");\n")
           res = n:cname(c)
+        elseif n.kind=="lifted" then
+          res = "lifted"..n.id
         else
           print(n.kind)
           assert(false)
         end
 
         assert(type(res)=="string")
-        print(n.kind,res)
         assert(res:match("[%w%[%]]")) -- should only be alphanumeric
         finalOut[c] = res
       end
@@ -507,6 +521,81 @@ local function chooseStrip(options, inputs, kernelGraph)
   return BLOCKX, BLOCKY
 end
 
+local function liftMapreduce(kernelGraph, shifts)
+  local newShifts={}
+  local oldToNewRemap = {}
+  local res =  kernelGraph:S("*"):process(
+    function(node, orig)
+      if node.kernel~=nil then
+        local newNode = node:shallowcopy()
+        newNode.kernel = node.kernel:S("mapreduce"):process(
+          function(mapreduceNode)
+            local newMR = mapreduceNode:shallowcopy()
+            local liftedList = {}
+            local liftedCnt = 0
+            newMR.expr = mapreduceNode.expr:S(
+              function(n)
+                -- heuristic for what we lift
+                return n.kind=="index" or n.kind=="load"
+              end):process(
+              function(n)
+                liftedCnt = liftedCnt + 1
+                liftedList["lifted"..liftedCnt] = n
+                newMR["typeLifted"..liftedCnt] = n.type
+                return darkroom.typedAST.new({kind="lifted",id=liftedCnt,type=n.type}):copyMetadataFrom(n)
+              end)
+            newMR["countLifted"] = liftedCnt
+
+            -- funroll the lifted vars
+            local i = 1
+            while mapreduceNode["varname"..i]~=nil do
+              local liftedListNew = {}
+              for f=mapreduceNode["varlow"..i], mapreduceNode["varhigh"..i] do
+                for k,v in pairs(liftedList) do
+                  liftedListNew[k.."_"..mapreduceNode["varname"..i]..numToVarname(f)] = v:S("*"):process(
+                    function(anode)
+                      local newAnode = anode:shallowcopy()
+                      local found = false
+                      for k,v in pairs(anode) do
+                        if darkroom.ast.isAST(v) then
+                          newAnode[k] = v:S("mapreducevar"):process(
+                            function(n)
+                              if n.variable==mapreduceNode["varname"..i] then found=true;return darkroom.ast.new({kind="value",value=f,type=n.type}):copyMetadataFrom(n) end
+                            end)
+                        end
+                      end
+                      if found then return darkroom.typedAST.new(newAnode):copyMetadataFrom(anode) end
+                    end)
+                end
+              end
+              liftedList = liftedListNew
+              i = i + 1
+            end
+            for k,v in pairs(liftedList) do
+              newMR[k] = v
+            end
+
+            return darkroom.typedAST.new(newMR):copyMetadataFrom(mapreduceNode)
+          end)
+
+        newNode.kernel = newNode.kernel:S("load"):process(
+          function(n)
+            local nn = n:shallowcopy()
+            if type(nn.from)=="table" then nn.from = oldToNewRemap[nn.from] end
+            return darkroom.typedAST.new(nn):copyMetadataFrom(n)
+          end)
+        newShifts[newNode] = shifts[orig]
+        oldToNewRemap[orig] = newNode
+        return darkroom.kernelGraph.new(newNode):copyMetadataFrom(node.kernel)
+      else
+        oldToNewRemap[orig] = node
+        newShifts[node] = shifts[orig]
+      end
+    end)
+
+  return res, newShifts
+end
+
 function fpga.compile(inputs, outputs, imageWidth, imageHeight, options)
   assert(#outputs==1)
   assert(type(options)=="table" or options==nil)
@@ -535,6 +624,8 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, options)
 
   local shifts = schedule(kernelGraph, 1, options.stripWidth)
   kernelGraph, shifts = shift(kernelGraph, shifts, 1, options.stripWidth)
+
+  kernelGraph, shifts = liftMapreduce(kernelGraph, shifts)
 
   local totalInputBytes = 0
   for k,v in ipairs(inputs) do totalInputBytes = totalInputBytes + inputs[k][1].expr.type:sizeof() end
