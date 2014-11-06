@@ -66,13 +66,11 @@ BLOCKY = 9
 print("Build For: "..arg[1])
 local o = fpga.util.deviceToOptions(arg[1])
 o.uartClock=9600
-local v, metadata = fpga.compile({{leftI,"uart",darkroom.type.uint(8)},{rightI,"uart",darkroom.type.uint(8)}},{{vectors,"uart",darkroom.type.uint(8)}}, 128,64, BLOCKX, BLOCKY, o)
+local v, metadata = fpga.compile({{leftI,"uart","left0224.bmp"},{rightI,"uart","right0224.bmp"}},{{vectors,"uart",darkroom.type.uint(8)}}, 128,64, o)
 
 local s = string.sub(arg[0],1,#arg[0]-2)
 io.output("out/"..s..".v")
 io.write(v)
 io.close()
 
-metadata.inputFile0 = "left0224.bmp"
-metadata.inputFile1 = "right0224.bmp"
 fpga.util.writeMetadata("out/"..s..".metadata.lua", metadata)

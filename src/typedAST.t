@@ -177,11 +177,18 @@ function typedASTFunctions:stencil(input)
   elseif self.kind=="transformBaked" then
     return self.expr:stencil(input):sum(darkroom.typedAST.transformArea(self.translate1,self.translate2))
   elseif self.kind=="mapreduce" then
-    return self.expr:stencil(input)
+    local s = Stencil.new()
+    -- HW: if this has lifted values, include their stencil
+    for k,v in pairs(self) do
+      if k:sub(0,6)=="lifted" then s = s:unionWith(v:stencil(input)) end
+    end
+    return s:unionWith(self.expr:stencil(input))
   elseif self.kind=="mapreducevar" then
     return Stencil.new()
   elseif self.kind=="filter" then
     return self.expr:stencil(input):unionWith(self.cond:stencil(input))
+  elseif self.kind=="lifted" then
+    return Stencil.new() -- stencil will come from mapreduce node
   end
 
   print(self.kind, debug.traceback())
