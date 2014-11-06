@@ -406,9 +406,10 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           table.insert(clockedLogic, n:cname(c).." <= ("..inputs.cond[condC]..")?("..inputs.a[c].."):("..inputs.b[c]..");\n")
           res = n:cname(c)
         elseif n.kind=="load" then
-          res = "in"..kernelToVarname(n.from).."_x"..getStencilCoord(n.relX).."_y"..getStencilCoord(n.relY)
+          local v = "in"..kernelToVarname(n.from).."_x"..getStencilCoord(n.relX).."_y"..getStencilCoord(n.relY)
           local tys = n.type:baseType():sizeof()*8
-          table.insert(declarations,declareWire( n.type:baseType(), n:cname(c), res.."["..(c*tys-1)..":"..((c-1)*tys).."]" ))
+          table.insert(declarations,declareWire( n.type:baseType(), n:cname(c), v.."["..(c*tys-1)..":"..((c-1)*tys).."]" ))
+          res = n:cname(c)
         elseif n.kind=="position" then
           local str = "inX"
           if n.coord=="y" then str="inY" end
@@ -422,8 +423,10 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           res = n:cname(c)
         elseif n.kind=="cast" then
           local expr
+          local cmt = " // cast"
           if n.type:isArray() and n.expr.type:isArray()==false then
             expr = inputs["expr"][1] -- broadcast
+            cmt = " // broadcast"
           else
             expr = inputs["expr"][c]
           end
@@ -433,7 +436,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
             expr = "{ {"..(8*(n.type:sizeof()-n.expr.type:sizeof())).."{"..expr.."["..(n.expr.type:sizeof()*8-1).."]}},"..expr.."["..(n.expr.type:sizeof()*8-1)..":0]}"
           end
           
-          table.insert(declarations, declareWire(n.type:baseType(), n:cname(c), expr," //cast"))
+          table.insert(declarations, declareWire(n.type:baseType(), n:cname(c), expr,cmt))
           res = n:cname(c)
         elseif n.kind=="value" then
           local v = valueToVerilog(n.value, n.type:baseType())
