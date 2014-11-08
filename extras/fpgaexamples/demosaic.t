@@ -104,9 +104,10 @@ end
 function campipe(in1)
   local out = blackLevel(in1, 10)
   out = bilinearDemosaic(out)
-  out = doccm(out)
+--  out = doccm(out)
 
-  return im(x,y) [uint8[3]]( darkroom.vectorSelect(out>255,[uint8[3]](255),out) ) end
+  --  return im(x,y) [uint8[3]]( darkroom.vectorSelect(out>255,[uint8[3]](255),out) ) end
+  return out
 end
 
 sensor = darkroomSimple.load("300d.bmp")
@@ -114,10 +115,8 @@ campipeline = campipe(sensor)
 
 campipeline:save("out/demosaic.bmp")
 
-BLOCKX = 24
-BLOCKY = 6
 print("Build For: "..arg[1])
-local v, metadata = fpga.compile({{sensor,"uart",darkroom.type.uint(8)}},{{campipeline,"uart",darkroom.type.array(darkroom.type.uint(8),3)}}, 128,64, BLOCKX, BLOCKY, fpga.util.deviceToOptions(arg[1]))
+local v, metadata = fpga.compile({{sensor,"uart","300d.bmp"}},{{campipeline,"uart"}}, 128,64, fpga.util.deviceToOptions(arg[1]))
 
 local s = string.sub(arg[0],1,#arg[0]-2)
 io.output("out/"..s..".v")

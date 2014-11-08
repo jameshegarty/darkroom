@@ -144,9 +144,22 @@ function shift(graph, shifts, largestScaleY, HWWidth)
 
               return darkroom.typedAST.new(r):copyMetadataFrom(nn)
             elseif nn.kind=="position" then
-              if nn.coord=="y" and shifts[orig]~=0 then
-                local v = darkroom.typedAST.new({kind="value", value=-math.floor(shifts[orig]/looprate(orig.kernel.scaleN2,orig.kernel.scaleD2,largestScaleY)), type=nn.type}):copyMetadataFrom(nn)
-                return darkroom.typedAST.new({kind="binop", lhs=nn, rhs = v, type = nn.type, op="+"}):copyMetadataFrom(nn)
+              if type(HWWidth)=="number" then
+                local sy = math.floor(shifts[orig]/HWWidth)
+                local sx = shifts[orig]-sy*HWWidth
+
+                if nn.coord=="y" and sy~=0 then
+                  local v = darkroom.typedAST.new({kind="value", value=-sy, type=nn.type}):copyMetadataFrom(nn)
+                  return darkroom.typedAST.new({kind="binop", lhs=nn, rhs = v, type = nn.type, op="+"}):copyMetadataFrom(nn)
+                elseif nn.coord=="x" and sx~=0 then
+                  local v = darkroom.typedAST.new({kind="value", value=-sx, type=nn.type}):copyMetadataFrom(nn)
+                  return darkroom.typedAST.new({kind="binop", lhs=nn, rhs = v, type = nn.type, op="+"}):copyMetadataFrom(nn)
+                end
+              else
+                if nn.coord=="y" and shifts[orig]~=0 then
+                  local v = darkroom.typedAST.new({kind="value", value=-math.floor(shifts[orig]/looprate(orig.kernel.scaleN2,orig.kernel.scaleD2,largestScaleY)), type=nn.type}):copyMetadataFrom(nn)
+                  return darkroom.typedAST.new({kind="binop", lhs=nn, rhs = v, type = nn.type, op="+"}):copyMetadataFrom(nn)
+                end
               end
             else
               print(nn.kind)
