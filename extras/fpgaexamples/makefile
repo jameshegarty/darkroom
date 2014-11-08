@@ -24,6 +24,7 @@ out/%.bit : out/%.v
 	cp build_$*/OUT_map.txt out/$*.map.txt
 	cp build_$*/OUT_par.txt out/$*.par.txt
 	cp build_$*/OUT_ngd.txt out/$*.ngd.txt
+	cp build_$*/OUT_trce.txt out/$*.trce.txt
 	cp build_$*/OUT_bitgen.txt out/$*.bitgen.txt
 	cp build_$*/stage.bit $@
 

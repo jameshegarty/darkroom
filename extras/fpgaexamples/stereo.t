@@ -4,9 +4,11 @@ darkroomSimple = terralib.require("darkroomSimple")
 terralib.require("bilinear")
 fpga = terralib.require("fpga")
 
-SEARCH_RADIUS = 2 -- 60
+if SEARCH_RADIUS==nil then SEARCH_RADIUS = 2 end -- 60
 WINDOW_RADIUS = 4
 DO_RECTIFY = false
+
+print("Search Radius",SEARCH_RADIUS)
 
 function rectify( img, remapX, remapY )
   local u = im(j,i) [int8](remapX - 128) end
@@ -30,10 +32,12 @@ function makeOF( searchRadius, windowRadius, frame1, frame2 )
   return im(x,y) [uint8]((offset[0]-20) * (255.0 >> [math.floor(math.log(searchRadius)/math.log(2))])) end
 end
 
-local leftI = darkroomSimple.load("left0224.bmp")
+local leftI = darkroomSimple.load("left0224_sm.bmp")
+--local leftI = darkroomSimple.load("left0224.bmp")
 local leftRx = darkroomSimple.load("right-remap-x.bmp")
 local leftRy = darkroomSimple.load("right-remap-y.bmp")
-local rightI = darkroomSimple.load("right0224.bmp")
+--local rightI = darkroomSimple.load("right0224.bmp")
+local rightI = darkroomSimple.load("right0224_sm.bmp")
 local rightRx = darkroomSimple.load("left-remap-x.bmp")
 local rightRy = darkroomSimple.load("left-remap-y.bmp")
 
@@ -49,7 +53,7 @@ else
 end
 
 local vectors = makeOF(SEARCH_RADIUS,WINDOW_RADIUS,right,left)
-vectors:save("out/stereo.bmp")
+vectors:save("out/stereo"..SEARCH_RADIUS..".bmp")
 
 --------------
 fpgaEstimate = terralib.require("fpgaEstimate")
@@ -66,7 +70,7 @@ BLOCKY = 9
 print("Build For: "..arg[1])
 local o = fpga.util.deviceToOptions(arg[1])
 o.uartClock=9600
-local v, metadata = fpga.compile({{leftI,"uart","left0224.bmp"},{rightI,"uart","right0224.bmp"}},{{vectors,"uart",darkroom.type.uint(8)}}, 128,64, o)
+local v, metadata = fpga.compile({{leftI,"uart","left0224_sm.bmp"},{rightI,"uart","right0224_sm.bmp"}},{{vectors,"uart",darkroom.type.uint(8)}}, 300,20, o)
 
 local s = string.sub(arg[0],1,#arg[0]-2)
 io.output("out/"..s..".v")

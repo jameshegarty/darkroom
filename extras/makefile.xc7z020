@@ -11,5 +11,6 @@ $(BUILD_DIR)/stage.ncd: $(BUILD_DIR)/stage_map.ncd
 	$(CD) par -w -ol high -mt off stage_map.ncd stage.ncd stage.pcf > OUT_par.txt
 
 $(BUILD_DIR)/stage.bit: $(BUILD_DIR)/stage.ncd
+	$(CD) trce -v 3 -s 1 -n 3 -fastpaths -xml stage.twx stage.ncd -o stage.twr stage.pcf -ucf ../../xilinxify_xc7z020/constraints.ucf > OUT_trce.txt
 	$(CD) bitgen -intstyle ise -f ../../xilinxify_xc7z020/stage.ut stage.ncd > OUT_bitgen.txt
 

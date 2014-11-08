@@ -362,11 +362,11 @@ function modules.buffer(moduleName, sizeBytes, inputBytes, outputBytes)
     local bramconf = {name="ram"..i,A={DI="indata",WE="WE", ADDR="inaddrInternal", CLK="CLK_INPUT", chunk=inputChunkSize},
                      B={DO="outdata"..i, WE="1'b0", ADDR="outaddrInternal", CLK="CLK_OUTPUT", chunk=outputChunkSize}}
     if bramCnt > 1 then
-      bramconf.A.WE = "(WE && (inaddr["..(10+extraBits-inputChunkAddrBits)..":"..(11-inputChunkAddrBits).."]=="..extraBits.."'d"..i.."))"
+      bramconf.A.WE = "(WE && (inaddrInternal["..(10+extraBits-chunkBits.inaddr)..":"..(11-chunkBits.inaddr).."]=="..extraBits.."'d"..i.."))"
     end
     res = concat(res, fixedBram(bramconf))
 
-    if i>0 then assn = "(outaddr["..(10+extraBits-outputChunkAddrBits)..":"..(11-outputChunkAddrBits).."]=="..extraBits.."'d"..i..")? outdata"..i.." : ("..assn..")" end
+    if i>0 then assn = "(outaddr["..(10+extraBits-chunkBits.outaddr)..":"..(11-chunkBits.outaddr).."]=="..extraBits.."'d"..i..")? outdata"..i.." : ("..assn..")" end
   end
 
   table.insert(res, "wire ["..(outputChunkSize*8-1)..":0] outdata_tmp;\n")

@@ -503,6 +503,18 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
   return result
 end
 
+local function calcMaxStencil(kernelGraph)
+  local maxStencil = Stencil.new()
+  kernelGraph:visitEach(
+    function(node)
+      for k,v in node:inputs() do
+        if node.kernel~=nil then print("ST",node.kernel:stencil(v):min(1),node.kernel:stencil(v):max(1),"Y",node.kernel:stencil(v):min(2),node.kernel:stencil(v):max(2)) end
+      end
+      if node.kernel~=nil then maxStencil = maxStencil:unionWith(neededStencil(true,kernelGraph,node,1,nil)) end
+    end)
+  return maxStencil
+end
+
 local function chooseStrip(options, inputs, kernelGraph)
   if options.stripWidth~=nil or options.stripHeight~=nil then 
     assert(type(options.stripWidth)=="number")
@@ -516,6 +528,25 @@ local function chooseStrip(options, inputs, kernelGraph)
   for k,v in ipairs(inputs) do
     assert(v[1].kind=="crop" and v[1].expr.kind=="load")
     BLOCKX = math.floor(BLOCKX/v[1].expr.type:sizeof())
+  end
+
+  local maxStencil=calcMaxStencil(kernelGraph)
+
+--  assert( (maxStencil:max(1)-maxStencil:min(1)+1) < BLOCKX )
+--  assert( (maxStencil:max(2)-maxStencil:min(2)+1) < BLOCKY )
+  
+  if (maxStencil:max(1)-maxStencil:min(1)+1) >= BLOCKX then
+    print("Expanding strip width to contain stencil.")
+    print("oldwidth", BLOCKX)
+    BLOCKX = maxStencil:max(1)-maxStencil:min(1)+2
+    print("newwidth", BLOCKX)
+  end
+
+  if (maxStencil:max(2)-maxStencil:min(2)+1) >= BLOCKY then
+    print("Expanding strip height to contain stencil.")
+    print("oldheight", BLOCKY)
+    BLOCKY = maxStencil:max(2)-maxStencil:min(2)+2
+    print("newheight", BLOCKY)
   end
 
   return BLOCKX, BLOCKY
@@ -633,17 +664,8 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, options)
   local outputChannels = kernelGraph.child1.kernel.type:channels()
   print("INPUTBYTeS",totalInputBytes,"OUTPUTBYTES",outputBytes)
 
-  local maxStencil = Stencil.new()
-  kernelGraph:visitEach(
-    function(node)
-      print("SS",node:name(),shifts[node])
-      for k,v in node:inputs() do
-        if node.kernel~=nil then print("ST",node.kernel:stencil(v):min(1),node.kernel:stencil(v):max(1),"Y",node.kernel:stencil(v):min(2),node.kernel:stencil(v):max(2)) end
-      end
-      if node.kernel~=nil then maxStencil = maxStencil:unionWith(neededStencil(true,kernelGraph,node,1,nil)) end
-    end)
+  local maxStencil = calcMaxStencil(kernelGraph)
 
-  print("S",shifts[kernelGraph.child1])
   local shiftX, shiftY = delayToXY(shifts[kernelGraph.child1], options.stripWidth)
   maxStencil = maxStencil:translate(shiftX,shiftY,0)
   print("Max Stencil x="..maxStencil:min(1)..","..maxStencil:max(1).." y="..maxStencil:min(2)..","..maxStencil:max(2))

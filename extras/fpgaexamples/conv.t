@@ -2,7 +2,7 @@ import "darkroom"
 darkroomSimple = terralib.require("darkroomSimple")
 fpga = terralib.require("fpga")
 
-CONV_DEPTH = 1
+CONV_DEPTH = 3
 CONV_WIDTH = 2
 sensor = darkroomSimple.load("frame_128.bmp")
 
@@ -36,7 +36,7 @@ BLOCKY = 55
 print("Build For: "..arg[1])
 local o = fpga.util.deviceToOptions(arg[1])
 o.uartClock=9600
-local v, metadata = fpga.compile({{sensor,"uart",darkroom.type.uint(8)}},{{res,"uart",darkroom.type.uint(8)}}, 128,64, BLOCKX, BLOCKY, o)
+local v, metadata = fpga.compile({{sensor,"uart","frame_128.bmp"}},{{res,"uart",darkroom.type.uint(8)}}, 128, 64, o)
 
 local s = string.sub(arg[0],1,#arg[0]-2)
 io.output("out/"..s..".v")
