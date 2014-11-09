@@ -393,7 +393,15 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           table.insert(declarations, declareReg( n.type:baseType(), n:cname(c) ))
 
           if n.op=="<" or n.op==">" or n.op=="<=" or n.op==">=" then
-            table.insert(clockedLogic, n:name().."_c"..c.." <= ($signed("..inputs.lhs[c]..")"..n.op.."$signed("..inputs.rhs[c].."));\n")
+            if n.type:baseType():isBool() and n.lhs.type:baseType():isInt() and n.rhs.type:baseType():isInt() then
+              table.insert(clockedLogic, n:name().."_c"..c.." <= ($signed("..inputs.lhs[c]..")"..n.op.."$signed("..inputs.rhs[c].."));\n")
+            elseif n.type:baseType():isBool() and n.lhs.type:baseType():isUint() and n.rhs.type:baseType():isUint() then
+              table.insert(clockedLogic, n:name().."_c"..c.." <= (("..inputs.lhs[c]..")"..n.op.."("..inputs.rhs[c].."));\n")
+            else
+              print( n.type:baseType():isBool() , n.lhs.type:baseType():isInt() , n.rhs.type:baseType():isInt(),n.type:baseType():isBool() , n.lhs.type:baseType():isUint() , n.rhs.type:baseType():isUint())
+              assert(false)
+            end
+
           elseif n.type:isBool() then
             local op = binopToVerilogBoolean[n.op]
             if type(op)~="string" then print("OP_BOOLEAN",n.op); assert(false) end
@@ -428,7 +436,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           local condC = 1
           if n.kind=="vectorSelect" then condC=c end
 
-          table.insert(clockedLogic, n:cname(c).." <= ("..inputs.cond[condC]..")?("..inputs.a[c].."):("..inputs.b[c]..");\n")
+          table.insert(clockedLogic, n:cname(c).." <= ("..inputs.cond[condC]..")?("..inputs.a[c].."):("..inputs.b[c].."); // "..n.kind.."\n")
           res = n:cname(c)
         elseif n.kind=="load" then
           local v = "in"..kernelToVarname(n.from).."_x"..getStencilCoord(n.relX).."_y"..getStencilCoord(n.relY)
@@ -448,10 +456,10 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           res = n:cname(c)
         elseif n.kind=="cast" then
           local expr
-          local cmt = " // cast"
+          local cmt = " // cast "..n.expr.type:str().." to "..n.type:str()
           if n.type:isArray() and n.expr.type:isArray()==false then
             expr = inputs["expr"][1] -- broadcast
-            cmt = " // broadcast"
+            cmt = " // broadcast "..n.expr.type:str().." to "..n.type:str()
           else
             expr = inputs["expr"][c]
           end
@@ -840,8 +848,13 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
 
   if outputs[1][2]=="vga" then
     table.insert(result, fpga.modules.stageVGA())
-  else
+  elseif outputs[1][2]=="uart" then
     table.insert(result, fpga.modules.stageUART(options, totalInputBytes, outputBytes, options.stripWidth, options.stripHeight))
+  elseif outputs[1][2]=="sim" then
+    table.insert(result, fpga.modules.sim(totalInputBytes, outputBytes, options.stripWidth))
+  else
+    print("unknown data source "..outputs[1][2])
+    assert(false)
   end
 
   return table.concat(result,""), metadata

@@ -1074,7 +1074,7 @@ terra Image:loadRaw(filename : &int8, w:int, h:int, bits:int)
   var outBytes : int
   var data : &opaque = loadRaw(filename,w,h,bits,0,false,&outBytes)
 
-  self:init(w,h,w,1,outBytes*8,false,false,false,data,data)
+  self:init(w,h,w,1,outBytes*8,false,false,false,false,data,data)
 end
 
 -- header: number of header bits to ignore
@@ -1084,7 +1084,7 @@ terra Image:initWithRaw(filename : &int8, w:int, h:int, bits:int, header : int, 
   var bytesOut : int
   var data : &opaque = loadRaw(filename,w,h,bits, header, flipEndian,&bytesOut)
 
-  self:init(w,h,w,1,bytesOut*8,false,false,false,data,data)
+  self:init(w,h,w,1,bytesOut*8,false,false,false,false,data,data)
 end
 
 terra Image:allocateDarkroomFormat(

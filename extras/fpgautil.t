@@ -114,6 +114,7 @@ int receive(unsigned char* rx_buffer, int expectedSize){
 }
 
 void closeuart(){
+  printf("Close UART\n");
   close(uart0_filestream);
 }
                                       ]]
@@ -359,6 +360,7 @@ terra fpgaUtil.test(
   c.printf("RETRIES: %d\n",retries)
   
   c.closeuart()
+  c.printf("RET\n")
   return imgOut
 end
 
