@@ -411,7 +411,7 @@ module sim;
   wire []=]..(outputBytes*8-1)..[=[:0] pipelineOutput;
   reg [12:0] posX = 0;
   reg [12:0] posY = 0;
-  integer addr = -PIPE_DELAY;
+  integer addr = -PIPE_DELAY+1;
   reg [10000:0] inputFilename;
   reg [10000:0] outputFilename; 
   reg [7:0] i = 0;
@@ -446,7 +446,7 @@ module sim;
      end
 
      c = $fgetc(file);
-     if(posX >= ]=]..stripWidth..[=[) begin
+     if(posX >= ]=]..(stripWidth-1)..[=[) begin
        posX = 0;
        posY = posY+1;
      end else begin
@@ -457,7 +457,7 @@ module sim;
    end // while (c != `EOF)
 
    // drain pipe
-   addr = -PIPE_DELAY;
+   addr = -PIPE_DELAY+1;
 
    while (addr<0) begin
      CLK = 0;
