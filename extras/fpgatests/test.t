@@ -41,6 +41,7 @@ function test(inast, inputList)
       local s = ""
       local hwinputs
       local hwoutputs
+      local opt
       if i==1 then
         hwinputs = inputList
         if hwinputs==nil then hwinputs={{testinput,"uart","frame_128.bmp"}} end
@@ -48,6 +49,7 @@ function test(inast, inputList)
         if darkroom.ast.isAST(hwoutputs) then
           hwoutputs = {{inast,"uart"}}
         end
+        opt = fpga.util.deviceToOptions(arg[3])
       elseif i==2 then
         hwinputs = inputList
         if hwinputs==nil then hwinputs={{testinput,"sim","frame_128.raw"}} end
@@ -57,9 +59,12 @@ function test(inast, inputList)
         end
 
         s = ".sim"
+        opt = fpga.util.deviceToOptions(arg[3])
+        opt.stripWidth = 128
+        opt.stripHeight = 64
       end
 
-      local v, metadata = fpga.compile(hwinputs, hwoutputs, 128, 64, fpga.util.deviceToOptions(arg[3]))
+      local v, metadata = fpga.compile(hwinputs, hwoutputs, 128, 64, opt)
       s = string.sub(arg[0],1,#arg[0]-4)..s
       io.output("out/"..s..".v")
       io.write(v)

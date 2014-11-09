@@ -851,7 +851,10 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
   elseif outputs[1][2]=="uart" then
     table.insert(result, fpga.modules.stageUART(options, totalInputBytes, outputBytes, options.stripWidth, options.stripHeight))
   elseif outputs[1][2]=="sim" then
-    table.insert(result, fpga.modules.sim(totalInputBytes, outputBytes, imageWidth))
+    -- sim framework assumes this is the case
+    assert(imageWidth==options.stripWidth)
+    assert(imageHeight==options.stripHeight)
+    table.insert(result, fpga.modules.sim(totalInputBytes, outputBytes, imageWidth, shifts[kernelGraph.child1]))
   else
     print("unknown data source "..outputs[1][2])
     assert(false)

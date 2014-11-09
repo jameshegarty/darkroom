@@ -398,7 +398,7 @@ end
   return res
 end
 
-function modules.sim(inputBytes, outputBytes, stripWidth)
+function modules.sim(inputBytes, outputBytes, stripWidth, outputShift)
   assert(type(inputBytes)=="number")
   assert(type(outputBytes)=="number")
   assert(type(stripWidth)=="number")
@@ -411,7 +411,7 @@ module sim;
   wire []=]..(outputBytes*8-1)..[=[:0] pipelineOutput;
   reg [12:0] posX = 0;
   reg [12:0] posY = 0;
-  integer addr = -PIPE_DELAY+1;
+  integer addr = -PIPE_DELAY+1-]=]..outputShift..[=[;
   reg [10000:0] inputFilename;
   reg [10000:0] outputFilename; 
   reg [7:0] i = 0;
@@ -457,7 +457,7 @@ module sim;
    end // while (c != `EOF)
 
    // drain pipe
-   addr = -PIPE_DELAY+1;
+   addr = -PIPE_DELAY+1-]=]..outputShift..[=[;
 
    while (addr<0) begin
      CLK = 0;
