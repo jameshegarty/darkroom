@@ -16,17 +16,19 @@ function concat(t1,t2)
     return t1
 end
 
-function declareReg(type, name, initial)
-  if initial==nil then 
+function declareReg(type, name, initial, comment)
+  if comment==nil then comment="" end
+
+  if initial==nil or initial=="" then 
     initial=""
   else
     initial = " = "..initial
   end
 
   if type:isBool() then
-    return "reg "..name..initial..";\n"
+    return "reg "..name..initial..";"..comment.."\n"
   else
-    return "reg ["..(type:sizeof()*8-1)..":0] "..name..initial..";\n"
+    return "reg ["..(type:sizeof()*8-1)..":0] "..name..initial..";"..comment.."\n"
  end
 end
 
@@ -279,8 +281,9 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           local prev = inputs[k][c]
           for i=1, delays do
             local sn = inputs[k][c].."_"..n:cname(c).."_retime"..i
-            table.insert(declarations, declareReg( n.type:baseType(), sn ))
-            table.insert(clockedLogic, sn.." <= "..prev..";\n")
+             -- type is determined by producer, b/c consumer op can change type
+            table.insert(declarations, declareReg( v.type:baseType(), sn, "", " // retiming" ))
+            table.insert(clockedLogic, sn.." <= "..prev.."; // retiming\n")
             prev = sn
           end
           if delays>0 then inputs[k][c] = inputs[k][c].."_"..n:cname(c).."_retime"..delays end
@@ -432,7 +435,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
             assert(false)
           end
         elseif n.kind=="select" or n.kind=="vectorSelect" then
-          table.insert(declarations,declareReg( n.type:baseType(), n:cname(c) ))
+          table.insert(declarations,declareReg( n.type:baseType(), n:cname(c), "", " // "..n.kind.." result" ))
           local condC = 1
           if n.kind=="vectorSelect" then condC=c end
 

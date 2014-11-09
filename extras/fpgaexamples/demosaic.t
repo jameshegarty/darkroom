@@ -104,7 +104,7 @@ end
 function campipe(in1)
   local out = blackLevel(in1, 10)
   out = bilinearDemosaic(out)
---  out = doccm(out)
+  out = doccm(out)
 
 --  return im(x,y) [uint8[3]]( darkroom.vectorSelect(out>255,[uint8[3]](255),out) ) end
   return im(x,y) [uint8[3]]( darkroom.vectorSelect(out>[uint8](255),[uint8[3]](255),out) ) end
@@ -126,8 +126,10 @@ io.close()
 fpga.util.writeMetadata("out/"..s..".metadata.lua", metadata)
 
 --------------
-
-local v, metadata = fpga.compile({{sensor,"sim","300d.raw"}},{{campipeline,"sim"}}, 128,64, fpga.util.deviceToOptions(arg[1]))
+local opt = fpga.util.deviceToOptions(arg[1])
+opt.stripWidth=128
+opt.stripHeight=64
+local v, metadata = fpga.compile({{sensor,"sim","300d.raw"}},{{campipeline,"sim"}}, 128,64, opt)
 
 local s = string.sub(arg[0],1,#arg[0]-2)
 io.output("out/"..s..".sim.v")
