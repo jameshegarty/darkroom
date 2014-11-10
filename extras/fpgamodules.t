@@ -36,6 +36,9 @@ function modules.reduce(compilerState, op, cnt, datatype, argminVars)
     funroll[#funroll]("",{})
   else
     for i=0,cnt-1 do table.insert(module,", input["..(datatype:sizeof()*8-1)..":0] partial_"..i.."") end
+    if op=="valid" then
+      for i=0,cnt-1 do table.insert(module,", input  partial_valid_"..i.."") end
+    end
   end
 
   table.insert(module,");\n")
@@ -75,6 +78,11 @@ function modules.reduce(compilerState, op, cnt, datatype, argminVars)
           table.insert(clockedLogic, n.."_"..argminVars["varname"..i].." <= ("..a.."<="..b..")?("..a.."_"..argminVars["varname"..i].."):("..b.."_"..argminVars["varname"..i]..");\n")
           i = i + 1
         end
+      elseif op=="valid" then
+        local nv = "partial_valid_l"..(level+1).."_"..i
+        table.insert(module, declareReg(darkroom.type.bool(),nv))
+        table.insert(clockedLogic, n.." <= (partial_valid"..l.."_"..(i*2)..")?(partial"..l.."_"..(i*2).."):(partial"..l.."_"..(i*2+1)..");\n")
+        table.insert(clockedLogic, nv.." <= (partial_valid"..l.."_"..(i*2).." || partial_valid"..l.."_"..(i*2+1)..");\n")
       else
         assert(false)
       end
@@ -90,12 +98,18 @@ function modules.reduce(compilerState, op, cnt, datatype, argminVars)
         if op=="argmin" then
           local i = 1
           while argminVars["varname"..i] do table.insert(clockedLogic, n.."_"..argminVars["varname"..i].." <= partial_"..(remain-1).."_"..argminVars["varname"..i]..";\n"); table.insert(module, declareReg(datatype,n.."_"..argminVars["varname"..i])); i=i+1 end
+        elseif op=="valid" then
+          table.insert(module, declareReg(darkroom.type.bool(),"partial_valid_l"..(level+1).."_"..r))
+          table.insert(clockedLogic, "partial_valid_l"..(level+1).."_"..r.." <= partial_valid_"..(remain-1)..";\n");
         end
       else
         table.insert(clockedLogic, n.." <= partial_l"..level.."_"..(remain-1)..";\n")	
         if op=="argmin" then
           local i = 1
           while argminVars["varname"..i] do table.insert(clockedLogic, n.."_"..argminVars["varname"..i].." <= partial_l"..level.."_"..(remain-1).."_"..argminVars["varname"..i]..";\n"); table.insert(module, declareReg(datatype,n.."_"..argminVars["varname"..i])); i=i+1 end
+        elseif op=="valid" then
+          table.insert(module, declareReg(darkroom.type.bool(),"partial_valid_l"..(level+1).."_"..r))
+          table.insert(clockedLogic, "partial_valid_l"..(level+1).."_"..r.." <= partial_valid_l"..level.."_"..(remain-1)..";\n");
         end
 
       end

@@ -44,7 +44,7 @@ function declareWire(ty, name, str, comment)
   end
 
   if ty:isBool() then
-    return "wire "..name..str..";\n"
+    return "wire "..name..str..";"..comment.."\n"
   else
     return "wire ["..(ty:sizeof()*8-1)..":0] "..name..str..";"..comment.."\n"
   end
@@ -163,7 +163,8 @@ function typedASTFunctions:internalDelay()
     return math.ceil(math.log(self:arraySize("expr"))/math.log(2)) -- for the reduce
   elseif self.kind=="gather" then
     local area = (self.maxX*2+1)*(self.maxY*2+1)
-    return math.ceil(math.log(area)/math.log(2)) -- for the reduce
+    -- for the reduce, and one extra to calculate the valid pixel
+    return math.ceil(math.log(area)/math.log(2))+1
   else
     print(self.kind)
     assert(false)
@@ -506,6 +507,41 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           table.insert(declarations,str..");\n")
           res = n:cname(c)
         elseif n.kind=="gather" then
+          local area = (n.maxX*2+1)*(n.maxY*2+1)
+          local rname, rmod = fpga.modules.reduce(compilerState, "valid", area, n.type)
+          result = concat(rmod, result)
+          
+          table.insert(declarations, declareWire(n.type, n:cname(c),"", "// gather result"))
+
+          local str = rname.." gatherreduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(c)..")"
+          local cnt = 0
+          for gx=-n.maxX, n.maxX do
+            for gy=-n.maxY, n.maxY do
+              local relX = n.input.relX
+              local relY = n.input.relY
+              if type(relX)~="number" then
+                relX = relX:eval(1)
+                assert(relX:area()==1)
+                relX = relX:min(1)
+              end
+
+              if type(relY)~="number" then
+                relY = relY:eval(1)
+                assert(relY:area()==1)
+                relY = relY:min(1)
+              end
+
+              local v = n:cname(c).."_valid_x"..numToVarname(gx+relX).."_y"..numToVarname(gy+relY)
+              str = str .. ",.partial_"..cnt.."(in"..kernelToVarname(n.input.from).."_x"..numToVarname(gx+relX).."_y"..numToVarname(gy+relY)..")"
+              str = str .. ",.partial_valid_"..cnt.."("..v..")"
+              cnt = cnt + 1
+              table.insert(declarations, declareReg(darkroom.type.bool(), v,"", "// gather valid"))
+              table.insert(clockedLogic, v.." <= ("..inputs.x[1].."=="..valueToVerilog(gx,n.x.type)..") && ("..inputs.y[1].."=="..valueToVerilog(gy,n.y.type).."); // gather select\n")
+            end
+          end
+
+          table.insert(declarations,str..");\n")
+          res = n:cname(c)
         elseif n.kind=="lifted" then
           res = "lifted"..n.id
         else
