@@ -1,6 +1,7 @@
 import "darkroom"
 darkroomSimple = terralib.require("darkroomSimple")
 terralib.require "bilinear"
+fpga = terralib.require("fpga")
 
 windowRadius = 2
 iterations = 1 -- iterations per level
@@ -137,8 +138,18 @@ function makeLK(frame1, frame2)
 end
 
 local frame1 = darkroomSimple.load("frame10.bmp")
-im frame1(x,y) [float](frame1) end
 local frame2 = darkroomSimple.load("frame11.bmp")
-im frame2(x,y) [float](frame2) end
 
-makeLK( frame1, frame2 ):save("out/lucaskanade.bmp")
+lkpipeline = makeLK( frame1, frame2 )
+lkpipeline:save("out/lucaskanade.bmp")
+
+-----------------
+print("Build For: "..arg[1])
+local v, metadata = fpga.compile({{frame1,"uart","frame10.bmp"},{frame2,"uart","frame11.bmp"}},{{lkpipeline,"uart"}}, 128,64, fpga.util.deviceToOptions(arg[1]))
+
+local s = string.sub(arg[0],1,#arg[0]-2)
+io.output("out/"..s..".v")
+io.write(v)
+io.close()
+
+fpga.util.writeMetadata("out/"..s..".metadata.lua", metadata)

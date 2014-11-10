@@ -193,7 +193,9 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
 
     -- we make a bram for each full line. 
     assert(stripWidth*bytesPerPixel < BRAM_SIZE_BYTES)
-    assert(bytesPerPixel==1)
+    assert(bytesPerPixel==1 or bytesPerPixel==2 or bytesPerPixel==4)
+
+    local extraBits = math.log(bytesPerPixel)/math.log(2)
 
     local smallestX = 0
     for k,v in ipairs(consumers) do
@@ -203,8 +205,8 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
       if v:min(1) < smallestX then smallestX = v:min(1) end
     end
 
-    table.insert(t,"reg [10:0] lbWriteAddr = 0;\n")
-    table.insert(t,"reg [10:0] lbReadAddr = 1;\n")
+    table.insert(t,"reg ["..(10-extraBits)..":0] lbWriteAddr = 0;\n")
+    table.insert(t,"reg ["..(10-extraBits)..":0] lbReadAddr = 1;\n")
     table.insert(clockedLogic, "if (lbWriteAddr == "..(stripWidth-1)..") begin lbWriteAddr <= 0; end else begin lbWriteAddr <= lbWriteAddr + 1; end\n")
     table.insert(clockedLogic, "if (lbReadAddr == "..(stripWidth-1)..") begin lbReadAddr <= 0; end else begin lbReadAddr <= lbReadAddr + 1; end\n")
 
@@ -225,8 +227,8 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
         indata = "evicted_"..numToVarname(i+1)
       end
 
-      table.insert(t, [=[RAMB16_S9_S9 #(]=]..configParams..[=[) ram_line]=]..numToVarname(i)..[=[(
-.DIPA(1'b0),
+      table.insert(t, [=[RAMB16_S]=]..(bytesPerPixel*9)..[=[_S]=]..(bytesPerPixel*9)..[=[ #(]=]..configParams..[=[) ram_line]=]..numToVarname(i)..[=[(
+//.DIPA(1'b0),
 .DIA(]=]..indata..[=[),
 //.DOA(),
 .DOB(evicted_]=]..numToVarname(i)..[=[),

@@ -161,6 +161,9 @@ function typedASTFunctions:internalDelay()
     return math.ceil(math.log(area)/math.log(2)) -- for the reduce
   elseif self.kind=="reduce" then
     return math.ceil(math.log(self:arraySize("expr"))/math.log(2)) -- for the reduce
+  elseif self.kind=="gather" then
+    local area = (self.maxX*2+1)*(self.maxY*2+1)
+    return math.ceil(math.log(area)/math.log(2)) -- for the reduce
   else
     print(self.kind)
     assert(false)
@@ -502,6 +505,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           n:map("expr",function(_,i) str = str..",.partial_"..(i-1).."("..inputs["expr"..i][c]..")" end)
           table.insert(declarations,str..");\n")
           res = n:cname(c)
+        elseif n.kind=="gather" then
         elseif n.kind=="lifted" then
           res = "lifted"..n.id
         else
