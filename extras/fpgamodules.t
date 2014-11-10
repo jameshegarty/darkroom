@@ -398,20 +398,27 @@ end
   return res
 end
 
-function modules.sim()
+function modules.sim(inputBytes, outputBytes, stripWidth, outputShift)
+  assert(type(inputBytes)=="number")
+  assert(type(outputBytes)=="number")
+  assert(type(stripWidth)=="number")
+
   return [=[`define EOF 32'hFFFF_FFFF
 module sim;
- integer file, c, r,fileout;
- reg     CLK;
- reg [7:0] modInput;
- wire [7:0] modOutput;
- integer addr = -PIPE_DELAY+2;
- reg [10000:0] inputFilename;
- reg [10000:0] outputFilename;
+  integer file, c, r,fileout;
+  reg     CLK;
+  reg []=]..(inputBytes*8-1)..[=[:0] pipelineInput;
+  wire []=]..(outputBytes*8-1)..[=[:0] pipelineOutput;
+  reg [12:0] posX = 0;
+  reg [12:0] posY = 0;
+  integer addr = -PIPE_DELAY+1-]=]..outputShift..[=[;
+  reg [10000:0] inputFilename;
+  reg [10000:0] outputFilename; 
+  reg [7:0] i = 0;
 
- Pipeline pipeline(.CLK(CLK),.in(modInput),.out(modOutput));
+  Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInput),.out(pipelineOutput));
 
- initial begin
+  initial begin
    $display("HELLO");
 
    $value$plusargs("inputFilename=%s",inputFilename);
@@ -423,29 +430,46 @@ module sim;
    c = $fgetc(file);
    while (c != `EOF) begin
 //     $display(c);
-     modInput = c;
+     pipelineInput = c;
      CLK = 0;
      #10
      CLK = 1;
      #10
 //     $display(modOutput);
 
-     if(addr>=0) begin $fwrite(fileout, "%c", modOutput); end
+     if(addr>=0) begin 
+       i = 0;
+       while( i<]=]..outputBytes..[=[) begin
+         $fwrite(fileout, "%c", pipelineOutput[i*8+:8]); 
+         i = i + 1;
+       end
+     end
 
      c = $fgetc(file);
+     if(posX >= ]=]..(stripWidth-1)..[=[) begin
+       posX = 0;
+       posY = posY+1;
+     end else begin
+       posX = posX + 1;
+     end
      addr = addr + 1;
+
    end // while (c != `EOF)
 
    // drain pipe
-   addr = -PIPE_DELAY+2;
+   addr = -PIPE_DELAY+1-]=]..outputShift..[=[;
 
    while (addr<0) begin
      CLK = 0;
      #10
      CLK = 1;
      #10
-     addr = addr + 1;     
-     $fwrite(fileout, "%c", modOutput);
+     addr = addr + 1;
+     i=0;
+     while( i<]=]..outputBytes..[=[) begin
+       $fwrite(fileout, "%c", pipelineOutput[i*8+:8]);
+       i = i + 1;
+     end
    end	   
 
    $display("DONE");

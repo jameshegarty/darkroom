@@ -12,8 +12,11 @@ clean:
 	rm -f out/*
 	rm -rf build_*
 
-out/%.v : %.t
+out/%.sim.v out/%.v : %.t
 	$(TERRA) $< $(DARKROOM_CHIP)
+
+out/%.sim.bmp : out/%.sim.v
+	bash -x ../sim.sh $*
 
 out/%.bit : out/%.v
 	mkdir -p build_$*

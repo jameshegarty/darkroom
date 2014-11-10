@@ -33,14 +33,14 @@ out/%.lua.est.lua : %.lua
 out/%.lua.actual.lua : out/%.bit
 	$(TERRA) ../extractStats.t out/$*.par.txt $@
 
-out/%.v : %.lua
+out/%.sim.v out/%.v : %.lua
 	$(TERRA) $< build frame_128.bmp $(DARKROOM_CHIP)
 
 out/%.lua.bmp : %.lua
 	$(TERRA) $< cpu frame_128.bmp
 
-out/%.sim.bmp : out/%.v
-	bash sim.sh $*
+out/%.sim.bmp : out/%.sim.v
+	bash ../sim.sh $*
 
 out/%.fpga.bmp : %.lua out/%.lua.bmp out/%.bit
 	bash ../$(DARKROOM_CHIP).test.sh $*

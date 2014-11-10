@@ -34,21 +34,44 @@ function test(inast, inputList)
     io.write(pl)
     io.close()
   elseif arg[1]=="build" then
-    local hwinputs = inputList
-    if hwinputs==nil then hwinputs={{testinput,"uart","frame_128.bmp"}} end
-    local hwoutputs = inast
-    if darkroom.ast.isAST(hwoutputs) then
-      hwoutputs = {{inast,"uart"}}
+
+
+
+    for i=1,2 do
+      local s = ""
+      local hwinputs
+      local hwoutputs
+      local opt
+      if i==1 then
+        hwinputs = inputList
+        if hwinputs==nil then hwinputs={{testinput,"uart","frame_128.bmp"}} end
+        hwoutputs = inast
+        if darkroom.ast.isAST(hwoutputs) then
+          hwoutputs = {{inast,"uart"}}
+        end
+        opt = fpga.util.deviceToOptions(arg[3])
+      elseif i==2 then
+        hwinputs = inputList
+        if hwinputs==nil then hwinputs={{testinput,"sim","frame_128.raw"}} end
+        hwoutputs = inast
+        if darkroom.ast.isAST(hwoutputs) then
+          hwoutputs = {{inast,"sim"}}
+        end
+
+        s = ".sim"
+        opt = fpga.util.deviceToOptions(arg[3])
+        opt.stripWidth = 128
+        opt.stripHeight = 64
+      end
+
+      local v, metadata = fpga.compile(hwinputs, hwoutputs, 128, 64, opt)
+      s = string.sub(arg[0],1,#arg[0]-4)..s
+      io.output("out/"..s..".v")
+      io.write(v)
+      io.close()
+      
+      fpga.util.writeMetadata("out/"..s..".metadata.lua", metadata)
     end
-
-    local v, metadata = fpga.compile(hwinputs, hwoutputs, 128, 64, fpga.util.deviceToOptions(arg[3]))
-    local s = string.sub(arg[0],1,#arg[0]-4)
-    io.output("out/"..s..".v")
-    io.write(v)
-    io.close()
-
-    fpga.util.writeMetadata("out/"..s..".metadata.lua", metadata)
-
   else
     local cpuinast
     if darkroom.ast.isAST(inast) then 

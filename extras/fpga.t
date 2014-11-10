@@ -16,17 +16,19 @@ function concat(t1,t2)
     return t1
 end
 
-function declareReg(type, name, initial)
-  if initial==nil then 
+function declareReg(type, name, initial, comment)
+  if comment==nil then comment="" end
+
+  if initial==nil or initial=="" then 
     initial=""
   else
     initial = " = "..initial
   end
 
   if type:isBool() then
-    return "reg "..name..initial..";\n"
+    return "reg "..name..initial..";"..comment.."\n"
   else
-    return "reg ["..(type:sizeof()*8-1)..":0] "..name..initial..";\n"
+    return "reg ["..(type:sizeof()*8-1)..":0] "..name..initial..";"..comment.."\n"
  end
 end
 
@@ -171,6 +173,12 @@ end
 -- Nodes can have 'internal' delays. These are the delays inside the node.
 -- eg a big reduce takes 5 cycles etc. The number of pipelining registers
 -- we need to create is the difference in delays minus the internal delays.
+--
+-- Remember, this is not at all affected by the darkroom schedule shifts.
+-- the darkroom schedules takes a pipeline, and produces a pipeline.
+-- There is no side-band information needed to implement the pipeline the
+-- scheduler produces. So we can totally ignore the darkroom schedule here,
+-- and just rate match due to the extra retiming registers we introduced.
 function fpga.trivialRetime(typedAST)
   local retiming = {}
 
@@ -187,7 +195,8 @@ function fpga.trivialRetime(typedAST)
   return retiming
 end
 
-local binopToVerilog={["+"]="+",["*"]="*",["<<"]="<<",[">>"]=">>",["pow"]="**",["=="]="==",["and"]="&&",["-"]="-",["<"]="<",[">"]=">",["<="]="<=",[">="]=">="}
+local binopToVerilog={["+"]="+",["*"]="*",["<<"]="<<",[">>"]=">>",["pow"]="**",["=="]="==",["and"]="&",["-"]="-",["<"]="<",[">"]=">",["<="]="<=",[">="]=">="}
+local binopToVerilogBoolean={["=="]="==",["and"]="&&"}
 
 function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth, imageHeight)
   assert(type(imageWidth)=="number")
@@ -222,6 +231,11 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
   table.insert(result,"wire [12:0] inY_0;\n")
   table.insert(result,"assign inY_0 = inY;\n")
 
+  -- these variable only serve to delay the input x,y to the output x,y
+  -- They are not used internally by this kernel - the x,y used
+  -- internally by the kernel are delayed using the normal retiming infrastructure.
+  -- Potentially, we could accomplish the same thing with adding a delay
+  -- to x,y using an add operator, which may be better in some cases?
   for i=1,retiming[kernel] do
     table.insert(result,"reg [12:0] inX_"..i..";\n")
     table.insert(result,"reg [12:0] inY_"..i..";\n")
@@ -267,8 +281,9 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           local prev = inputs[k][c]
           for i=1, delays do
             local sn = inputs[k][c].."_"..n:cname(c).."_retime"..i
-            table.insert(declarations, declareReg( n.type:baseType(), sn ))
-            table.insert(clockedLogic, sn.." <= "..prev..";\n")
+             -- type is determined by producer, b/c consumer op can change type
+            table.insert(declarations, declareReg( v.type:baseType(), sn, "", " // retiming" ))
+            table.insert(clockedLogic, sn.." <= "..prev.."; // retiming\n")
             prev = sn
           end
           if delays>0 then inputs[k][c] = inputs[k][c].."_"..n:cname(c).."_retime"..delays end
@@ -381,7 +396,19 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           table.insert(declarations, declareReg( n.type:baseType(), n:cname(c) ))
 
           if n.op=="<" or n.op==">" or n.op=="<=" or n.op==">=" then
-            table.insert(clockedLogic, n:name().."_c"..c.." <= ($signed("..inputs.lhs[c]..")"..n.op.."$signed("..inputs.rhs[c].."));\n")
+            if n.type:baseType():isBool() and n.lhs.type:baseType():isInt() and n.rhs.type:baseType():isInt() then
+              table.insert(clockedLogic, n:name().."_c"..c.." <= ($signed("..inputs.lhs[c]..")"..n.op.."$signed("..inputs.rhs[c].."));\n")
+            elseif n.type:baseType():isBool() and n.lhs.type:baseType():isUint() and n.rhs.type:baseType():isUint() then
+              table.insert(clockedLogic, n:name().."_c"..c.." <= (("..inputs.lhs[c]..")"..n.op.."("..inputs.rhs[c].."));\n")
+            else
+              print( n.type:baseType():isBool() , n.lhs.type:baseType():isInt() , n.rhs.type:baseType():isInt(),n.type:baseType():isBool() , n.lhs.type:baseType():isUint() , n.rhs.type:baseType():isUint())
+              assert(false)
+            end
+
+          elseif n.type:isBool() then
+            local op = binopToVerilogBoolean[n.op]
+            if type(op)~="string" then print("OP_BOOLEAN",n.op); assert(false) end
+            table.insert(clockedLogic, n:name().."_c"..c.." <= "..inputs.lhs[c]..op..inputs.rhs[c]..";\n")
           else
             local op = binopToVerilog[n.op]
             if type(op)~="string" then print("OP",n.op); assert(false) end
@@ -408,11 +435,11 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
             assert(false)
           end
         elseif n.kind=="select" or n.kind=="vectorSelect" then
-          table.insert(declarations,declareReg( n.type:baseType(), n:cname(c) ))
+          table.insert(declarations,declareReg( n.type:baseType(), n:cname(c), "", " // "..n.kind.." result" ))
           local condC = 1
           if n.kind=="vectorSelect" then condC=c end
 
-          table.insert(clockedLogic, n:cname(c).." <= ("..inputs.cond[condC]..")?("..inputs.a[c].."):("..inputs.b[c]..");\n")
+          table.insert(clockedLogic, n:cname(c).." <= ("..inputs.cond[condC]..")?("..inputs.a[c].."):("..inputs.b[c].."); // "..n.kind.."\n")
           res = n:cname(c)
         elseif n.kind=="load" then
           local v = "in"..kernelToVarname(n.from).."_x"..getStencilCoord(n.relX).."_y"..getStencilCoord(n.relY)
@@ -432,10 +459,10 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           res = n:cname(c)
         elseif n.kind=="cast" then
           local expr
-          local cmt = " // cast"
+          local cmt = " // cast "..n.expr.type:str().." to "..n.type:str()
           if n.type:isArray() and n.expr.type:isArray()==false then
             expr = inputs["expr"][1] -- broadcast
-            cmt = " // broadcast"
+            cmt = " // broadcast "..n.expr.type:str().." to "..n.type:str()
           else
             expr = inputs["expr"][c]
           end
@@ -445,7 +472,8 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
             expr = "{ {"..(8*(n.type:sizeof()-n.expr.type:sizeof())).."{"..expr.."["..(n.expr.type:sizeof()*8-1).."]}},"..expr.."["..(n.expr.type:sizeof()*8-1)..":0]}"
           end
           
-          table.insert(declarations, declareWire(n.type:baseType(), n:cname(c), expr,cmt))
+          table.insert(declarations, declareWire(n.type:baseType(), n:cname(c), "",cmt))
+          table.insert(declarations, "assign "..n:cname(c).." = "..expr..";"..cmt.."\n")
           res = n:cname(c)
         elseif n.kind=="value" then
           local v
@@ -823,8 +851,16 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
 
   if outputs[1][2]=="vga" then
     table.insert(result, fpga.modules.stageVGA())
-  else
+  elseif outputs[1][2]=="uart" then
     table.insert(result, fpga.modules.stageUART(options, totalInputBytes, outputBytes, options.stripWidth, options.stripHeight))
+  elseif outputs[1][2]=="sim" then
+    -- sim framework assumes this is the case
+    assert(imageWidth==options.stripWidth)
+    assert(imageHeight==options.stripHeight)
+    table.insert(result, fpga.modules.sim(totalInputBytes, outputBytes, imageWidth, shifts[kernelGraph.child1]))
+  else
+    print("unknown data source "..outputs[1][2])
+    assert(false)
   end
 
   return table.concat(result,""), metadata

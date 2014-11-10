@@ -1,6 +1,7 @@
 import "darkroom"
 fpga = terralib.require("fpga")
 cstdlib = terralib.includec("stdlib.h")
+cstdio = terralib.includec("stdio.h")
 
 local metadata = dofile(arg[1])
 
@@ -21,6 +22,7 @@ local terra test()
 
   var outputImg = fpga.util.test(uartDevice, imgCnt, inputImgs, metadata.stripWidth, metadata.stripHeight, metadata.minX, metadata.minY, metadata.maxX, metadata.maxY, metadata.outputShift, metadata.outputChannels, metadata.outputBytes, metadata.uartClock )
 
+  cstdio.printf("DOSAVE\n")
   outputImg:save(outputFile)
 end
 test:printpretty()
