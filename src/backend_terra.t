@@ -75,7 +75,8 @@ function calculateStride(producerN, producerD, consumerN, consumerD)
     return d,1
   elseif (producerN/producerD)<=(consumerN/consumerD) then
     -- a upsample
-    local d = (consumerN/consumerD)/(producerN/producerD)
+--    local d = (consumerN/consumerD)/(producerN/producerD)
+    local d = (consumerN*producerD)/(consumerD*producerN) -- line above was causing floating point errors, making assert below fail
     assert(d==math.floor(d))
     return 1,d
   end
@@ -168,7 +169,7 @@ LineBufferWrapperMT={__index=LineBufferWrapperFunctions}
 linebufferCount = 7 -- just start with a random id to make the debug checks more effective
 function isLineBufferWrapper(b) return getmetatable(b)==LineBufferWrapperMT end
 
-function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightStencil, debug, scaleN1, scaleD1, scaleN2, scaleD2, largestScaleY )
+function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightStencil, debug, scaleN1, scaleD1, scaleN2, scaleD2, largestScaleY, V )
   assert(type(lines)=="number")
   assert(type(leftStencil)=="number")
   assert(type(stripWidth)=="number")
@@ -180,6 +181,9 @@ function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightS
   assert(type(scaleD2)=="number")
   assert(type(largestScaleY)=="number")
   assert(darkroom.type.isType(orionType))
+  assert(type(V)=="number")
+
+  assert( stripWidth % V == 0 ) -- this had better be the case, or sets will fail
 
   local tab = {lines=lines, 
                id = linebufferCount, -- for debugging
@@ -317,10 +321,10 @@ function LineBufferWrapperFunctions:set( loopid, value, V )
                        @([self.ivDebugX[loopid]]+i) = [self.posX[loopid]]+i
                        @([self.ivDebugY[loopid]]+i) = [self.posY[loopid]]
                        @([self.ivDebugId[loopid]]+i) = [self.id]
-
-                       orionAssert(uint64([self.iv[loopid]]) % (V*sizeof([self.orionType:toTerraType()])) == 0,"lb set not aligned")
         end)
       end
+      table.insert(res, quote 
+                     orionAssert(uint64([self.iv[loopid]]) % (V*sizeof([self.orionType:toTerraType()])) == 0,"lb set not aligned") end)
     end
 
   table.insert(res,quote @[&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]]) = value end)
@@ -432,6 +436,7 @@ function LineBufferWrapperFunctions:nextLine(loopid,  sub)
         if [buf[k]] >= [base[k]]+[self:modularSize(bufType[k])*2] then [buf[k]] = [buf[k]] - [self:modularSize(bufType[k])] end
       end)
   end
+
 
   return quote res end
 end
@@ -1214,7 +1219,12 @@ end
 function stripWidth(options, scaleN1, scaleD1)
   assert(type(scaleN1)=="number")
   assert(type(scaleD1)=="number")
-  return math.floor((upToNearest(options.V*options.stripcount,options.width) / options.stripcount) * ratioToScale(scaleN1,scaleD1))
+  local res = math.floor((upToNearest(options.V*options.stripcount,options.width) / options.stripcount) * ratioToScale(scaleN1,scaleD1))
+
+  -- in the case of pyramids, the strip width for all scales must have V as a factor.
+  -- This is hard in general, b/c you might have 3 as a scale factor for ex.
+  assert(res % options.V == 0) -- strips had better have V as a factor, or sets will be unaligned
+  return res
 end
 
 
@@ -1654,7 +1664,8 @@ function darkroom.terracompiler.allocateImageWrappers(
               n.kernel.scaleD1,
               n.kernel.scaleN2, 
               n.kernel.scaleD2,
-              largestScaleY)
+              largestScaleY,
+              options.V)
 
             linebufferSize = linebufferSize + outputs[n][c]:allocateSize()
           end

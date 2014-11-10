@@ -652,26 +652,28 @@ function darkroom.typedAST._toTypedAST(inast)
       if darkroom.type.isType(ast.type)==false then print(ast.kind) end
       ast = darkroom.typedAST.new(ast):copyMetadataFrom(origast)
       assert(darkroom.type.isType(ast.type))
+
+      -- rules for finding the largest scale:
+      -- (1/1), (2/1), (4/1) => 4 (even if they have common factors, largest number is chosen)
+      -- (1/1), (2/1), (4/2) => 2 (need to factor the scale)
+      -- (1/1), (1/3), (1/7) => 1 (denom is irrelevant)
+      -- (1/1), (7/1), (3/1) => 21 (numerators must have common factors)
+      -- (1/1), (1/3), (7/3) => 7 (denom is irrelevant)
       for i=1,2 do 
         if type(ast["scaleN"..i])~="number" or type(ast["scaleD"..i])~="number" then print("missingrate",ast.kind); assert(false) end 
-        local lcdN = (ast["scaleN"..i]*largestScaleN[i])/gcd(ast["scaleN"..i],largestScaleN[i])
-        if lcdN>largestScaleN[i] then largestScaleN[i] = lcdN end
-        local lcdD = (ast["scaleD"..i]*largestScaleD[i])/gcd(ast["scaleD"..i],largestScaleD[i])
-        if lcdD>largestScaleD[i] then largestScaleD[i] = lcdD end
+        if ast["scaleN"..i]~=0 and ast["scaleD"..i]~=0 then
+          local N = ast["scaleN"..i]/gcd(ast["scaleN"..i],ast["scaleD"..i]) -- eg (4/2) => (2/1)
+          assert(math.floor(N)==N)
+          local lcdN = (N*largestScaleN[i])/gcd(N,largestScaleN[i])
+          if lcdN>largestScaleN[i] then largestScaleN[i] = lcdN 
+          elseif N>largestScaleN[i] then largestScaleN[i] = N end
+        end
       end
 
       return {ast}
     end)
 
-  local largestScale = {}
-  for i=1,2 do 
-    local g = gcd(largestScaleN[i], largestScaleD[i])
-    largestScaleN[i] = largestScaleN[i] / g
-    largestScaleD[i] = largestScaleD[i] / g
-    largestScale[i] = (largestScaleN[i]*largestScaleD[i])/gcd(largestScaleN[i],largestScaleD[i])
-  end
-
-  return res[1], largestScale[1], largestScale[2]
+  return res[1], largestScaleN[1], largestScaleN[2]
 end
 
 function darkroom.typedAST.astToTypedAST(ast, options)
@@ -755,6 +757,7 @@ function darkroom.typedAST.astToTypedAST(ast, options)
   local typedAST, largestScaleX, largestScaleY = darkroom.typedAST._toTypedAST(ast)
 
   if options.verbose or options.printstage then
+    print("largestScaleX",largestScaleX,"largestScaleY",largestScaleY)
     print("conversion to typed AST done ------------")
   end
 
