@@ -157,8 +157,17 @@ function shift(graph, shifts, largestScaleY, HWWidth)
                 end
               else
                 if nn.coord=="y" and shifts[orig]~=0 then
-                  local v = darkroom.typedAST.new({kind="value", value=-math.floor(shifts[orig]/looprate(orig.kernel.scaleN2,orig.kernel.scaleD2,largestScaleY)), type=nn.type}):copyMetadataFrom(nn)
-                  return darkroom.typedAST.new({kind="binop", lhs=nn, rhs = v, type = nn.type, op="+"}):copyMetadataFrom(nn)
+--                  local v = darkroom.typedAST.new({kind="value", value=-math.floor(shifts[orig]/looprate(orig.kernel.scaleN2,orig.kernel.scaleD2,largestScaleY)), type=nn.type}):copyMetadataFrom(nn)
+                  local v = darkroom.typedAST.new({kind="value", value=-shifts[orig], type=nn.type}):copyMetadataFrom(nn)
+                  local res = darkroom.typedAST.new({kind="binop", lhs=nn, rhs = v, type = nn.type, op="+"}):copyMetadataFrom(nn)
+
+                  local lr = looprate(orig.kernel.scaleN2,orig.kernel.scaleD2,largestScaleY)
+                  if lr~=1 then
+                    local lrv = darkroom.typedAST.new({kind="value", value=lr, type=nn.type}):copyMetadataFrom(nn)
+                    res = darkroom.typedAST.new({kind="binop", lhs=res, rhs = lrv, type = nn.type, op="floorDivide"}):copyMetadataFrom(nn)
+                  end
+
+                  return res
                 end
               end
             else

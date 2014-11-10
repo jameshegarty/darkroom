@@ -641,6 +641,7 @@ darkroom.terracompiler.numberBinops={
   [">>"]=function(lhs,rhs) return `lhs>>rhs end,
   ["min"]=function(lhs,rhs) return `terralib.select(lhs<rhs,lhs,rhs) end,
   ["max"]=function(lhs,rhs) return `terralib.select(lhs>rhs,lhs,rhs) end,
+  ["floorDivide"]=function(lhs,rhs,V) return darkroom.terracompiler.vectorizeBinaryPointwise(floorDivide,lhs,rhs,V) end, -- used to modify Y coordinate when we shift scaled images
   ["pow"]=function(lhs,rhs,V)
     return darkroom.terracompiler.vectorizeBinaryPointwise(cmath.pow,lhs,rhs,V)
   end
