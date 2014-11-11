@@ -137,6 +137,7 @@ function astFunctions:localEnvironment(root,envROOT)
                print("ADD",n)
                env[n] = darkroom.ast.new({kind="mapreducevar",
                                        variable=n,
+                                       id = self["varid"..i],
                                        low=self["varlow"..i],
                                        high=self["varhigh"..i]}):copyMetadataFrom(self)
              end)
