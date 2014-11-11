@@ -134,7 +134,6 @@ function astFunctions:localEnvironment(root,envROOT)
   if self.kind=="mapreduce" then
     self:map("varname", 
              function(n,i)
-               print("ADD",n)
                env[n] = darkroom.ast.new({kind="mapreducevar",
                                        variable=n,
                                        id = self["varid"..i],

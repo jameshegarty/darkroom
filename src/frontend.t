@@ -83,6 +83,11 @@ function darkroom.abs( thisast, expr)
   return darkroom.ast.new({kind="unary",op="abs",expr=expr}):copyMetadataFrom(thisast)
 end
 
+function darkroom.arctan( thisast, expr)
+  assert(darkroom.ast.isAST(expr))
+  return darkroom.ast.new({kind="unary",op="arctan",expr=expr}):copyMetadataFrom(thisast)
+end
+
 function darkroom.cos( thisast, expr)
   assert(darkroom.ast.isAST(expr))
   return darkroom.ast.new({kind="unary",op="cos",expr=expr}):copyMetadataFrom(thisast)
@@ -191,9 +196,24 @@ end
 -- convert the luavalue to an orion type
 -- implements behavior of dropping a unquoted lua value in Orion
 -- ast is either a func node or a lua node that yielded this value
-function darkroom.evalEscape(luavalue, ast)
+function darkroom.evalEscape(luavalue, ast, origAST, root)
   assert(darkroom.ast.isAST(ast))
-  assert(ast.kind=="escape")
+  assert(ast.kind=="escape" or ast.kind=="fieldselect" or ast.kind=="var")
+  assert(darkroom.ast.isAST(root))
+
+  -- this is kind of dumb. b/c we eval stuff one symbol at a time,
+  -- ie (a.b.c) first evals 'a', then 'b', then 'c', it's possible
+  -- that some of the intermediates are not valid darkroom values.
+  -- So, we check whether this is the last evaluation in a chain, 
+  -- and skip the validity checks if its not.
+  local terminal = false
+  local tcnt = 0
+  for parentNode,key in origAST:parents(root) do tcnt = tcnt+1; if parentNode.kind~="fieldselect" then terminal=true end; end
+  terminal = terminal or (tcnt==0)
+  
+  if terminal==false then
+    return darkroom.ast.new({kind="value", value=luavalue}):copyMetadataFrom(ast)
+  end
 
   if darkroom.ast.isAST(luavalue) then
     return luavalue
@@ -209,7 +229,7 @@ function darkroom.evalEscape(luavalue, ast)
     for k,v in pairs(luavalue) do
       if type(k)~="number" then 
         if ast.identifier~=nil then print(table.concat(ast.identifier)) end
-        darkroom.error("When converting a lua table to an orion type, all keys must be numeric",ast:linenumber(), ast:offset())
+        darkroom.error("When converting a lua table to an darkroom type, all keys must be numeric", ast:linenumber(), ast:offset(), ast:filename() )
       end
     end
 
@@ -217,7 +237,7 @@ function darkroom.evalEscape(luavalue, ast)
 
     for i=1,#luavalue do
       if type(luavalue[i])~="number" then
-        darkroom.error("tables inserted into orion must contain all numbers", ast:linenumber(), ast:offset(),ast:filename())
+        darkroom.error("tables inserted into darkroom must contain all numbers", ast:linenumber(), ast:offset(),ast:filename())
       end
 
       newnode["expr"..i] = darkroom.ast.new({kind="value",value=luavalue[i]}):copyMetadataFrom(ast)
@@ -226,11 +246,10 @@ function darkroom.evalEscape(luavalue, ast)
     return darkroom.ast.new(newnode):copyMetadataFrom(ast)
 
   elseif(type(luavalue)=="function") then
-    assert(ast.kind=="func")
-    return darkroom.ast.new({kind="macro",func=luavalue}):copyMetadataFrom(ast)
+    return darkroom.ast.new({kind="value",value=luavalue}):copyMetadataFrom(ast)
   end
   
-  darkroom.error("Type "..type(luavalue).." can't be converted to an orion type!", ast:linenumber(), ast:offset(), ast:filename())
+  darkroom.error("Type "..type(luavalue).." can't be converted to an darkroom type!", ast:linenumber(), ast:offset(), ast:filename())
 
   return nil
 end
@@ -578,14 +597,12 @@ function darkroom.compileTimeProcess(imfunc, envfn)
 
   rvalue = rvalue:S(
     function(n)  return n.kind=="index" or n.kind=="apply" or  n.kind=="escape" or n.kind=="var" or n.kind=="fieldselect" end):process(
-    function(inp)
+    function(inp, origInp)
       if inp.kind=="var" then
         if inp.name==imfunc.xvar then  return darkroom.ast.new({kind="position",coord="x"}):copyMetadataFrom(inp)
         elseif inp.name==imfunc.yvar then  return darkroom.ast.new({kind="position",coord="y"}):copyMetadataFrom(inp) 
-        elseif darkroom.ast.isAST(env[inp.name]) then
-          return env[inp.name]
-        elseif env[inp.name]~=nil then
-          return darkroom.ast.new({kind="value", value=env[inp.name]}):copyMetadataFrom(inp)
+        elseif darkroom.ast.isAST(env[inp.name]) or env[inp.name]~=nil then
+          return darkroom.evalEscape(env[inp.name],inp,origInp,rvalue)
         else
           darkroom.error("Could not resolve identifier: "..inp.name, inp:linenumber(), inp:offset(), inp:filename())
         end
@@ -598,15 +615,13 @@ function darkroom.compileTimeProcess(imfunc, envfn)
           return darkroom.ast.new(n):copyMetadataFrom(inp)
         end
       elseif inp.kind=="fieldselect" then
-        if darkroom.ast.isAST(inp.expr.value[inp.field]) then
-          return inp.expr.value[inp.field]
-        elseif inp.expr.value[inp.field]~=nil then
-          return darkroom.ast.new({kind="value", value=inp.expr.value[inp.field]}):copyMetadataFrom(inp)
+        if darkroom.ast.isAST(inp.expr.value[inp.field]) or inp.expr.value[inp.field]~=nil then
+          return darkroom.evalEscape(inp.expr.value[inp.field], inp, origInp,rvalue)
         else
           darkroom.error("Field is nil: "..inp.field, inp:linenumber(), inp:offset(), inp:filename())
         end
       elseif inp.kind=="escape" then
-        return darkroom.evalEscape(inp.expr(inp:localEnvironment(rvalue,env)),inp)
+        return darkroom.evalEscape(inp.expr(inp:localEnvironment(rvalue,env)),inp, origInp,rvalue)
       elseif inp.kind=="apply" then
         if inp.expr.kind=="type" then -- a typecast
           if inp:arraySize("arg") ~= 1 then
