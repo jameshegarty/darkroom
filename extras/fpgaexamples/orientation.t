@@ -21,6 +21,7 @@ h = histogram(36,4,4,
                 end
               end)
 
-orientation = im(x,y) [uint8]((map bin=0,36 reduce(argmin) h[bin] end)[0]) end
+-- use argmax to find the bin with the largest value
+orientation = im(x,y) [uint8]((map bin=0,36 reduce(argmax) h[bin] end)[0]) end
 
 orientation:save("out/orientation.bmp")
