@@ -532,7 +532,21 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
               end
 
               local v = n:cname(c).."_valid_x"..numToVarname(gx+relX).."_y"..numToVarname(gy+relY)
-              str = str .. ",.partial_"..cnt.."(in"..kernelToVarname(n.input.from).."_x"..numToVarname(gx+relX).."_y"..numToVarname(gy+relY)..")"
+              
+              -- gather is weird b/c it reads the whole stencil, so instead of using the regular retiming infrastructure, we do the retiming here
+              -- TODO: should probably modify this so that it uses the regular retiming infrasturcture.
+              -- plus, it takes one clock cycle to calculate the valid bits, so we also need to delay the input stencil 1 extra clock cycle
+              local gatherRetimeDelay = retiming[n] - n:internalDelay() + 1
+              for d=1,gatherRetimeDelay do
+                table.insert(declarations, declareReg(n.input.type, n:cname(c).."_partial_"..cnt.."_"..d,"", "// gather input delay"))
+                if d==1 then
+                  table.insert(clockedLogic, n:cname(c).."_partial_"..cnt.."_"..d.." <= in"..kernelToVarname(n.input.from).."_x"..numToVarname(gx+relX).."_y"..numToVarname(gy+relY).."; // gather input delay\n")
+                else
+                  table.insert(clockedLogic, n:cname(c).."_partial_"..cnt.."_"..d.." <= "..n:cname(c).."_partial_"..cnt.."_"..(d-1).."; // gather input delay\n")
+                end
+              end
+
+              str = str .. ",.partial_"..cnt.."("..n:cname(c).."_partial_"..cnt.."_"..gatherRetimeDelay..")"
               str = str .. ",.partial_valid_"..cnt.."("..v..")"
               cnt = cnt + 1
               table.insert(declarations, declareReg(darkroom.type.bool(), v,"", "// gather valid"))
