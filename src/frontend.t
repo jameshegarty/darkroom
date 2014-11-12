@@ -199,6 +199,7 @@ end
 function darkroom.evalEscape(luavalue, ast, origAST, root)
   assert(darkroom.ast.isAST(ast))
   assert(ast.kind=="escape" or ast.kind=="fieldselect" or ast.kind=="var")
+  assert(darkroom.ast.isAST(origAST))
   assert(darkroom.ast.isAST(root))
 
   -- this is kind of dumb. b/c we eval stuff one symbol at a time,
@@ -212,6 +213,7 @@ function darkroom.evalEscape(luavalue, ast, origAST, root)
   terminal = terminal or (tcnt==0)
   
   if terminal==false then
+    -- we will do a fieldselect on the value later
     return darkroom.ast.new({kind="value", value=luavalue}):copyMetadataFrom(ast)
   end
 
@@ -235,12 +237,21 @@ function darkroom.evalEscape(luavalue, ast, origAST, root)
 
     local newnode = {kind="array"}
 
+    local allnumbers = true
+    local allasts = true
     for i=1,#luavalue do
-      if type(luavalue[i])~="number" then
-        darkroom.error("tables inserted into darkroom must contain all numbers", ast:linenumber(), ast:offset(),ast:filename())
+      if type(luavalue[i])=="number" then
+        newnode["expr"..i] = darkroom.ast.new({kind="value",value=luavalue[i]}):copyMetadataFrom(ast)
+      elseif type(luavalue[i])=="table" and darkroom.ast.isAST(luavalue[i]) then
+        newnode["expr"..i] = luavalue[i]
+      else
+        allnumbers=false
+        allasts=false
       end
+    end
 
-      newnode["expr"..i] = darkroom.ast.new({kind="value",value=luavalue[i]}):copyMetadataFrom(ast)
+    if allnumbers==false and allasts==false then
+      darkroom.error("tables inserted into darkroom must contain all numbers, or all darkroom images", ast:linenumber(), ast:offset(),ast:filename())
     end
 
     return darkroom.ast.new(newnode):copyMetadataFrom(ast)
@@ -515,6 +526,7 @@ darkroom.lang.imageFunction = function(p)
             rvalue=rvalue, linenumber=p:cur().linenumber, offset=p:cur().offset, filename = p:cur().filename}
 end
 
+
 function darkroom.compileTimeProcess(imfunc, envfn)
 
   -- first, check that the users AST isn't totally messed up
@@ -595,7 +607,8 @@ function darkroom.compileTimeProcess(imfunc, envfn)
     print("Size preresolve:",rvalue:S("*"):count(),rvalue:name())
   end
 
-  rvalue = rvalue:S(
+  local function resolveVars(rvalue)
+  return rvalue:S(
     function(n)  return n.kind=="index" or n.kind=="apply" or  n.kind=="escape" or n.kind=="var" or n.kind=="fieldselect" end):process(
     function(inp, origInp)
       if inp.kind=="var" then
@@ -621,7 +634,7 @@ function darkroom.compileTimeProcess(imfunc, envfn)
           darkroom.error("Field is nil: "..inp.field, inp:linenumber(), inp:offset(), inp:filename())
         end
       elseif inp.kind=="escape" then
-        return darkroom.evalEscape(inp.expr(inp:localEnvironment(rvalue,env)),inp, origInp,rvalue)
+       return darkroom.evalEscape(inp.expr(inp:localEnvironment(rvalue,env,resolveVars)),inp, origInp,rvalue)
       elseif inp.kind=="apply" then
         if inp.expr.kind=="type" then -- a typecast
           if inp:arraySize("arg") ~= 1 then
@@ -658,6 +671,9 @@ function darkroom.compileTimeProcess(imfunc, envfn)
         end
       end
     end)
+  end
+  
+  rvalue = resolveVars(rvalue)
 
   if darkroom.verbose then
     print("end process, node count:",rvalue:S("*"):count(),rvalue:name())

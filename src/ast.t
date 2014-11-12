@@ -113,22 +113,19 @@ function astFunctions:codegen()
 
 end
 
--- 
-function astFunctions:localEnvironment(root,envROOT)
+function astFunctions:localEnvironment( root, envROOT, resolveVars)
+  assert(type(resolveVars)=="function")
+
   local env
   if root == self then
-    env = {}
-    -- need to do a deep copy b/c we don't want to mess up envRoot
-    --    for k,v in pairs(envROOT) do env[k]=v end
-    env= envROOT
+    env =  envROOT
   else
     -- if this is false, it violates lexical scope?
     assert( self:parentCount(root)==1 )
     for parentNode, key in self:parents(root) do
-      env = parentNode:localEnvironment(root, envROOT)
+      env = parentNode:localEnvironment(root, envROOT, resolveVars)
     end
   end
-
 
   -- if this node added stuff to the lexical environment, modify env
   if self.kind=="mapreduce" then
@@ -137,8 +134,8 @@ function astFunctions:localEnvironment(root,envROOT)
                env[n] = darkroom.ast.new({kind="mapreducevar",
                                        variable=n,
                                        id = self["varid"..i],
-                                       low=self["varlow"..i],
-                                       high=self["varhigh"..i]}):copyMetadataFrom(self)
+                                       low=resolveVars(self["varlow"..i],env),
+                                       high=resolveVars(self["varhigh"..i],env)}):copyMetadataFrom(self)
              end)
   elseif self.kind=="let" then
     self:map("expr",
@@ -148,7 +145,5 @@ function astFunctions:localEnvironment(root,envROOT)
              end)
   end
 
-
   return env
-
 end

@@ -6,4 +6,4 @@ a = {im(x,y) testinput(x,y)+[uint8](10) end,
 im(x,y) testinput(x,y)+[uint8](60) end,
 im(x,y) testinput(x,y)+[uint8](100) end}
 
-test(im(x,y) [a] end)
+test(im(x,y) a+[a] end)

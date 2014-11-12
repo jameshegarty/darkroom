@@ -701,6 +701,14 @@ darkroom.terracompiler.numberUnary={
       assert(false)
     end
   end,
+  ["arctan"] = function(expr,ast,V)
+    if ast.type:baseType():isFloat() then
+      return darkroom.terracompiler.vectorizeUnaryPointwise(  cmath.atan, expr, V )
+    else
+      ast.type:print()
+      assert(false)
+    end
+  end,
   ["exp"] = function(expr,ast,V)
     if ast.type:baseType():isFloat() then
       return darkroom.terracompiler.vectorizeUnaryPointwise(  cmath.exp, expr, V )

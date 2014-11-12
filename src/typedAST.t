@@ -286,7 +286,7 @@ function darkroom.typedAST._toTypedAST(inast)
             darkroom.error("not only works on bools",origast:linenumber(), origast:offset())
             assert(false)
           end
-        elseif ast.op=="sin" or ast.op=="cos" or ast.op=="exp" then
+        elseif ast.op=="sin" or ast.op=="cos" or ast.op=="exp" or ast.op=="arctan" then
           if ast.expr.type==darkroom.type.float(32) then
             ast.type = darkroom.type.float(32)
           elseif ast.expr.type==darkroom.type.float(64) then
@@ -400,7 +400,7 @@ function darkroom.typedAST._toTypedAST(inast)
         local range = origast["index"]:eval(1)
 
         if range:min(1)<0 or range:max(1) >= darkroom.type.arrayLength(expr.type) then
-          darkroom.error("index value out of range. It is ["..range:min(1)..","..range:max(1).."] but should be within [0,"..(darkroom.type.arrayLength(expr.type)-1).."]",origast:linenumber())
+          darkroom.error("index value out of range. It is ["..range:min(1)..","..range:max(1).."] but should be within [0,"..(darkroom.type.arrayLength(expr.type)-1).."]",origast:linenumber(), origast:offset(), origast:filename())
         end
 
         ast.index = origast["index"]

@@ -3,7 +3,7 @@ darkroomSimple = terralib.require("darkroomSimple")
 
 function histogram(binCount, radiusX, radiusY, f)
   local bins = {}
-  for b=1,binCount do
+  for b=0,binCount do
     table.insert(bins, im(x,y) map i=-radiusX,radiusX j=-radiusY, radiusY reduce(sum) [f(i,j,b)] end end)
   end
   return im(x,y) [bins] end
@@ -21,6 +21,6 @@ h = histogram(36,4,4,
                 end
               end)
 
-orientation = im(x,y) map bin=0,36 reduce(argmin) h[bin] end end
+orientation = im(x,y) [uint8]((map bin=0,36 reduce(argmin) h[bin] end)[0]) end
 
 orientation:save("out/orientation.bmp")
