@@ -15,7 +15,7 @@ Add the Darkroom language definition to your lua path environment variable. Add 
 
     export DR=[path to darkroom root]
     export TERRADIR=[path to terra root]
-    export LUA_PATH="$LUA_PATH;$DR/?.t;$DR/src/?.t;$DR/extras/?.t;$TERRADIR/tests/lib/?.t"
+    export LUA_PATH="$LUA_PATH;./?.lua;./?.t;$DR/?.t;$DR/src/?.t;$DR/extras/?.t;$TERRADIR/tests/lib/?.t"
 
 Darkroom and Terra are tested to work on Linux and Mac OS X. Other platforms are unlikely to work.
 
@@ -25,9 +25,9 @@ Running Darkroom
 Darkroom includes a number of example image processing pipelines that can be used to test that Darkroom is correctly installed.
 
     cd darkroom/examples
-    terra fixedcampipe.t
+    terra campipe.t
 
-Which should write `darkroom/examples/out/fixedcampipe.bmp`.
+Which should write `darkroom/examples/out/campipe.bmp`.
 
 Darkroom also contains a test suite which you can run to make sure there isn't any strangeness on your platform:
 
@@ -391,7 +391,7 @@ Compile takes a lua array of input image functions (returned from `darkroom.inpu
 
   compiledPipeline( input0 : &opaque, input1 : &opaque, ... output1 : &opaque, output2 : &opaque, taps : TapStruct )
 
-Where inputs, outputs, and taps are in the same order as passed to `darkroom.compile`, and `TapStruct` is a struct with entries in the same order and types as the `tapsArray`. All input and output images must be pointers stored in 'darkroom format'. First, the data must match the type of the darkroom input or output. Second, the stride of the input must be `width` rounded up to the nearest vector width `V` passed in the compile options. For example if `width=63` and `V=4` then the stride must be 64. Finally, multi-channel images must be in struct of array form (i.e. all red pixels come before all blue pixels etc).
+Where inputs, outputs, and taps are in the same order as passed to `darkroom.compile`, and `TapStruct` is a struct with entries in the same order and types as the `tapsArray`. All output images are returned in 'darkroom format'. The data returned matches the type of the darkroom image. In addition, the stride of the output is the `width` rounded up to the nearest vector width `V` passed in the compile options. For example if `width=63` and `V=4` then the stride returned will be 64. Finally, multi-channel images are returned in struct of array form (i.e. all red pixels come before all blue pixels etc). For inputs, the data must be passed in struct of array form, but the stride should equal the output image width (padding the stride to the vector size is not required).
 
 For convenience, you can use [extras/darkroomSimple.t](#extrasdarkroomsimplet), which provides an abstraction on top of this that doesn't require loading images, or use the [extras/image.t](#extrasimaget) class:
 
