@@ -1334,13 +1334,15 @@ function darkroom.terracompiler.allocateImageWrappers(
   local linebufferSize = 0
 
   local function channelPointer(c,ptr,ty)
-    return `[&ty](ptr)+[options.width*options.height]*c
+    -- always round the width up so that aligned stores work
+    return `[&ty](ptr)+[upToNearest(options.V, options.width)*options.height]*c
   end
 
   local inputWrappers = {}
   local function getInputWrapper(id,type)
     if inputWrappers[id]==nil then
       inputWrappers[id] = {}
+      -- we don't actually care about the alignment of inputs b/c we do unaligned loads
       for c = 1,type:channels() do inputWrappers[id][c] = newImageWrapper( channelPointer(c-1,inputImageSymbolMap[id], type:baseType():toTerraType()), type:baseType(), options.width, options.debug ) end
       setmetatable(inputWrappers[id],pointwiseDispatchMT)
     end
