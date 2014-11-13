@@ -39,7 +39,8 @@ local vmIV = terralib.includecstring [[
 void * makeCircular (void* address, int bytes) {
   char path[] = "/tmp/ring-buffer-XXXXXX";
   int file_descriptor = mkstemp(path);
- 
+
+  assert(bytes > 0); 
   assert(bytes % (4*1024) == 0);
   assert((int)address % (4*1024) == 0);
 
@@ -51,7 +52,7 @@ void * makeCircular (void* address, int bytes) {
   void * addressp =
     mmap(address, bytes, PROT_READ | PROT_WRITE,
          MAP_FIXED | MAP_SHARED, file_descriptor, 0);
- 
+
     assert(address == addressp);
   
     addressp = mmap ((char*)address + bytes,
@@ -92,6 +93,10 @@ function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightS
   assert(type(rightStencil)=="number")
   assert(type(debug)=="boolean")
   assert(darkroom.type.isType(orionType))
+
+  assert(lines > 0) -- a line buffer had better contain lines
+  assert(stripWidth > 0)
+  assert(stripWidth - leftStencil + rightStencil > 0)
 
   local tab = {lines=lines, 
                id = linebufferCount, -- for debugging
@@ -224,7 +229,7 @@ function LineBufferWrapperFunctions:get(loopid, gather, relX,relY, V, validLeft,
     for i=0,V-1 do table.insert(vres, `@([self.iv[loopid]] + relY[i]*[self:lineWidth()] + relX[i] + i) ) end
     res = `vectorof([self.orionType:toTerraType()], vres)
   else
-    res = `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]] + relY*[self:lineWidth()]+ relX),{align=V})
+    res = `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]] + relY*[self:lineWidth()]+ relX),{align=[self.orionType:sizeof()]})
   end
 
   if self.debug then
@@ -371,7 +376,7 @@ function ImageWrapperFunctions:get(loopid, gather, relX, relY, V)
     for i=0,V-1 do table.insert(res, `@([&self.orionType:toTerraType()]([self.data[loopid]] + relY[i]*[self.stride] + relX[i])) ) end
     expr = `vectorof([self.orionType:toTerraType()], res)
   else
-    expr = `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]] + relY*[self.stride] + relX),{align=V})
+    expr = `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]] + relY*[self.stride] + relX),{align=[self.orionType:sizeof()]})
   end
 
   if self.debug then

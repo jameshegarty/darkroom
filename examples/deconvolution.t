@@ -98,16 +98,13 @@ struct TapStruct {}
 function doDeconvolution()
   local inputFile = arg[1] or "out/deconvolution_blurred.bmp"
 
-  local terra getWH()
-    var f0 : Image
-    f0:load(inputFile)
-    var w,h = f0.width, f0.height
-    f0:free()
-    return w,h
-  end
+  -- work around calling convention limitations on ARM
+  local terra getW() var f0 : Image; f0:load(inputFile); var w = f0.width; f0:free(); return w end
+  local terra getH() var f0 : Image; f0:load(inputFile); var h = f0.height; f0:free(); return h end
 
-  local W,H = unpacktuple(getWH())
-  
+  local W = getW()
+  local H = getH()
+
   local observed = darkroom.input(float[3])
   local latent_est = darkroom.input(float[3])
   local convoutput = deconv(K,observed,latent_est,fusedIter)
