@@ -112,7 +112,9 @@ function darkroom.compile(inputImageFunctions, outputImageFunctions, tapInputs, 
   checkinput(tapInputs,"tap inputs to","tap image functions",0)
 
   if type(inputWidth)~="number" then darkroom.error("forth argument to darkroom.compile must be image width") end
+  if inputWidth<=0 then darkroom.error("image width must be >0") end
   if type(inputHeight)~="number" then darkroom.error("fifth argument to darkroom.compile must be image width") end
+  if inputHeight<=0 then darkroom.error("image height must be >0") end
 
   if type(options)~="table" and options~=nil then darkroom.error("sixth argument to darkroom.compile must be options table or nil") end
 
