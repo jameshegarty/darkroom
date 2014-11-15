@@ -286,13 +286,13 @@ function darkroom.typedAST._toTypedAST(inast)
             darkroom.error("not only works on bools",origast:linenumber(), origast:offset())
             assert(false)
           end
-        elseif ast.op=="sin" or ast.op=="cos" or ast.op=="exp" or ast.op=="arctan" then
+        elseif ast.op=="sin" or ast.op=="cos" or ast.op=="exp" or ast.op=="arctan" or ast.op=="ln" then
           if ast.expr.type==darkroom.type.float(32) then
             ast.type = darkroom.type.float(32)
           elseif ast.expr.type==darkroom.type.float(64) then
             ast.type = darkroom.type.float(64)
           else
-            darkroom.error("sin, cos, and exp only work on floating point types",origast:linenumber(),origast:offset(),origast:filename())
+            darkroom.error("sin, cos, arctan, ln and exp only work on floating point types, not "..ast.expr.type:str(),origast:linenumber(),origast:offset(),origast:filename())
           end
         elseif ast.op=="arrayAnd" then
           if darkroom.type.isArray(ast.expr.type) and darkroom.type.isBool(darkroom.type.arrayOver(ast.expr.type)) then
