@@ -318,7 +318,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
 
         table.insert(moduledef,"assign out = {"..inputs.expr[#inputs.expr])
         local c = #inputs.expr-1
-        while c>=1 do table.insert(moduledef,","..outputName[c]); c=c-1 end
+        while c>=1 do table.insert(moduledef,","..inputs.expr[c]); c=c-1 end
         table.insert(moduledef, "};\n")
         table.insert(moduledef,"endmodule\n\n")
 

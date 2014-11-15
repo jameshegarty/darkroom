@@ -7,7 +7,7 @@ windowRadius = 2
 iterations = 1 -- iterations per level
 clamp = true
 -- flow is stored as int8. 128/ofRange (so ofRange=10 means there are 10 subpixels)
-ofRange = 8
+ofRange = 64
 logOfRange = math.log(8)/math.log(2)
 rescale = 6
 
@@ -92,7 +92,8 @@ function makeLK(frame1, frame2)
   local im detPrec(x,y) [uint8](determinantPrecisionLow) end
   local im denom(x,y) [int32](if denom(x,y)<(1 << detPrec(x,y)) then (1 << detPrec(x,y)) else denom(x,y) end) end
 
-  local im det(x,y) [int32](p/(denom(x,y) >> detPrec(x,y))) end
+--local im det(x,y) [int32](p/(denom(x,y) >> detPrec(x,y))) end
+  local im det(x,y) [int32](p + ((denom(x,y) >> detPrec(x,y)))) end
                 
   -- Atemp are using 16 bits                
   local im A0(x,y) (det(x,y)*Atemp3(x,y)) << extraPrec end
@@ -153,3 +154,16 @@ io.write(v)
 io.close()
 
 fpga.util.writeMetadata("out/"..s..".metadata.lua", metadata)
+
+------------------
+local opt = fpga.util.deviceToOptions(arg[1])
+opt.stripWidth=200
+opt.stripHeight=388
+local v, metadata = fpga.compile({{frame1,"sim","frame10.bmp"},{frame2,"sim","frame11.bmp"}},{{lkpipeline,"sim"}}, opt.stripWidth, opt.stripHeight, opt)
+
+local s = string.sub(arg[0],1,#arg[0]-2)
+io.output("out/"..s..".sim.v")
+io.write(v)
+io.close()
+
+fpga.util.writeMetadata("out/"..s..".sim.metadata.lua", metadata)
