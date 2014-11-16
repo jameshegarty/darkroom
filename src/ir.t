@@ -198,80 +198,6 @@ function astQuery:traverse(func)
   return results[self.ast]
 end
 
--- this basically calls func on each node in this IR _exactly_ once
--- func should return 1 value
--- func(node,argList) : node is the node we're currently looking at
--- arglist: key=key name of child, value = result of calling func on this child
---[=[
-function IRFunctions:visitEach(func)
-  local seen = {}
-  local expanded = {}
-
-  local visitList = {}
-  local stack = {}
-  stack[1] = {self}
-  print("AA")
-  print(debug.traceback())
-  while #stack>0 do
-    -- need to add all children of everything in this list to the stack
-    -- do a DFS
-    local cur = #stack
-    local next = #stack+1
-
-    if #stack[cur]==0 then
-      stack[cur]=nil
-    else
-
-      local nextNode = stack[cur][#stack[cur]]
-      if expanded[nextNode] then
-        -- we must have already added its children
-        if seen[nextNode]==nil then
-          seen[nextNode] = 1
-          table.insert( visitList, nextNode )
-        end
-        
-        stack[cur][#stack[cur]] = nil
-      elseif seen[nextNode]==nil then
-        stack[next] = {}
-        for _,c in nextNode:inputs() do
-          table.insert( stack[next], c )
-        end
-        expanded[nextNode]=1
-        
-        if #stack[next]==0 then
-          seen[nextNode] = 1
-          table.insert( visitList, nextNode )
-          stack[cur][#stack[cur]] = nil
-          stack[next]=nil
-        end
-      else
-        stack[cur][#stack[cur]] = nil
-      end
-
-    end
-    
-  end
-  print("BB")
-  assert(#visitList == self:S("*"):count())
-  seen = {}
-  stack = nil
-  local value = {}
-
-  for _,node in ipairs(visitList) do
-
-    local argList = {}
-    for k,v in node:inputs() do
-      assert(seen[v])
-      argList[k]=value[v]
-    end
-
-    value[node] = func(node,argList)
-    seen[node] = 1
-  end
-
-  return value[self]
-end]=]
-
 function IRFunctions:visitEach(func)
   local seen = {}
   local value = {}
@@ -290,6 +216,21 @@ function IRFunctions:visitEach(func)
   end
 
   return trav(self)
+end
+
+darkroom.IR._relationCache=setmetatable({}, {__mode="k"})
+local function buildRelations(root)
+  assert(darkroom.IR.isIR(root))
+  if darkroom.IR._relationCache[root] == nil then
+    darkroom.IR._relationCache[root] = setmetatable({},{__mode="k"})
+    root:visitEach(function(n) for k,v in pairs(n) do if k:sub(1,2)=="__" then darkroom.IR._relationCache[root][v]=n; end end end)
+  end
+  return darkroom.IR._relationCache[root]
+end
+
+-- only call this on the root of the graph!
+function IRFunctions:lookup(key)
+  return (buildRelations(self))[key]
 end
 
 -- number of nodes returned by the query

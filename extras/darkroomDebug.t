@@ -305,7 +305,7 @@ function astPrintPrettys(root)
     end
     out="map "..vars.." reduce("..self.reduceop..") "..inputs.expr.." end"
   elseif self.kind=="mapreducevar" then
-    out="_mr_"..self.variable..tostring(self.id).."["..inputs.low.." to "..inputs.high.."]"
+    out="_mr_"..tostring(self.mapreduceNode).."_"..self.id
   elseif self.kind=="letvar" then
     out="_letvar_"..self.variable
   elseif self.kind=="reduce" then
@@ -639,7 +639,7 @@ function typedASTPrintPrettys(root)
     end
     out = "map "..vars.." reduce("..self.reduceop..") "..inputs.expr.." end"
   elseif self.kind=="mapreducevar" then
-    out = "_mr_"..self.variable..tostring(self.id).."["..self.low.." to "..self.high.."]"
+    out = "_mr_"..tostring(self.mapreduceNode).."_"..self.id
   elseif self.kind=="filter" then
     out = "filter( "..inputs.cond..", "..inputs.expr.." )"
   else

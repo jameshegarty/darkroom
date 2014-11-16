@@ -63,27 +63,29 @@ function astFunctions:optimize()
   return res
 end
 
-function astFunctions:eval(dim)
+function astFunctions:eval(dim, irRoot)
   assert(type(dim)=="number")
+  assert(darkroom.IR.isIR(irRoot))
 
   if self.kind=="value" then
     assert(type(self.value)=="number")
     return Stencil.new():addDim(dim, self.value)
   elseif self.kind=="unary" and self.op=="-" then
-    return self.expr:eval(dim):flipDim(dim)
+    return self.expr:eval(dim, irRoot):flipDim(dim)
   elseif self.kind=="mapreducevar" then
-    local l = self.low:eval(dim)
-    local h = self.high:eval(dim)
-    assert(l:area()==1)
-    assert(h:area()==1)
-    -- we call :min here just to extract the one coord we care about
-    return Stencil.new():addDim(dim, l:min(dim)):addDim(dim, h:min(dim))
+    local l = irRoot:lookup(self.mapreduceNode)["varlow"..self.id]
+    local h = irRoot:lookup(self.mapreduceNode)["varhigh"..self.id]
+    if darkroom.ast.isAST(l) then l=l:eval(dim, irRoot); assert(l:area()==1); l = l:min(dim) end
+    if darkroom.ast.isAST(h) then h=h:eval(dim, irRoot); assert(h:area()==1); h = h:min(dim) end
+    assert(type(l)=="number")
+    assert(type(h)=="number")
+    return Stencil.new():addDim(dim, l):addDim(dim, h)
   elseif self.kind=="binop" and self.op=="+" then
-    return self.lhs:eval(dim):sum(self.rhs:eval(dim))
+    return self.lhs:eval(dim, irRoot):sum(self.rhs:eval(dim, irRoot))
   elseif self.kind=="binop" and self.op=="-" then
-    return self.lhs:eval(dim):sum(self.rhs:eval(dim):flipDim(dim))
+    return self.lhs:eval(dim, irRoot):sum(self.rhs:eval(dim, irRoot):flipDim(dim))
   elseif self.kind=="binop" and self.op=="*" then
-    return self.lhs:eval(dim):product(self.rhs:eval(dim))
+    return self.lhs:eval(dim, irRoot):product(self.rhs:eval(dim, irRoot))
   else
     print("internal error, couldn't statically evaluate ", self.kind)
     assert(false)
@@ -102,10 +104,10 @@ function astFunctions:codegen()
   elseif self.kind=="unary" and self.op=="-" then
     return `-[self.expr:codegen()]
   elseif self.kind=="mapreducevar" then
-    if mapreducevarSymbols[self.id]==nil then
-      mapreducevarSymbols[self.id] = symbol(int,self.variable)
+    if mapreducevarSymbols[self.mapreduceNode]==nil then
+      mapreducevarSymbols[self.mapreduceNode] = symbol(int,self.variable)
     end
-    return `[mapreducevarSymbols[self.id]]
+    return `[mapreducevarSymbols[self.mapreduceNode]]
   else
     print("internal error, couldn't codegen ast ", self.kind)
     assert(false)
@@ -131,11 +133,7 @@ function astFunctions:localEnvironment( root, envROOT, resolveVars)
   if self.kind=="mapreduce" then
     self:map("varname", 
              function(n,i)
-               env[n] = darkroom.ast.new({kind="mapreducevar",
-                                       variable=n,
-                                       id = self["varid"..i],
-                                       low=resolveVars(self["varlow"..i],env),
-                                       high=resolveVars(self["varhigh"..i],env)}):copyMetadataFrom(self)
+               env[n] = self["varnode"..i]
              end)
   elseif self.kind=="let" then
     self:map("expr",

@@ -92,27 +92,29 @@ end
 -- the translate operator can take a few different arguments as translations
 -- it can contain binary + ops, and mapreduce vars. This evaluates all possible
 -- index values to find the correct stencil for those situations
-function darkroom.typedAST.transformArea(t1,t2)
+function darkroom.typedAST.transformArea( t1, t2, typedASTRoot)
+  assert(darkroom.typedAST.isTypedAST(typedASTRoot))
   if type(t1)=="number" then t1=darkroom.ast.new({kind="value",value=t1}) end
   if type(t2)=="number" then t2=darkroom.ast.new({kind="value",value=t2}) end
-  return t1:eval(1):sum(t2:eval(2))
+  return t1:eval(1,typedASTRoot):sum(t2:eval(2,typedASTRoot))
 end
 
 -- returns the stencil with (0,0,0) at the origin
 -- if input isn't null, only calculate stencil for this input (a kernelGraph node)
-function typedASTFunctions:stencil(input)
+function typedASTFunctions:stencil(input, typedASTRoot)
+  assert(type(typedASTRoot)=="table")
 
   if self.kind=="binop" then
-    return self.lhs:stencil(input):unionWith(self.rhs:stencil(input))
+    return self.lhs:stencil(input,typedASTRoot):unionWith(self.rhs:stencil(input,typedASTRoot))
   elseif self.kind=="multibinop" then
     local res = Stencil.new()
 
     for i=1,self:arraySize("lhs") do
-      res = res:unionWith(self["lhs"..i]:stencil(input))
+      res = res:unionWith(self["lhs"..i]:stencil(input,typedASTRoot))
     end
 
     for i=1,self:arraySize("rhs") do
-      res = res:unionWith(self["rhs"..i]:stencil(input))
+      res = res:unionWith(self["rhs"..i]:stencil(input,typedASTRoot))
     end
 
     return res
@@ -120,45 +122,45 @@ function typedASTFunctions:stencil(input)
     local res = Stencil.new()
 
     for i=1,self:arraySize("expr") do
-      res = res:unionWith(self["expr"..i]:stencil(input))
+      res = res:unionWith(self["expr"..i]:stencil(input, typedASTRoot))
     end
 
     return res
   elseif self.kind=="unary" then
-    return self.expr:stencil(input)
+    return self.expr:stencil(input, typedASTRoot)
   elseif self.kind=="assert" then
-    return self.cond:stencil(input):unionWith(self.expr:stencil(input))
+    return self.cond:stencil(input, typedASTRoot):unionWith(self.expr:stencil(input, typedASTRoot))
   elseif self.kind=="cast" then
-    return self.expr:stencil(input)
+    return self.expr:stencil(input, typedASTRoot)
   elseif self.kind=="select" or self.kind=="vectorSelect" then
-    return self.cond:stencil(input)
-    :unionWith(self.a:stencil(input)
-               :unionWith(self.b:stencil(input)
+    return self.cond:stencil(input, typedASTRoot)
+    :unionWith(self.a:stencil(input, typedASTRoot)
+               :unionWith(self.b:stencil(input, typedASTRoot)
                           ))
   elseif self.kind=="position" or self.kind=="tap" or self.kind=="value" then
     return Stencil.new()
   elseif self.kind=="tapLUTLookup" then
-    return self.index:stencil(input)
+    return self.index:stencil(input, typedASTRoot)
   elseif self.kind=="load" then
     local s = Stencil.new()
-    if input==nil or input==self.from then s = darkroom.typedAST.transformArea(self.relX,self.relY) end
+    if input==nil or input==self.from then s = darkroom.typedAST.transformArea( self.relX, self.relY, typedASTRoot) end
     return s
   elseif self.kind=="gather" then
     --if input~=nil then assert(false) end
     assert(self.input.kind=="load")
 
     if input~=nil and self.input.from~=input then
-      return self.x:stencil(input):unionWith(self.y:stencil(input)) -- not the input we're interested in
+      return self.x:stencil(input, typedASTRoot):unionWith(self.y:stencil(input, typedASTRoot)) -- not the input we're interested in
     else
       -- note the kind of nasty hack we're doing here: gathers read from loads, and loads can be shifted.
       -- so we need to shift this the same as the load
-      return darkroom.typedAST.transformArea(self.input.relX, self.input.relY):sum( Stencil.new():add(-self.maxX,-self.maxY,0):add(self.maxX,self.maxY,0)):unionWith(self.x:stencil(input)):unionWith(self.y:stencil(input))
+      return darkroom.typedAST.transformArea(self.input.relX, self.input.relY, typedASTRoot):sum( Stencil.new():add(-self.maxX,-self.maxY,0):add(self.maxX,self.maxY,0)):unionWith(self.x:stencil(input, typedASTRoot)):unionWith(self.y:stencil(input, typedASTRoot))
     end
   elseif self.kind=="array" then
     local exprsize = self:arraySize("expr")
     local s = Stencil.new()
     for i=1,exprsize do
-      s = s:unionWith(self["expr"..i]:stencil(input))
+      s = s:unionWith(self["expr"..i]:stencil(input, typedASTRoot))
     end
 
     return s
@@ -166,27 +168,27 @@ function typedASTFunctions:stencil(input)
     local s = Stencil.new()
     local i=1
     while self["expr"..i] do
-      s = s:unionWith(self["expr"..i]:stencil(input))
+      s = s:unionWith(self["expr"..i]:stencil(input, typedASTRoot))
       i=i+1
     end
     return s
   elseif self.kind=="index" then
-    return self.expr:stencil(input)
+    return self.expr:stencil(input, typedASTRoot)
   elseif self.kind=="crop" then
-    return self.expr:stencil(input)
+    return self.expr:stencil(input, typedASTRoot)
   elseif self.kind=="transformBaked" then
-    return self.expr:stencil(input):sum(darkroom.typedAST.transformArea(self.translate1,self.translate2))
+    return self.expr:stencil(input, typedASTRoot):sum(darkroom.typedAST.transformArea(self.translate1,self.translate2, typedASTRoot))
   elseif self.kind=="mapreduce" then
     local s = Stencil.new()
     -- HW: if this has lifted values, include their stencil
     for k,v in pairs(self) do
-      if k:sub(0,6)=="lifted" then s = s:unionWith(v:stencil(input)) end
+      if k:sub(0,6)=="lifted" then s = s:unionWith(v:stencil(input, typedASTRoot)) end
     end
-    return s:unionWith(self.expr:stencil(input))
+    return s:unionWith(self.expr:stencil(input, typedASTRoot))
   elseif self.kind=="mapreducevar" then
     return Stencil.new()
   elseif self.kind=="filter" then
-    return self.expr:stencil(input):unionWith(self.cond:stencil(input))
+    return self.expr:stencil(input, typedASTRoot):unionWith(self.cond:stencil(input, typedASTRoot))
   elseif self.kind=="lifted" then
     return Stencil.new() -- stencil will come from mapreduce node
   end
@@ -397,7 +399,7 @@ function darkroom.typedAST._toTypedAST(inast)
           darkroom.error("index must be a constant expression",origast:linenumber(), origast:offset(), origast:filename())
         end
 
-        local range = origast["index"]:eval(1)
+        local range = origast["index"]:eval(1,inast)
 
         if range:min(1)<0 or range:max(1) >= darkroom.type.arrayLength(expr.type) then
           darkroom.error("index value out of range. It is ["..range:min(1)..","..range:max(1).."] but should be within [0,"..(darkroom.type.arrayLength(expr.type)-1).."]",origast:linenumber(), origast:offset(), origast:filename())
@@ -531,21 +533,8 @@ function darkroom.typedAST._toTypedAST(inast)
         ast.type = ast.expr.type
 
       elseif ast.kind=="mapreducevar" then
-        ast.low = ast.low:eval(1)
-        if ast.low:area()~=1 then 
-          darkroom.error("map reduce variable range must be a constant", origast:linenumber(), origast:offset(), origast:filename())
-        end
-        ast.low = ast.low:min(1)
-
-        ast.high = ast.high:eval(1)
-        if ast.high:area()~=1 then 
-          darkroom.error("map reduce variable range must be a constant", origast:linenumber(), origast:offset(), origast:filename())
-        end
-        ast.high = ast.high:min(1)
-
         ast.type = darkroom.type.int(32)
-
---        ast.type = darkroom.type.meet(ast.low.type,ast.high.type,"mapreducevar", origast)
+        ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
       elseif ast.kind=="tap" then
         -- taps should be tagged with type already
         ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
@@ -626,13 +615,13 @@ function darkroom.typedAST._toTypedAST(inast)
 
         local i = 1
         while ast["varname"..i] do
-          ast["varlow"..i] = ast["varlow"..i]:eval(1)
+          ast["varlow"..i] = ast["varlow"..i]:eval(1,darkroom.typedAST.new({}))
           if ast["varlow"..i]:area()~=1 then 
             darkroom.error("map reduce variable range must be a constant",ast:linenumber(),ast:offset(),ast:filename())
           end
           ast["varlow"..i] = ast["varlow"..i]:min(1)
 
-          ast["varhigh"..i] = ast["varhigh"..i]:eval(1)
+          ast["varhigh"..i] = ast["varhigh"..i]:eval(1,darkroom.typedAST.new({}))
           if ast["varhigh"..i]:area()~=1 then 
             darkroom.error("map reduce variable range must be a constant",ast:linenumber(),ast:offset(),ast:filename())
           end

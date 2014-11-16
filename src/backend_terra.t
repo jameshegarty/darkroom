@@ -783,9 +783,9 @@ function darkroom.terracompiler.codegen(
       if node.kind=="mapreduce" then
 
         local i = 1
-        while node["varid"..i] do -- unused variables
-          if mapreducevarSymbols[node["varid"..i]]==nil then
-            mapreducevarSymbols[node["varid"..i]] = symbol(int)
+        while node["varname"..i] do -- unused variables
+          if mapreducevarSymbols[node["__varid"..i]]==nil then
+            mapreducevarSymbols[node["__varid"..i]] = symbol(int)
           end
           i = i + 1
         end
@@ -812,8 +812,8 @@ function darkroom.terracompiler.codegen(
             end
           
             local i = 1
-            while node["varid"..i] do
-              out = quote for [mapreducevarSymbols[node["varid"..i]]]=[node["varlow"..i]],[node["varhigh"..i]]+1 do out end end
+            while node["varname"..i] do
+              out = quote for [mapreducevarSymbols[node["__varid"..i]]]=[node["varlow"..i]],[node["varhigh"..i]]+1 do out end end
               i = i + 1
             end
 
@@ -838,15 +838,15 @@ function darkroom.terracompiler.codegen(
           local assignSelect = {}
 
           local i = 1
-          while node["varid"..i] do
+          while node["varname"..i] do
             table.insert(results, symbol(vector(int,V)))
             table.insert(declareResults, quote var [results[#results]] end)
-            table.insert(assign, quote [results[#results]] = [mapreducevarSymbols[node["varid"..i]]] end)
+            table.insert(assign, quote [results[#results]] = [mapreducevarSymbols[node["__varid"..i]]] end)
 
             if node.reduceop=="argmin" then
-              table.insert(assignSelect, quote [results[#results]] = terralib.select( [inputs["expr"][1]] < value, [mapreducevarSymbols[node["varid"..i]]], [results[#results]]) end)
+              table.insert(assignSelect, quote [results[#results]] = terralib.select( [inputs["expr"][1]] < value, [mapreducevarSymbols[node["__varid"..i]]], [results[#results]]) end)
             else
-              table.insert(assignSelect, quote [results[#results]] = terralib.select( [inputs["expr"][1]] > value, [mapreducevarSymbols[node["varid"..i]]], [results[#results]]) end)
+              table.insert(assignSelect, quote [results[#results]] = terralib.select( [inputs["expr"][1]] > value, [mapreducevarSymbols[node["__varid"..i]]], [results[#results]]) end)
             end
             i = i + 1
           end
@@ -868,8 +868,8 @@ function darkroom.terracompiler.codegen(
           end
 
           local i = 1
-          while node["varid"..i] do
-            out = quote for [mapreducevarSymbols[node["varid"..i]]]=[node["varlow"..i]],[node["varhigh"..i]]+1 do out end end
+          while node["varname"..i] do
+            out = quote for [mapreducevarSymbols[node["__varid"..i]]]=[node["varlow"..i]],[node["varhigh"..i]]+1 do out end end
             i = i + 1
           end
 
@@ -1154,17 +1154,17 @@ function darkroom.terracompiler.codegen(
         elseif node.kind=="array" then
           out = inputs["expr"..c][1]
         elseif node.kind=="index" then
-          if node.index:eval(1):area()==1 then
-            out = inputs["expr"][node.index:eval(1):min(1)+1]
+          if node.index:eval(1,inkernel):area()==1 then
+            out = inputs["expr"][node.index:eval(1,inkernel):min(1)+1]
           else
             local cg = node.index:codegen()
             out = `[packedSymbol["expr"]][cg]
           end
         elseif node.kind=="mapreducevar" then
-          if mapreducevarSymbols[node.id]==nil then
-            mapreducevarSymbols[node.id] = symbol(int,node.variable)
+          if mapreducevarSymbols[node.mapreduceNode]==nil then
+            mapreducevarSymbols[node.mapreduceNode] = symbol(int,node.variable)
           end
-          out = `[mapreducevarSymbols[node.id]]
+          out = `[mapreducevarSymbols[node.mapreduceNode]]
         elseif node.kind=="reduce" then
     
           local list = node:map("expr",function(v,i) return inputs["expr"..i][c] end)
@@ -1282,9 +1282,9 @@ function neededStencil( interior, kernelGraph, kernelNode, largestScaleY, shifts
           s = s:unionWith(Stencil.new():add(0,shifts[kernelNode],0))
         end
       elseif node.kernel.kind=="crop" and interior==false then -- on the interior of strips, crops have no effect
-        s = s:unionWith(node.kernel:stencil(kernelNode):scale(1,clockrate,1):sum(Stencil.new():add(0,node.kernel.shiftY,0)))
+        s = s:unionWith(node.kernel:stencil(kernelNode, node.kernel):scale(1,clockrate,1):sum(Stencil.new():add(0,node.kernel.shiftY,0)))
       else
-        s = s:unionWith(node.kernel:stencil(kernelNode):scale(1,clockrate,1):sum(neededStencil( interior, kernelGraph, node, largestScaleY, shifts):scale(downsampleStrideX,1,1):downToNearestY(upsampleStrideY)))
+        s = s:unionWith(node.kernel:stencil(kernelNode, node.kernel):scale(1,clockrate,1):sum(neededStencil( interior, kernelGraph, node, largestScaleY, shifts):scale(downsampleStrideX,1,1):downToNearestY(upsampleStrideY)))
       end
     end
 

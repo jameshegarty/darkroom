@@ -554,21 +554,19 @@ function darkroom.compileTimeProcess(imfunc, envfn)
     function(inp)
       local newNode = inp:shallowcopy()
       
-      local i,vars,low,high,id = 1,{},{},{},{}
+      local i,vars,varnode = 1,{},{}
       while inp["varname"..i] do 
-        vars[inp["varname"..i]]=1;
-        low[inp["varname"..i]]=inp["varlow"..i];
-        high[inp["varname"..i]]=inp["varhigh"..i];
-        newNode["varid"..i] = {}
-        id[inp["varname"..i]] = newNode["varid"..i]
-
+        newNode["__varid"..i] = {}
+        newNode["varnode"..i] = darkroom.ast.new({kind="mapreducevar", id = i, mapreduceNode = newNode["__varid"..i]}):copyMetadataFrom(inp)
+        vars[inp["varname"..i]] = 1
+        varnode[inp["varname"..i]] = newNode["varnode"..i]
         i=i+1 
       end
       
       newNode.expr = inp.expr:S("var"):process(
         function(fin)
           if vars[fin.name]~=nil then
-            return darkroom.ast.new({kind="mapreducevar", id = id[fin.name], variable=fin.name, low=low[fin.name], high=high[fin.name]}):copyMetadataFrom(fin)
+            return varnode[fin.name]
           end
           return fin
         end)

@@ -31,15 +31,15 @@ end
 function kernelGraphFunctions:maxUse(dim, input)
   assert(type(dim)=="number")
   assert(self.kernel~=nil)
-  if self.kernel:stencil(input):area()==0 then return 0 end
-  return self.kernel:stencil(input):max(dim)
+  if self.kernel:stencil(input, self.kernel):area()==0 then return 0 end
+  return self.kernel:stencil(input, self.kernel):max(dim)
 end
 
 function kernelGraphFunctions:minUse(dim, input)
   assert(type(dim)=="number")
   assert(self.kernel~=nil)
-  if self.kernel:stencil(input):area()==0 then return 0 end
-  return self.kernel:stencil(input):min(dim)
+  if self.kernel:stencil(input, self.kernel):area()==0 then return 0 end
+  return self.kernel:stencil(input, self.kernel):min(dim)
 end
 
 -- find the consumer with the largest stencil
@@ -81,7 +81,7 @@ function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
   local function multipleTransforms(node) 
     local transformCount = 0
     for v,k in node:parents(typedAST) do 
-      if v.kind=="transformBaked" and k=="expr" then transformCount = transformCount+darkroom.typedAST.transformArea(v.translate1,v.translate2):area() end
+      if v.kind=="transformBaked" and k=="expr" then transformCount = transformCount+darkroom.typedAST.transformArea(v.translate1,v.translate2,typedAST):area() end
       if v.kind=="transformBaked" and k=="expr" and v.scaleD1~=0 and node.scaleD1~=0 and v.scaleN1~=0 and node.scaleN1~=0 and v.scaleD2~=0 and node.scaleD2~=0 and v.scaleN2~=0 and node.scaleN2~=0 and ((v.scaleN1/v.scaleD1)~=(node.scaleN1/node.scaleD1) or (v.scaleN2/v.scaleD2)~=(node.scaleN2/node.scaleD2)) then return true end
       if v.kind=="gather" and k=="input" then return true end 
     end
