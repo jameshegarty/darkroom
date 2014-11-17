@@ -204,7 +204,7 @@ function fpga.trivialRetime(typedAST)
 end
 
 local binopToVerilog={["+"]="+",["*"]="*",["<<"]="<<",[">>"]=">>",["pow"]="**",["=="]="==",["and"]="&",["-"]="-",["<"]="<",[">"]=">",["<="]="<=",[">="]=">="}
-local binopToVerilogBoolean={["=="]="==",["and"]="&&"}
+local binopToVerilogBoolean={["=="]="==",["and"]="&&",["~="]="!="}
 
 function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth, imageHeight)
   assert(type(imageWidth)=="number")
