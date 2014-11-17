@@ -252,47 +252,108 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
   table.insert(result,"assign outX = inX_"..retiming[kernel]..";\n")
   table.insert(result,"assign outY = inY_"..retiming[kernel]..";\n")
 
+
+  local mdeclarationsSeen = {}
+  local mdeclarations = {}
+  local mclockedLogicSeen = {}
+  local mclockedLogic = {}
+
+  local function addtab(bb,decl,tab,tabSeen,contents)
+    assert(type(decl)=="table")
+
+    tab[bb] = tab[bb] or {}
+    tabSeen[bb] = tabSeen[bb] or {}
+
+    if contents~=nil then
+      assert(type(contents)=="table")
+      for k,v in pairs(contents) do
+        for kk,vv in pairs(v) do
+          assert(type(vv)=="string")
+          assert(tabSeen[bb][vv] == nil);
+        end
+      end
+    end
+    
+    for k,v in ipairs(decl) do
+      assert(type(v)=="string")
+--      print("SEEN",v)
+--      assert(tabSeen[bb][v] == nil);
+      table.insert(tab[bb],v)
+      tabSeen[bb][v] = 1
+    end
+  end
+  local function adddecl(bb,decl,contents) addtab(bb,decl,mdeclarations,mdeclarationsSeen,contents) end
+  local function addclocked(bb,decl,contents) addtab(bb,decl,mclockedLogic,mclockedLogicSeen,contents) end
+
+  local interface = {}
+  local function recordInterface(n,inputs)
+    local nbb = n:calculateMinBB(kernel)
+    for k,v in n:inputs() do
+      local obb = v:calculateMinBB(kernel)
+      if nbb~=obb then
+        interface[nbb] = interface[nbb] or {}
+        interface[nbb][obb] = interface[nbb][obb] or {}
+        for c,vv in pairs(inputs[k]) do
+          table.insert(interface[nbb][obb], {vv,v.type:baseType()})
+        end
+      end
+    end
+  end
+  local function getInterface(bb,formal)
+    if interface[bb]==nil or bb==darkroom.typedAST._topbb then return {} end
+    local t = {}
+    local seen = {}
+    for _,obb in pairs(interface[bb]) do
+      for _,variable in pairs(obb) do
+        if seen[variable[1]]==nil then
+          if formal then
+            table.insert(t,"input ["..(variable[2]:sizeof()*8-1)..":0] "..variable[1]..",")
+          else
+            table.insert(t,",."..variable[1].."("..variable[1]..")")
+          end
+          seen[variable[1]]=1
+        end
+      end
+    end
+    return t
+  end
+
   local finalOut = kernel:visitEach(
     function(n, args)
 
       local inputs = {}
-      local declarationsSeen = {}
-      local declarations = {}
-      local clockedLogicSeen = {}
-      local clockedLogic = {}
 
-      local function merge(src,dest,seen)
-        for kk, vv in pairs(src) do
-          assert(type(vv)=="string")
-          if seen[vv]==nil then table.insert(dest, vv); seen[vv]=1 end
-        end
-      end
       for k,v in pairs(args) do
         inputs[k] = {}
         for c=1,n[k].type:channels() do inputs[k][c] = args[k][1][c] end
-        merge(args[k][2], clockedLogic, clockedLogicSeen)
-        merge(args[k][3], declarations, declarationsSeen)
       end
+
+      recordInterface(n,inputs) -- used to make argument list for modules
 
       if not (n.type:baseType():isInt() or n.type:baseType():isUint() or n.type:baseType():isBool()) then
         darkroom.error("Only integer types are allowed "..n.type:str(), n:linenumber(), n:offset(), n:filename())
       end
 
+      local bb = n:calculateMinBB(kernel)
+
       -- insert pipeline delays
+      local retimeSeen = {} -- it's possible for a node to use another node multiple times.  Don't double add its retiming delays.
       for k,v in n:inputs() do
         local delays = retiming[n] - retiming[v] - n:internalDelay()
         assert(delays>=0)
-
+        
         for c=1,v.type:channels() do
           local prev = inputs[k][c]
           for i=1, delays do
-            local sn = inputs[k][c].."_"..n:cname(c).."_retime"..i
-             -- type is determined by producer, b/c consumer op can change type
-            table.insert(declarations, declareReg( v.type:baseType(), sn, "", " // retiming" ))
-            table.insert(clockedLogic, sn.." <= "..prev.."; // retiming\n")
+            local sn = inputs[k][c].."_to_"..n:cname(c).."_retime"..i
+            -- type is determined by producer, b/c consumer op can change type
+            local d = declareReg( v.type:baseType(), sn, "", " // retiming" )
+            local cl = sn.." <= "..prev.."; // retiming\n"
+            if retimeSeen[d]==nil then adddecl(bb, {d}); retimeSeen[d]=1 end
+            if retimeSeen[cl]==nil then addclocked(bb, {cl}); retimeSeen[cl]=1 end
             prev = sn
           end
-          if delays>0 then inputs[k][c] = inputs[k][c].."_"..n:cname(c).."_retime"..delays end
+          if delays>0 then inputs[k][c] = inputs[k][c].."_to_"..n:cname(c).."_retime"..delays end
         end
       end
 
@@ -303,6 +364,11 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
 
         local moduledef = {"module Map_"..n:name().."(input CLK, input[12:0] inX, input[12:0] inY, \n"}
 
+        local exprbb = n.expr:calculateMinBB(kernel)
+        local declexprbb = mdeclarations[exprbb]
+        local clockedexprbb = mclockedLogic[exprbb]
+        if bb==exprbb then declexprbb={};clockedexprbb={} end
+
         local i = 1
         while n["varname"..i] do
           table.insert(moduledef,"input[31:0] mrvar_"..n["varname"..i]..",\n")
@@ -312,11 +378,12 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         for i=1,n["countLifted"] do
           table.insert(moduledef,"input ["..(n["typeLifted"..i]:sizeof()*8-1)..":0] lifted"..i..",\n")
         end
-        
+        moduledef = concat(moduledef,getInterface(exprbb,true))
+
         table.insert(moduledef,"output ["..(n.expr.type:sizeof()*8-1)..":0] out);\n\n")
 
-        table.insert(moduledef,table.concat(args.expr[3],""))
-        table.insert(moduledef,"always @ (posedge CLK) begin\n"..table.concat(args.expr[2],"").."end\n")
+        table.insert(moduledef,table.concat(declexprbb,""))
+        table.insert(moduledef,"always @ (posedge CLK) begin\n"..table.concat(clockedexprbb,"").."end\n")
 
         table.insert(moduledef,"assign out = {"..inputs.expr[#inputs.expr])
         local c = #inputs.expr-1
@@ -326,17 +393,13 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
 
         result = concat(moduledef,result)
 
-        clockedLogic = {}
-        declarations = {}
-
-        local declSeen={}
         for k,v in pairs(n) do
           if k:sub(0,6)=="lifted" then
             -- assert(retiming[v]==0) -- we don't support pipelining lifted stuff
-            assert(v.kind=="load" or v.kind=="index")
-            merge(args[k][3], declarations, declSeen)
+            assert(v.kind=="load" or v.kind=="index" or v.kind=="lifted")
           end
         end
+
         -- funroll
         local partials = -1
         local argminPartials = ""
@@ -359,7 +422,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
                              liftedInputs = liftedInputs..",.lifted"..i.."("..args[v][1][1]..")"
                            end
 
-                           return {declareWire(n.type,n:name().."_partial"..partials).."Map_"..n:name().." map_"..n:name().."_"..partials.."(.CLK(CLK),.out("..n:name().."_partial"..partials.."),.inX(inX),.inY(inY)"..inputList..liftedInputs..");\n"} end}
+                           return {declareWire(n.type,n:name().."_partial"..partials).."Map_"..n:name().." map_"..n:name().."_"..partials.."(.CLK(CLK),.out("..n:name().."_partial"..partials.."),.inX(inX),.inY(inY)"..inputList..liftedInputs..table.concat(getInterface(exprbb,false),"")..");\n"} end}
 
         local i = 1
         while n["varname"..i] do
@@ -368,7 +431,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           i=i+1
         end
         
-        declarations = concat(declarations, funroll[#funroll]("",{}))
+        adddecl(bb, funroll[#funroll]("",{}))
 
         local rtype = n.expr.type
         if n.reduceop=="argmin" then rtype=n.type:baseType() end
@@ -379,34 +442,37 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         local finalOut = {}
 
         if n.reduceop=="argmin" then
-          for c=1,n.type:channels() do table.insert(declarations, declareWire(rtype, n:cname(c))) end
+          for c=1,n.type:channels() do adddecl(bb, declareWire(rtype, n:cname(c))) end
           table.insert(declarations,rname.." reduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(n.type:channels())..")")
-          for c=1,n.type:channels()-1 do table.insert(declarations, ",.out_"..n["varname"..c].."("..n:cname(c)..")") end
+          for c=1,n.type:channels()-1 do adddecl(bb, ",.out_"..n["varname"..c].."("..n:cname(c)..")") end
           table.insert(declarations,argminPartials..");\n")
           for c=1,n.type:channels() do table.insert(finalOut, n:cname(c)) end
         else
           for c=1,n.type:channels() do
-            table.insert(declarations, declareWire(n.type, n:cname(c)))
-            table.insert(declarations,rname.." reduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(c)..")")
-            for i=0,partials do table.insert(declarations,",.partial_"..i.."("..n:name().."_partial"..i..")") end
-            table.insert(declarations,");\n")
+            adddecl(bb, {declareWire(n.type, n:cname(c))})
+            adddecl(bb, {rname.." reduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(c)..")"})
+            for i=0,partials do adddecl(bb,{",.partial_"..i.."("..n:name().."_partial"..i..")"}) end
+            adddecl(bb,{");\n"})
             table.insert(finalOut, n:cname(c))
           end
         end
 
-        return {finalOut, clockedLogic, declarations}
+        return {finalOut}
       end
 
       for c=1,n.type:channels() do
         local res
+        local resDeclarations = {}
+        local resClockedLogic = {}
+
         if n.kind=="binop" then
-          table.insert(declarations, declareReg( n.type:baseType(), n:cname(c) ))
+          table.insert(resDeclarations, declareReg( n.type:baseType(), n:cname(c) ))
 
           if n.op=="<" or n.op==">" or n.op=="<=" or n.op==">=" then
             if n.type:baseType():isBool() and n.lhs.type:baseType():isInt() and n.rhs.type:baseType():isInt() then
-              table.insert(clockedLogic, n:name().."_c"..c.." <= ($signed("..inputs.lhs[c]..")"..n.op.."$signed("..inputs.rhs[c].."));\n")
+              table.insert(resClockedLogic, n:name().."_c"..c.." <= ($signed("..inputs.lhs[c]..")"..n.op.."$signed("..inputs.rhs[c].."));\n")
             elseif n.type:baseType():isBool() and n.lhs.type:baseType():isUint() and n.rhs.type:baseType():isUint() then
-              table.insert(clockedLogic, n:name().."_c"..c.." <= (("..inputs.lhs[c]..")"..n.op.."("..inputs.rhs[c].."));\n")
+              table.insert(resClockedLogic, n:name().."_c"..c.." <= (("..inputs.lhs[c]..")"..n.op.."("..inputs.rhs[c].."));\n")
             else
               print( n.type:baseType():isBool() , n.lhs.type:baseType():isInt() , n.rhs.type:baseType():isInt(),n.type:baseType():isBool() , n.lhs.type:baseType():isUint() , n.rhs.type:baseType():isUint())
               assert(false)
@@ -415,54 +481,54 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           elseif n.type:isBool() then
             local op = binopToVerilogBoolean[n.op]
             if type(op)~="string" then print("OP_BOOLEAN",n.op); assert(false) end
-            table.insert(clockedLogic, n:name().."_c"..c.." <= "..inputs.lhs[c]..op..inputs.rhs[c]..";\n")
+            table.insert(resClockedLogic, n:name().."_c"..c.." <= "..inputs.lhs[c]..op..inputs.rhs[c]..";\n")
           else
             local op = binopToVerilog[n.op]
             if type(op)~="string" then print("OP",n.op); assert(false) end
-            table.insert(clockedLogic, n:name().."_c"..c.." <= "..inputs.lhs[c]..op..inputs.rhs[c]..";\n")
+            table.insert(resClockedLogic, n:name().."_c"..c.." <= "..inputs.lhs[c]..op..inputs.rhs[c]..";\n")
           end
 
           res = n:name().."_c"..c
         elseif n.kind=="unary" then
           if n.op=="abs" then
             if n.type:baseType():isInt() then
-              table.insert(declarations, declareReg( n.type:baseType(), n:cname(c) ))
-              table.insert(clockedLogic, n:cname(c).." <= ("..inputs.expr[c].."["..(n.type:baseType():sizeof()*8-1).."])?(-"..inputs.expr[c].."):("..inputs.expr[c].."); //abs\n")
+              table.insert(resDeclarations, declareReg( n.type:baseType(), n:cname(c) ))
+              table.insert(resClockedLogic, n:cname(c).." <= ("..inputs.expr[c].."["..(n.type:baseType():sizeof()*8-1).."])?(-"..inputs.expr[c].."):("..inputs.expr[c].."); //abs\n")
               res = n:cname(c)
             else
               return inputs.expr[c] -- must be unsigned
             end
           elseif n.op=="-" then
             assert(n.type:baseType():isInt())
-            table.insert(declarations, declareReg(n.type:baseType(),n:cname(c)))
-            table.insert(clockedLogic, n:cname(c).." <= -"..inputs.expr[c].."; // unary sub\n")
+            table.insert(resDeclarations, declareReg(n.type:baseType(),n:cname(c)))
+            table.insert(resClockedLogic, n:cname(c).." <= -"..inputs.expr[c].."; // unary sub\n")
             res = n:cname(c)
           else
             print(n.op)
             assert(false)
           end
         elseif n.kind=="select" or n.kind=="vectorSelect" then
-          table.insert(declarations,declareReg( n.type:baseType(), n:cname(c), "", " // "..n.kind.." result" ))
+          table.insert(resDeclarations,declareReg( n.type:baseType(), n:cname(c), "", " // "..n.kind.." result" ))
           local condC = 1
           if n.kind=="vectorSelect" then condC=c end
 
-          table.insert(clockedLogic, n:cname(c).." <= ("..inputs.cond[condC]..")?("..inputs.a[c].."):("..inputs.b[c].."); // "..n.kind.."\n")
+          table.insert(resClockedLogic, n:cname(c).." <= ("..inputs.cond[condC]..")?("..inputs.a[c].."):("..inputs.b[c].."); // "..n.kind.."\n")
           res = n:cname(c)
         elseif n.kind=="load" then
           local v = "in"..kernelToVarname(n.from).."_x"..getStencilCoord(n.relX,kernel).."_y"..getStencilCoord(n.relY,kernel)
           local tys = n.type:baseType():sizeof()*8
-          table.insert(declarations,declareWire( n.type:baseType(), n:cname(c), v.."["..(c*tys-1)..":"..((c-1)*tys).."]" ))
+          table.insert(resDeclarations,declareWire( n.type:baseType(), n:cname(c), v.."["..(c*tys-1)..":"..((c-1)*tys).."]"," // load" ))
           res = n:cname(c)
         elseif n.kind=="position" then
           local str = "inX"
           if n.coord=="y" then str="inY" end
-          table.insert(declarations, declareWire(n.type, n:name(), str))
+          table.insert(resDeclarations, declareWire(n.type, n:name(), str))
           res = n:name()
         elseif n.kind=="crop" then
           local delay = retiming[n] - n:internalDelay()
-          table.insert(declarations, declareReg( n.type:baseType(), n:cname(c) ))
+          table.insert(resDeclarations, declareReg( n.type:baseType(), n:cname(c) ))
           -- hilariously, this also checks for values <0, b/c values <= in 2s complement are large, larger than image width...
-          table.insert(clockedLogic, n:cname(c).." <= ((inX_"..delay.."-"..n.shiftX..")>="..imageWidth.." || (inY_"..delay.."-"..n.shiftY..")>="..imageHeight..")?(0):("..inputs.expr[c].."); // crop\n")
+          table.insert(resClockedLogic, n:cname(c).." <= ((inX_"..delay.."-"..n.shiftX..")>="..imageWidth.." || (inY_"..delay.."-"..n.shiftY..")>="..imageHeight..")?(0):("..inputs.expr[c].."); // crop\n")
           res = n:cname(c)
         elseif n.kind=="cast" then
           local expr
@@ -479,8 +545,8 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
             expr = "{ {"..(8*(n.type:sizeof()-n.expr.type:sizeof())).."{"..expr.."["..(n.expr.type:sizeof()*8-1).."]}},"..expr.."["..(n.expr.type:sizeof()*8-1)..":0]}"
           end
           
-          table.insert(declarations, declareWire(n.type:baseType(), n:cname(c), "",cmt))
-          table.insert(declarations, "assign "..n:cname(c).." = "..expr..";"..cmt.."\n")
+          table.insert(resDeclarations, declareWire(n.type:baseType(), n:cname(c), "",cmt))
+          table.insert(resDeclarations, "assign "..n:cname(c).." = "..expr..";"..cmt.."\n")
           res = n:cname(c)
         elseif n.kind=="value" then
           local v
@@ -489,7 +555,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           else
             v = valueToVerilog(n.value, n.type:baseType())
           end
-          table.insert(declarations,declareWire(n.type:baseType(), n:cname(c), v, " //value" ))
+          table.insert(resDeclarations,declareWire(n.type:baseType(), n:cname(c), v, " //value" ))
           res = n:cname(c)
         elseif n.kind=="mapreducevar" then
           local MR = kernel:lookup(n.mapreduceNode)
@@ -497,25 +563,25 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         elseif n.kind=="array" then
           res = inputs["expr"..c][1]
         elseif n.kind=="index" then
-          if n.index:eval(1):area()==1 then
-            res = inputs["expr"][n.index:eval(1):min(1)+1]
+          if n.index:eval(1,kernel):area()==1 then
+            res = inputs["expr"][n.index:eval(1,kernel):min(1)+1]
           else
             assert(false)
           end
         elseif n.kind=="reduce" then
           local rname, rmod = fpga.modules.reduce(compilerState, n.op, n:arraySize("expr"), n.type)
           result = concat(rmod, result)
-          table.insert(declarations, declareWire(n.type, n:cname(c),"", "// reduce result"))
+          table.insert(resDeclarations, declareWire(n.type, n:cname(c),"", "// reduce result"))
           local str = rname.." reduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(c)..")"
           n:map("expr",function(_,i) str = str..",.partial_"..(i-1).."("..inputs["expr"..i][c]..")" end)
-          table.insert(declarations,str..");\n")
+          table.insert(resDeclarations,str..");\n")
           res = n:cname(c)
         elseif n.kind=="gather" then
           local area = (n.maxX*2+1)*(n.maxY*2+1)
           local rname, rmod = fpga.modules.reduce(compilerState, "valid", area, n.type)
           result = concat(rmod, result)
           
-          table.insert(declarations, declareWire(n.type, n:cname(c),"", "// gather result"))
+          table.insert(resDeclarations, declareWire(n.type, n:cname(c),"", "// gather result"))
 
           local str = rname.." gatherreduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(c)..")"
           local cnt = 0
@@ -524,15 +590,15 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
               local relX = n.input.relX
               local relY = n.input.relY
               if type(relX)~="number" then
-                relX = relX:eval(1)
+                relX = relX:eval(1,kernel)
                 assert(relX:area()==1)
-                relX = relX:min(1)
+                relX = relX:min(1,kernel)
               end
 
               if type(relY)~="number" then
-                relY = relY:eval(1)
+                relY = relY:eval(1,kernel)
                 assert(relY:area()==1)
-                relY = relY:min(1)
+                relY = relY:min(1,kernel)
               end
 
               local v = n:cname(c).."_valid_x"..numToVarname(gx+relX).."_y"..numToVarname(gy+relY)
@@ -542,23 +608,23 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
               -- plus, it takes one clock cycle to calculate the valid bits, so we also need to delay the input stencil 1 extra clock cycle
               local gatherRetimeDelay = retiming[n] - n:internalDelay() + 1
               for d=1,gatherRetimeDelay do
-                table.insert(declarations, declareReg(n.input.type, n:cname(c).."_partial_"..cnt.."_"..d,"", "// gather input delay"))
+                table.insert(resDeclarations, declareReg(n.input.type, n:cname(c).."_partial_"..cnt.."_"..d,"", "// gather input delay"))
                 if d==1 then
-                  table.insert(clockedLogic, n:cname(c).."_partial_"..cnt.."_"..d.." <= in"..kernelToVarname(n.input.from).."_x"..numToVarname(gx+relX).."_y"..numToVarname(gy+relY).."; // gather input delay\n")
+                  table.insert(resClockedLogic, n:cname(c).."_partial_"..cnt.."_"..d.." <= in"..kernelToVarname(n.input.from).."_x"..numToVarname(gx+relX).."_y"..numToVarname(gy+relY).."; // gather input delay\n")
                 else
-                  table.insert(clockedLogic, n:cname(c).."_partial_"..cnt.."_"..d.." <= "..n:cname(c).."_partial_"..cnt.."_"..(d-1).."; // gather input delay\n")
+                  table.insert(resClockedLogic, n:cname(c).."_partial_"..cnt.."_"..d.." <= "..n:cname(c).."_partial_"..cnt.."_"..(d-1).."; // gather input delay\n")
                 end
               end
 
               str = str .. ",.partial_"..cnt.."("..n:cname(c).."_partial_"..cnt.."_"..gatherRetimeDelay..")"
               str = str .. ",.partial_valid_"..cnt.."("..v..")"
               cnt = cnt + 1
-              table.insert(declarations, declareReg(darkroom.type.bool(), v,"", "// gather valid"))
-              table.insert(clockedLogic, v.." <= ("..inputs.x[1].."=="..valueToVerilog(gx,n.x.type)..") && ("..inputs.y[1].."=="..valueToVerilog(gy,n.y.type).."); // gather select\n")
+              table.insert(resDeclarations, declareReg(darkroom.type.bool(), v,"", "// gather valid"))
+              table.insert(resClockedLogic, v.." <= ("..inputs.x[1].."=="..valueToVerilog(gx,n.x.type)..") && ("..inputs.y[1].."=="..valueToVerilog(gy,n.y.type).."); // gather select\n")
             end
           end
 
-          table.insert(declarations,str..");\n")
+          table.insert(resDeclarations,str..");\n")
           res = n:cname(c)
         elseif n.kind=="lifted" then
           res = "lifted"..n.id
@@ -570,17 +636,18 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         assert(type(res)=="string")
         assert(res:match("[%w%[%]]")) -- should only be alphanumeric
         finalOut[c] = res
+
+        adddecl(bb,resDeclarations)
+        addclocked(bb,resClockedLogic)
       end
 
-      return {finalOut, clockedLogic, declarations}
+      return {finalOut}
     end)
 
   local outputName = finalOut[1]
 
-  result = concat(result, finalOut[3])
-  clockedLogic = concat(clockedLogic, finalOut[2])
-
-  table.insert(result,"always @ (posedge CLK) begin\n"..table.concat(clockedLogic,"").."end\n")
+  for k,v in ipairs(mdeclarations[darkroom.typedAST._topbb]) do table.insert(result,v) end
+  table.insert(result,"always @ (posedge CLK) begin\n"..table.concat(mclockedLogic[darkroom.typedAST._topbb],"").."end\n")
   table.insert(result,"assign out = {"..outputName[#outputName])
   local c = #outputName-1
   while c>=1 do table.insert(result,","..outputName[c]); c=c-1 end
@@ -662,7 +729,7 @@ local function liftMapreduce(kernelGraph, shifts)
                 return darkroom.typedAST.new({kind="lifted",id=liftedCnt,type=n.type}):copyMetadataFrom(n)
               end)
             newMR["countLifted"] = liftedCnt
-
+            
             -- funroll the lifted vars
             local i = 1
             while mapreduceNode["varname"..i]~=nil do

@@ -66,7 +66,7 @@ function typedASTFunctions:calculateBB(root)
   if darkroom.typedAST._calculateBBCache[root][self]==nil then
     darkroom.typedAST._calculateBBCache[root][self]=setmetatable({}, {__mode=CTABMODE})
 
-    if self.kind=="mapreducevar" then
+    if self.kind=="mapreducevar" or self.kind=="lifted" then
       local MR = root:lookup(self.mapreduceNode)
       local dep = MR.expr:bbDependencies(root)
       assert(keycount(dep)==1)
