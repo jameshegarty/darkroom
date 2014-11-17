@@ -93,7 +93,8 @@ function makeLK(frame1, frame2)
   local im denom(x,y) [int32](if denom(x,y)<(1 << detPrec(x,y)) then (1 << detPrec(x,y)) else denom(x,y) end) end
 
 --local im det(x,y) [int32](p/(denom(x,y) >> detPrec(x,y))) end
-  local im det(x,y) [int32](p + ((denom(x,y) >> detPrec(x,y)))) end
+  local lol = log2(im(x,y) denom(x,y) >> detPrec(x,y) end)
+  local im det(x,y) [int32](p >> lol) end
                 
   -- Atemp are using 16 bits                
   local im A0(x,y) (det(x,y)*Atemp3(x,y)) << extraPrec end
