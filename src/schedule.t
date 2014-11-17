@@ -70,9 +70,22 @@ function shift(graph, shifts, largestScaleY, HWWidth)
         local newKernelGraphNode = kernelGraphNode:shallowcopy()
         
         -- eliminate transforms
-        -- this is wildly inefficient in general. But its only slow in corner cases b/c it is uncommon to have transforms within kernel graph nodes
+        -- the reason we do this as an n^2 algorithm, is that when you transform a node multiple ways inside a kernel
+        -- you really do want to create multiple copies of the children of the transform.
+        -- We do check for the case of noop transforms, but otherwise if there is a transform here, we 
+        -- probably really do want to make a copy.
         newKernelGraphNode.kernel = kernelGraphNode.kernel:S("transformBaked"):process(
           function(n)
+            local tx = n.translate1:eval(1,kernelGraphNode.kernel)
+            local ty = n.translate2:eval(1,kernelGraphNode.kernel)
+            if tx:area()==1 and ty:area()==1 and tx:min(1)==0 and ty:min(1)==0 
+              and (n.scaleN1==1 or n.scaleN1==0) and (n.scaleN2==1 or n.scaleN2==0) and (n.scaleD1==1 or n.scaleD1==0) and (n.scaleD2==1 or n.scaleD2==0) then
+              -- noop
+              -- it's actually important that we detect this case, b/c the loop invariant code motion algorithm
+              -- will expect nodes that are translated by 0 to be identical, so if we go and make a copy here it's a problem
+              return n.expr
+            end
+
             return n.expr:S(function(n) return n.kind=="load" or n.kind=="position" end):process(
               function(nn)
                 if nn.kind=="load" then

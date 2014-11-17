@@ -6,29 +6,30 @@ typedASTMT={__index=typedASTFunctions,
                   end}
 
 darkroom.typedAST = {}
-
+CTABMODE = "k"
 -- This function tracks in what basic blocks each value
 -- is needed. This does not necessary say that they need to be
 -- computed in that block, but their value is needed.
-darkroom.typedAST._bbDependenciesCache=setmetatable({}, {__mode="k"})
+darkroom.typedAST._bbDependenciesCache=setmetatable({}, {__mode=CTABMODE})
 darkroom.typedAST._topbb = {level=0,parents={},controlDep={}}
 function typedASTFunctions:bbDependencies(root)
   if darkroom.typedAST._bbDependenciesCache[root]==nil then
-    darkroom.typedAST._bbDependenciesCache[root]=setmetatable({}, {__mode="k"})
+    darkroom.typedAST._bbDependenciesCache[root]=setmetatable({}, {__mode=CTABMODE})
   end
 
   if darkroom.typedAST._bbDependenciesCache[root][self]==nil then
-    darkroom.typedAST._bbDependenciesCache[root][self] = setmetatable({},{__mode="k"})
+    darkroom.typedAST._bbDependenciesCache[root][self] = setmetatable({},{__mode=CTABMODE})
 
     if self==root then
       darkroom.typedAST._bbDependenciesCache[root][self][darkroom.typedAST._topbb] = 1
     else
       assert(self:parentCount(root)>0)
-
+      local wasMR = false
       for parentNode, key in self:parents(root) do
         if parentNode.kind=="mapreduce" or parentNode.kind=="filter" then
           assert(self:parentCount(root)==1) -- theoretically possible this is false?
           -- generate a new block for this MR
+          wasMR = true
           local newbb = {level=0,parents={},controlDep={}}
           if parentNode.kind=="filter" then newbb.controlDep[newbb]=1 end -- filter ifelse has control dep on itself
           for bb,_ in pairs(parentNode:bbDependencies(root)) do
@@ -46,24 +47,24 @@ function typedASTFunctions:bbDependencies(root)
           end
         end
       end
-      assert(type(darkroom.typedAST._bbDependenciesCache[root][self])=="table")
     end
+    assert(type(darkroom.typedAST._bbDependenciesCache[root][self])=="table")
   end
-  assert(type(darkroom.typedAST._bbDependenciesCache[root][self])=="table")
+
   return darkroom.typedAST._bbDependenciesCache[root][self]
 end
 
 -- return the basic block in which we should calculate this
 -- node. This should be as shallow as possible w/o leaving
 -- the correct scope.
-darkroom.typedAST._calculateBBCache=setmetatable({}, {__mode="k"})
+darkroom.typedAST._calculateBBCache=setmetatable({}, {__mode=CTABMODE})
 function typedASTFunctions:calculateBB(root)
   if darkroom.typedAST._calculateBBCache[root]==nil then
-    darkroom.typedAST._calculateBBCache[root]=setmetatable({}, {__mode="k"})
+    darkroom.typedAST._calculateBBCache[root]=setmetatable({}, {__mode=CTABMODE})
   end
 
   if darkroom.typedAST._calculateBBCache[root][self]==nil then
-    darkroom.typedAST._calculateBBCache[root][self]=setmetatable({}, {__mode="k"})
+    darkroom.typedAST._calculateBBCache[root][self]=setmetatable({}, {__mode=CTABMODE})
 
     if self.kind=="mapreducevar" then
       local MR = root:lookup(self.mapreduceNode)
@@ -93,7 +94,9 @@ function typedASTFunctions:calculateBB(root)
         end
       end
     end
+    assert(type(darkroom.typedAST._calculateBBCache[root][self])=="table")
   end
+
   return darkroom.typedAST._calculateBBCache[root][self]
 end
 
@@ -103,6 +106,7 @@ function typedASTFunctions:calculateMinBB(root)
   -- but it still needs to be above its control dependencies.
   -- eg (if a+1 then a+3 end), a has to be above the if
   -- (if 3+4 then a+3 end), a can be in the expr block
+
   local shallowest
   for bb,_ in pairs(self:bbDependencies(root)) do
     for cb,_ in pairs(bb.controlDep) do

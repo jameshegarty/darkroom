@@ -223,7 +223,14 @@ local function buildRelations(root)
   assert(darkroom.IR.isIR(root))
   if darkroom.IR._relationCache[root] == nil then
     darkroom.IR._relationCache[root] = setmetatable({},{__mode="k"})
-    root:visitEach(function(n) for k,v in pairs(n) do if k:sub(1,2)=="__" then darkroom.IR._relationCache[root][v]=n; end end end)
+    root:visitEach(function(n) 
+                     for k,v in pairs(n) do 
+                       if k:sub(1,2)=="__" then 
+                         assert(darkroom.IR._relationCache[root][v]==nil) -- this means the keys are aliased! They appear multiple places, which is bad!
+                         darkroom.IR._relationCache[root][v]=n; 
+                       end 
+                     end 
+                   end)
   end
   return darkroom.IR._relationCache[root]
 end

@@ -762,6 +762,24 @@ function darkroom.terracompiler.codegen(
   assert(type(debug)=="boolean")
 
   local stat = {}
+  local statSeen = {} -- for debugging
+
+  local function addstat(bb,qte,contents)
+    stat[bb] = stat[bb] or {}
+    statSeen[bb] = statSeen[bb] or {}
+    assert(statSeen[bb][qte] == nil);
+
+    if contents~=nil then
+      for k,v in pairs(contents) do
+        for kk,vv in pairs(v) do
+          assert(statSeen[bb][vv] == nil);
+        end
+      end
+    end
+
+    table.insert(stat[bb],qte)
+    statSeen[bb][qte] = 1
+  end
 
   local res = inkernel:visitEach(
     function(node,args)
@@ -788,9 +806,8 @@ function darkroom.terracompiler.codegen(
 
         local bb = node:calculateMinBB(inkernel)
         local exprbb = node.expr:calculateMinBB(inkernel)
-        stat[bb] = stat[bb] or {}
-        stat[exprbb] = stat[exprbb] or {}
---        assert(bb~=exprbb)
+        local statexprbb = stat[exprbb]
+        if bb==exprbb then statexprbb={} end -- eg a mapreduce with a constant in the body
 
         if node.reduceop=="sum" or node.reduceop=="max" or node.reduceop=="min" then
           local finalOut = {}
@@ -800,11 +817,11 @@ function darkroom.terracompiler.codegen(
 
             local out
             if node.reduceop=="sum" then
-              out = quote [stat[exprbb]]; sum = sum + [inputs["expr"][c]] end
+              out = quote [statexprbb]; sum = sum + [inputs["expr"][c]] end
             elseif node.reduceop=="max" then
-              out = quote [stat[exprbb]]; sum = terralib.select([inputs["expr"][c]]>sum,[inputs["expr"][c]],sum) end
+              out = quote [statexprbb]; sum = terralib.select([inputs["expr"][c]]>sum,[inputs["expr"][c]],sum) end
             elseif node.reduceop=="min" then
-              out = quote [stat[exprbb]]; sum = terralib.select([inputs["expr"][c]]<sum,[inputs["expr"][c]],sum) end
+              out = quote [statexprbb]; sum = terralib.select([inputs["expr"][c]]<sum,[inputs["expr"][c]],sum) end
             end
           
             local i = 1
@@ -813,12 +830,12 @@ function darkroom.terracompiler.codegen(
               i = i + 1
             end
 
-            table.insert(stat[bb], quote var [sum] = 0; out end)
+            addstat(bb, quote var [sum] = 0; out end,{statexprbb})
             table.insert(finalOut, sum)
           end
 
           local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
-          table.insert(stat[bb], quote var [packedSymbol] = array(finalOut) end)
+          addstat(bb, quote var [packedSymbol] = array(finalOut) end)
           for c=0,node.type:channels()-1 do finalOut[c+1] = `[packedSymbol][c] end
           return {finalOut, `[packedSymbol]}
 
@@ -854,7 +871,7 @@ function darkroom.terracompiler.codegen(
             assignValue = quote value = terralib.select( [inputs["expr"][1]] > value, [inputs["expr"][1]], value) end
           end
           -- inner loop
-          local out = quote [stat[exprbb]]; 
+          local out = quote [statexprbb]; 
             if set==false then
               assign; set=true; value = [inputs["expr"][1]];
             else
@@ -869,25 +886,25 @@ function darkroom.terracompiler.codegen(
             i = i + 1
           end
 
-          table.insert(stat[bb], quote var [set] = false; var [value] = 0; declareResults; out end)
+          addstat(bb, quote var [set] = false; var [value] = 0; declareResults; out end,{statexprbb})
           local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
           
           table.insert(results, value) -- last value returned is the extremal value
-          table.insert(stat[bb], quote var [packedSymbol] = array(results) end)
+          addstat(bb, quote var [packedSymbol] = array(results) end)
           local finalOut = {}
           for c=0,node.type:channels()-1 do finalOut[c+1] = `[packedSymbol][c] end
           return {finalOut, `[packedSymbol]}
 
         elseif node.reduceop=="none" then
           local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
-          table.insert(stat[bb], quote 
+          addstat(bb, quote 
                          var [packedSymbol]
                          for [mapreducevarSymbols[node["__varid1"]]]=[node["varlow1"]],[node["varhigh1"]]+1 do 
-                           [stat[exprbb]]; 
+                           [statexprbb]; 
                            [packedSymbol][
                              [mapreducevarSymbols[node["__varid1"]]]
                                          ] = [inputs.expr[1]];
-                         end end)
+                         end end,{statexprbb})
           local finalOut = {}
           for c=0,node.type:channels()-1 do finalOut[c+1] = `[packedSymbol][c] end
           return {finalOut, `[packedSymbol]}
@@ -902,29 +919,23 @@ function darkroom.terracompiler.codegen(
         local bb = darkroom.typedAST._topbb -- always at the top by defn
         local exprbb = node.expr:calculateMinBB(inkernel)
         local condbb = node.cond:calculateMinBB(inkernel)
-        stat[bb] = stat[bb] or {}
-        stat[exprbb] = stat[exprbb] or {}
-        stat[condbb] = stat[condbb] or {}
-        print("LVL",bb.level,bb,"expr",exprbb.level,exprbb,"cond",condbb.level,condbb)
 
         for c = 1, node.type:channels() do
           table.insert(finalOut, symbol(darkroom.type.toTerraType(node.type:baseType(),false,V),"filteredOut"))
-          print("INPUTS>COND",inputs.cond,inputs.cond[c])
           local cond = `[inputs.cond[c]][0]
           for v=1,V-1 do cond = `[cond] or [inputs.cond[c]][v] end
-          table.insert(stat[bb],quote
+          addstat(bb,quote
                          var [finalOut[c]] = 0
                          [stat[condbb]];
                          if cond then
-                           cstdio.printf("EXEC IT\n")
                            [stat[exprbb]];
                            [finalOut[c]] = [inputs.expr[c]];
-                         end end)
+                         end end,{stat[condbb],stat[exprbb]})
            finalOut[c] = `[finalOut[c]]
         end
         
         local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
-        table.insert(stat[bb], quote var [packedSymbol] = array(finalOut) end)
+        addstat(bb, quote var [packedSymbol] = array(finalOut) end)
         return {finalOut, `[packedSymbol], inputs.cond}
       end
 
@@ -1194,8 +1205,7 @@ function darkroom.terracompiler.codegen(
           finalOut[c] = out
         else
           local bb = node:calculateMinBB(inkernel)
-          stat[bb] = stat[bb] or {}
-          table.insert( stat[bb], quote var [resultSymbol] = out end )
+          addstat(bb, quote var [resultSymbol] = out end )
           finalOut[c] = `[resultSymbol]
         end
 
@@ -1204,8 +1214,7 @@ function darkroom.terracompiler.codegen(
       -- if this is an array and we index into it, pack it into a terra array
       local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
       local bb = node:calculateMinBB(inkernel)
-      stat[bb] = stat[bb] or {}
-      table.insert( stat[bb], quote var [packedSymbol] = array(finalOut) end )
+      addstat(bb, quote var [packedSymbol] = array(finalOut) end )
 
       for c=0,node.type:channels()-1 do
         finalOut[c+1] = `[packedSymbol][c]
