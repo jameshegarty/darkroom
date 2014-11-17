@@ -41,7 +41,7 @@ end
 
 function synthRel(rel,t)
   if type(t)=="number" and type(rel)=="number" then
-    return darkroom.ast.new({kind="value",value=rel+t})
+    return darkroom.ast.new({kind="value",value=rel+t}):setLinenumber(0):setOffset(0):setFilename("null_special")
   elseif type(rel)=="number" and darkroom.ast.isAST(t) then
     local v = darkroom.ast.new({kind="value",value=rel}):copyMetadataFrom(t)
     return darkroom.ast.new({kind="binop", lhs=t, rhs=v, op="+"}):copyMetadataFrom(t)
@@ -80,6 +80,8 @@ function shift(graph, shifts, largestScaleY, HWWidth)
 
                   r.relX = synthRel(r.relX, n.translate1):optimize()
                   r.relY = synthRel(r.relY, n.translate2):optimize()
+                  r.relXTAST = darkroom.typedAST._toTypedAST(r.relX) -- used to track dependencies for loop invariant code motion
+                  r.relYTAST = darkroom.typedAST._toTypedAST(r.relY) -- used to track dependencies for loop invariant code motion
                   r.scaleN1 = n.scaleN1
                   r.scaleN2 = n.scaleN2
                   r.scaleD1 = n.scaleD1
@@ -121,10 +123,13 @@ function shift(graph, shifts, largestScaleY, HWWidth)
                   local sx = s-sy*HWWidth
                   r.relY = synthRel(r.relY, sy):optimize()
                   r.relX = synthRel(r.relX, sx):optimize()
+                  r.relXTAST = darkroom.typedAST._toTypedAST(r.relX) -- used to track dependencies for loop invariant code motion
+                  r.relYTAST = darkroom.typedAST._toTypedAST(r.relY) -- used to track dependencies for loop invariant code motion
                 else
                   local inputKernel = newToOldRemap[nn.from]
                   local sy = math.floor( (shifts[inputKernel]-shifts[orig])/looprate(inputKernel.kernel.scaleN2,inputKernel.kernel.scaleD2,largestScaleY))
                   r.relY = synthRel(r.relY, sy):optimize()
+                  r.relYTAST = darkroom.typedAST._toTypedAST(r.relY) -- used to track dependencies for loop invariant code motion
                 end
 
                 if type(nn.from)=="table" then r.from = oldToNewRemap[nn.from]; assert(r.from~=nil) end

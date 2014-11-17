@@ -2,11 +2,7 @@ import "darkroom"
 darkroomSimple = terralib.require("darkroomSimple")
 
 function histogram(binCount, radiusX, radiusY, f)
-  local bins = {}
-  for b=0,binCount do
-    table.insert(bins, im(x,y) map i=-radiusX,radiusX j=-radiusY, radiusY reduce(sum) [f(i,j,b)] end end)
-  end
-  return im(x,y) [bins] end
+  return im(x,y) map b=0,binCount reduce(none) map i=-radiusX, radiusX j=-radiusY, radiusY reduce(sum) [f(i,j,b)] end end end
 end
 
 sensor = darkroomSimple.load("frame_128.bmp")
@@ -24,4 +20,7 @@ h = histogram(36,4,4,
 -- use argmax to find the bin with the largest value
 orientation = im(x,y) [uint8]((map bin=0,36 reduce(argmax) h[bin] end)[0]) end
 
-orientation:save("out/orientation.bmp")
+--orientation:save("out/orientation.bmp",{cores=1})
+
+orientation = im(x,y) darkroom.filter(x%64==0,orientation) end
+orientation:save("out/orientation.csv",{cores=1})

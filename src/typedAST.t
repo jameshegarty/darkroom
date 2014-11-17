@@ -7,7 +7,129 @@ typedASTMT={__index=typedASTFunctions,
 
 darkroom.typedAST = {}
 
+-- This function tracks in what basic blocks each value
+-- is needed. This does not necessary say that they need to be
+-- computed in that block, but their value is needed.
+darkroom.typedAST._bbDependenciesCache=setmetatable({}, {__mode="k"})
+darkroom.typedAST._topbb = {level=0,parents={},controlDep={}}
+function typedASTFunctions:bbDependencies(root)
+  if darkroom.typedAST._bbDependenciesCache[root]==nil then
+    darkroom.typedAST._bbDependenciesCache[root]=setmetatable({}, {__mode="k"})
+  end
 
+  if darkroom.typedAST._bbDependenciesCache[root][self]==nil then
+    darkroom.typedAST._bbDependenciesCache[root][self] = setmetatable({},{__mode="k"})
+
+    if self==root then
+      darkroom.typedAST._bbDependenciesCache[root][self][darkroom.typedAST._topbb] = 1
+    else
+      assert(self:parentCount(root)>0)
+
+      for parentNode, key in self:parents(root) do
+        if parentNode.kind=="mapreduce" or parentNode.kind=="filter" then
+          assert(self:parentCount(root)==1) -- theoretically possible this is false?
+          -- generate a new block for this MR
+          local newbb = {level=0,parents={},controlDep={}}
+          if parentNode.kind=="filter" then newbb.controlDep[newbb]=1 end -- filter ifelse has control dep on itself
+          for bb,_ in pairs(parentNode:bbDependencies(root)) do
+            newbb.level = math.max(bb.level+1, newbb.level)
+            newbb.parents[bb] = 1
+            for cd,_ in pairs(bb.controlDep) do
+              newbb.controlDep[cd] = 1
+            end
+          end
+          darkroom.typedAST._bbDependenciesCache[root][self][newbb] = 1
+        else
+          -- this node is in all the basic blocks that read it
+          for bb,_ in pairs(parentNode:bbDependencies(root)) do
+            darkroom.typedAST._bbDependenciesCache[root][self][bb] = 1
+          end
+        end
+      end
+      assert(type(darkroom.typedAST._bbDependenciesCache[root][self])=="table")
+    end
+  end
+  assert(type(darkroom.typedAST._bbDependenciesCache[root][self])=="table")
+  return darkroom.typedAST._bbDependenciesCache[root][self]
+end
+
+-- return the basic block in which we should calculate this
+-- node. This should be as shallow as possible w/o leaving
+-- the correct scope.
+darkroom.typedAST._calculateBBCache=setmetatable({}, {__mode="k"})
+function typedASTFunctions:calculateBB(root)
+  if darkroom.typedAST._calculateBBCache[root]==nil then
+    darkroom.typedAST._calculateBBCache[root]=setmetatable({}, {__mode="k"})
+  end
+
+  if darkroom.typedAST._calculateBBCache[root][self]==nil then
+    darkroom.typedAST._calculateBBCache[root][self]=setmetatable({}, {__mode="k"})
+
+    if self.kind=="mapreducevar" then
+      local MR = root:lookup(self.mapreduceNode)
+      local dep = MR.expr:bbDependencies(root)
+      assert(keycount(dep)==1)
+      for k,v in pairs(dep) do
+        darkroom.typedAST._calculateBBCache[root][self][k] = 1
+      end
+    elseif self.kind=="mapreduce" then
+      -- mapreduce itself should belong to a bb one level above
+      -- where its input is
+      local cb = self.expr:calculateBB(root)
+      local dep = self.expr:bbDependencies(root)
+      assert(keycount(dep)==1)
+      local thisbb
+      for k,v in pairs(dep) do thisbb=k end
+
+      for k,v in pairs(cb) do
+        if k~=thisbb then darkroom.typedAST._calculateBBCache[root][self][k]=1 end
+      end
+    else
+      darkroom.typedAST._calculateBBCache[root][self][darkroom.typedAST._topbb] = 1
+      for k,v in self:inputs() do
+        local cb = v:calculateBB(root)
+        for kk,__ in pairs(cb) do
+          darkroom.typedAST._calculateBBCache[root][self][kk] = 1
+        end
+      end
+    end
+  end
+  return darkroom.typedAST._calculateBBCache[root][self]
+end
+
+function typedASTFunctions:calculateMinBB(root)
+  ------------------
+  -- for control dependencies, we want it to be as deep as possible,
+  -- but it still needs to be above its control dependencies.
+  -- eg (if a+1 then a+3 end), a has to be above the if
+  -- (if 3+4 then a+3 end), a can be in the expr block
+  local shallowest
+  for bb,_ in pairs(self:bbDependencies(root)) do
+    for cb,_ in pairs(bb.controlDep) do
+      if shallowest==nil or cb.level<shallowest.level then
+        shallowest = cb
+      elseif shallowest.level==cb.level then
+        assert(keycount(cb.parents)==1)
+        for k,_ in pairs(cb.parents) do
+          shallowest = k
+        end
+      end
+    end
+  end
+
+  ------------------
+  local cb = self:calculateBB(root)
+  local deepest = darkroom.typedAST._topbb
+  for k,v in pairs(cb) do
+    if k.level > deepest.level then deepest = k end
+  end
+
+  if shallowest~=nil and shallowest.level>deepest.level then
+    return shallowest
+  else
+    return deepest
+  end
+end
 
 function darkroom.typedAST.checkConstantExpr(expr, coord)
 
@@ -94,8 +216,8 @@ end
 -- index values to find the correct stencil for those situations
 function darkroom.typedAST.transformArea( t1, t2, typedASTRoot)
   assert(darkroom.typedAST.isTypedAST(typedASTRoot))
-  if type(t1)=="number" then t1=darkroom.ast.new({kind="value",value=t1}) end
-  if type(t2)=="number" then t2=darkroom.ast.new({kind="value",value=t2}) end
+  if type(t1)=="number" then t1=darkroom.ast.new({kind="value",value=t1}):setLinenumber(0):setOffset(0):setFilename("nullTA") end
+  if type(t2)=="number" then t2=darkroom.ast.new({kind="value",value=t2}):setLinenumber(0):setOffset(0):setFilename("nullTA") end
   return t1:eval(1,typedASTRoot):sum(t2:eval(2,typedASTRoot))
 end
 
@@ -406,6 +528,7 @@ function darkroom.typedAST._toTypedAST(inast)
         end
 
         ast.index = origast["index"]
+        ast.indexTAST = inputs.index[1] -- used to track references
         ast.type = darkroom.type.astArrayOver(expr)
         
       elseif ast.kind=="transform" then
@@ -599,6 +722,24 @@ function darkroom.typedAST._toTypedAST(inast)
         -- already has a type
         ast.scaleN1=1; ast.scaleD1=1; ast.scaleN2=1; ast.scaleD2=1;
       elseif ast.kind=="mapreduce" then
+
+        local i = 1
+        while ast["varname"..i] do
+          ast["varlow"..i] = ast["varlow"..i]:eval(1,darkroom.typedAST.new({}):copyMetadataFrom(origast))
+          if ast["varlow"..i]:area()~=1 then 
+            darkroom.error("map reduce variable range must be a constant",ast:linenumber(),ast:offset(),ast:filename())
+          end
+          ast["varlow"..i] = ast["varlow"..i]:min(1)
+
+          ast["varhigh"..i] = ast["varhigh"..i]:eval(1,darkroom.typedAST.new({}):copyMetadataFrom(origast))
+          if ast["varhigh"..i]:area()~=1 then 
+            darkroom.error("map reduce variable range must be a constant",ast:linenumber(),ast:offset(),ast:filename())
+          end
+          ast["varhigh"..i] = ast["varhigh"..i]:min(1)
+
+          i = i + 1
+        end
+
         if ast.reduceop=="sum" or ast.reduceop=="max" or ast.reduceop=="min" then
           ast.type = inputs.expr[1].type
         elseif ast.reduceop=="argmin" or ast.reduceop=="argmax" then
@@ -607,28 +748,25 @@ function darkroom.typedAST._toTypedAST(inast)
           end
 
           ast.type = darkroom.type.array(darkroom.type.int(32),origast:arraySize("varname")+1)
+        elseif ast.reduceop=="none" then
+          if origast:arraySize("varname")~=1 then
+            darkroom.error("Pure map can only be one dimensional", origast:linenumber(), origast:offset(), origast:filename())
+          end
+
+          if ast.varlow1~=0 then
+            darkroom.error("Pure map can only have range 0 to N", origast:linenumber(), origast:offset(), origast:filename())
+          end
+
+          if inputs.expr[1].type:isArray()==true then
+            darkroom.error("pure map can only be applied to scalar quantities", origast:linenumber(), origast:offset(), origast:filename())
+          end
+
+          ast.type = darkroom.type.array(inputs.expr[1].type,ast.varhigh1+1)
         else
           darkroom.error("Unknown reduce operator '"..ast.reduceop.."'")
         end
 
         ast.expr = inputs.expr[1]
-
-        local i = 1
-        while ast["varname"..i] do
-          ast["varlow"..i] = ast["varlow"..i]:eval(1,darkroom.typedAST.new({}))
-          if ast["varlow"..i]:area()~=1 then 
-            darkroom.error("map reduce variable range must be a constant",ast:linenumber(),ast:offset(),ast:filename())
-          end
-          ast["varlow"..i] = ast["varlow"..i]:min(1)
-
-          ast["varhigh"..i] = ast["varhigh"..i]:eval(1,darkroom.typedAST.new({}))
-          if ast["varhigh"..i]:area()~=1 then 
-            darkroom.error("map reduce variable range must be a constant",ast:linenumber(),ast:offset(),ast:filename())
-          end
-          ast["varhigh"..i] = ast["varhigh"..i]:min(1)
-
-          i = i + 1
-        end
       elseif ast.kind=="filter" then
         ast.cond = inputs.cond[1]
         ast.expr = inputs.expr[1]
@@ -637,7 +775,7 @@ function darkroom.typedAST._toTypedAST(inast)
         darkroom.error("Internal error, typechecking for "..ast.kind.." isn't implemented!",ast.line,ast.char)
         return nil
       end
-      
+
       if darkroom.type.isType(ast.type)==false then print(ast.kind) end
       ast = darkroom.typedAST.new(ast):copyMetadataFrom(origast)
       assert(darkroom.type.isType(ast.type))
