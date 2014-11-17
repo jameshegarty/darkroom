@@ -67,9 +67,10 @@ end
 
 fpga.modules = terralib.require("fpgamodules")
 
-function getStencilCoord(rel)
+function getStencilCoord(rel, irRoot)
+  assert(darkroom.IR.isIR(irRoot))
   if type(rel)=="number" then return rel end
-  local s = rel:eval(1)
+  local s = rel:eval(1,irRoot)
   if s:area()==1 then
     return numToVarname(s:min(1))
   else
@@ -106,6 +107,7 @@ function astFunctions:evalFunrolled(dim, mrvValues)
   elseif self.kind=="unary" and self.op=="-" then
     return self.expr:evalFunrolled(dim, mrvValues):flipDim(dim)
   elseif self.kind=="mapreducevar" then
+    assert(false)
     print(type(mrvValues[self.variable]))
     assert(type(mrvValues[self.variable])=="number")
     return Stencil.new():addDim(dim, mrvValues[self.variable])
@@ -211,7 +213,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
   local inputs = ""
 
   for k,v in kernelGraphNode:inputs() do
-    local s = kernel:stencil(v)
+    local s = kernel:stencil(v,kernel)
     for x=s:min(1),s:max(1) do
       for y=s:min(2), s:max(2) do
         inputs = inputs.."input ["..(v.kernel.type:sizeof()*8-1)..":0] in_"..v:name().."_x"..numToVarname(x).."_y"..numToVarname(y)..",\n"
@@ -330,7 +332,8 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         local declSeen={}
         for k,v in pairs(n) do
           if k:sub(0,6)=="lifted" then
-            assert(retiming[v]==0) -- we don't support pipelining lifted stuff
+            -- assert(retiming[v]==0) -- we don't support pipelining lifted stuff
+            assert(v.kind=="load" or v.kind=="index")
             merge(args[k][3], declarations, declSeen)
           end
         end
@@ -446,7 +449,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           table.insert(clockedLogic, n:cname(c).." <= ("..inputs.cond[condC]..")?("..inputs.a[c].."):("..inputs.b[c].."); // "..n.kind.."\n")
           res = n:cname(c)
         elseif n.kind=="load" then
-          local v = "in"..kernelToVarname(n.from).."_x"..getStencilCoord(n.relX).."_y"..getStencilCoord(n.relY)
+          local v = "in"..kernelToVarname(n.from).."_x"..getStencilCoord(n.relX,kernel).."_y"..getStencilCoord(n.relY,kernel)
           local tys = n.type:baseType():sizeof()*8
           table.insert(declarations,declareWire( n.type:baseType(), n:cname(c), v.."["..(c*tys-1)..":"..((c-1)*tys).."]" ))
           res = n:cname(c)
@@ -489,7 +492,8 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           table.insert(declarations,declareWire(n.type:baseType(), n:cname(c), v, " //value" ))
           res = n:cname(c)
         elseif n.kind=="mapreducevar" then
-          res = "mrvar_"..n.variable
+          local MR = kernel:lookup(n.mapreduceNode)
+          res = "mrvar_"..MR["varname"..n.id]
         elseif n.kind=="array" then
           res = inputs["expr"..c][1]
         elseif n.kind=="index" then
@@ -590,7 +594,7 @@ local function calcMaxStencil(kernelGraph)
   kernelGraph:visitEach(
     function(node)
       for k,v in node:inputs() do
-        if node.kernel~=nil then print("ST",node.kernel:stencil(v):min(1),node.kernel:stencil(v):max(1),"Y",node.kernel:stencil(v):min(2),node.kernel:stencil(v):max(2)) end
+        if node.kernel~=nil then print("ST",node.kernel:stencil(v,node.kernel):min(1),node.kernel:stencil(v,node.kernel):max(1),"Y",node.kernel:stencil(v,node.kernel):min(2),node.kernel:stencil(v,node.kernel):max(2)) end
       end
       if node.kernel~=nil then maxStencil = maxStencil:unionWith(neededStencil(true,kernelGraph,node,1,nil)) end
     end)
@@ -671,9 +675,11 @@ local function liftMapreduce(kernelGraph, shifts)
                       local found = false
                       for k,v in pairs(anode) do
                         if darkroom.ast.isAST(v) then
+
                           newAnode[k] = v:S("mapreducevar"):process(
                             function(n)
-                              if n.variable==mapreduceNode["varname"..i] then found=true;return darkroom.ast.new({kind="value",value=f,type=n.type}):copyMetadataFrom(n) end
+                              local MR = node.kernel:lookup(n.mapreduceNode)
+                              if MR["varname"..n.id]==mapreduceNode["varname"..i] then found=true;return darkroom.ast.new({kind="value",value=f,type=n.type}):copyMetadataFrom(n) end
                             end)
                         end
                       end
@@ -815,7 +821,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
             if inputXY=="" then
               inputXY = ".inX(kernelOutX_"..v:name().."),.inY(kernelOutY_"..v:name()..")"
             end
-            local s = node.kernel:stencil(v)
+            local s = node.kernel:stencil(v,node.kernel)
             for x=s:min(1),s:max(1) do
               for y=s:min(2), s:max(2) do
                 inputs = inputs..".in_"..v:name().."_x"..numToVarname(x).."_y"..numToVarname(y).."("..v:name().."_to_"..node:name().."_x"..numToVarname(x).."_y"..numToVarname(y).."),"
@@ -843,7 +849,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
 	    -- we should probably refactor this so that the extra delay and stencil are separated out so
 	    -- that it's less confusing.
 	    local extraPipeDelay = pipelineRetiming[v]-pipelineRetiming[node]-v:internalDelay()
-	    local stencil = v.kernel:stencil(node):translate(-extraPipeDelay,0,0)
+	    local stencil = v.kernel:stencil(node,v.kernel):translate(-extraPipeDelay,0,0)
             table.insert(consumers, stencil)
 	    
 	    -- note: this code duplicates kernelGraph:bufferSize()
