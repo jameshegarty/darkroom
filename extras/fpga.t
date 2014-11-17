@@ -83,7 +83,9 @@ function valueToVerilog(value,ty)
 
   if ty:isInt() then
     assert(type(value)=="number")
-    if value<0 then
+    if value==0 then
+      return (ty:sizeof()*8).."'d0"
+    elseif value<0 then
       return "-"..(ty:sizeof()*8).."'d"..math.abs(value)
     else
       return (ty:sizeof()*8).."'d"..value
@@ -708,6 +710,17 @@ end
 local function liftMapreduce(kernelGraph, shifts)
   local newShifts={}
   local oldToNewRemap = {}
+
+  local function pointsTo(n,mrn)
+    local found = false
+    n:S("*"):process(function(nn)
+                       for k,v in pairs(nn) do
+                         if v==mrn then found=true; end
+                       end
+                     end)
+    return found
+  end
+
   local res =  kernelGraph:S("*"):process(
     function(node, orig)
       if node.kernel~=nil then
@@ -720,13 +733,13 @@ local function liftMapreduce(kernelGraph, shifts)
             newMR.expr = mapreduceNode.expr:S(
               function(n)
                 -- heuristic for what we lift
-                return n.kind=="index" or n.kind=="load"
+                return (n.kind=="index" or n.kind=="load") and pointsTo(n,mapreduceNode.__key)
               end):process(
               function(n)
                 liftedCnt = liftedCnt + 1
                 liftedList["lifted"..liftedCnt] = n
                 newMR["typeLifted"..liftedCnt] = n.type
-                return darkroom.typedAST.new({kind="lifted",id=liftedCnt,type=n.type}):copyMetadataFrom(n)
+                return darkroom.typedAST.new({kind="lifted",mapreduceNode=mapreduceNode.__key,id=liftedCnt,type=n.type}):copyMetadataFrom(n)
               end)
             newMR["countLifted"] = liftedCnt
             
@@ -738,19 +751,24 @@ local function liftMapreduce(kernelGraph, shifts)
                 for k,v in pairs(liftedList) do
                   liftedListNew[k.."_"..mapreduceNode["varname"..i]..numToVarname(f)] = v:S("*"):process(
                     function(anode)
-                      local newAnode = anode:shallowcopy()
-                      local found = false
-                      for k,v in pairs(anode) do
-                        if darkroom.ast.isAST(v) then
-
-                          newAnode[k] = v:S("mapreducevar"):process(
-                            function(n)
-                              local MR = node.kernel:lookup(n.mapreduceNode)
-                              if MR["varname"..n.id]==mapreduceNode["varname"..i] then found=true;return darkroom.ast.new({kind="value",value=f,type=n.type}):copyMetadataFrom(n) end
-                            end)
+                      if anode.kind=="mapreducevar" then
+                        local MR = node.kernel:lookup(anode.mapreduceNode)
+                        if MR["varname"..anode.id]==mapreduceNode["varname"..i] then return darkroom.typedAST.new({kind="value",value=f,type=anode.type}):copyMetadataFrom(anode) end
+                      else
+                        local newAnode = anode:shallowcopy()
+                        local found = false
+                        for k,v in pairs(anode) do
+                          if darkroom.ast.isAST(v) then
+                            
+                            newAnode[k] = v:S("mapreducevar"):process(
+                              function(n)
+                                local MR = node.kernel:lookup(n.mapreduceNode)
+                                if MR["varname"..n.id]==mapreduceNode["varname"..i] then found=true;return darkroom.ast.new({kind="value",value=f,type=n.type}):copyMetadataFrom(n) end
+                              end)
+                          end
                         end
+                        if found then return darkroom.typedAST.new(newAnode):copyMetadataFrom(anode) end
                       end
-                      if found then return darkroom.typedAST.new(newAnode):copyMetadataFrom(anode) end
                     end)
                 end
               end
