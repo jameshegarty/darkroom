@@ -145,6 +145,16 @@ local frame2 = darkroomSimple.load("frame11.bmp")
 lkpipeline = makeLK( frame1, frame2 )
 lkpipeline:save("out/lucaskanade.bmp")
 
+--------------
+fpgaEstimate = terralib.require("fpgaEstimate")
+local est, perline = fpgaEstimate.compile({lkpipeline}, 1280)
+io.output("out/lucaskanadeEstimate.txt")
+io.write(est)
+io.close()
+io.output("out/lucaskanadeEstimatePerline.txt")
+io.write(perline)
+io.close()
+
 -----------------
 print("Build For: "..arg[1])
 local v, metadata = fpga.compile({{frame1,"uart","frame10.bmp"},{frame2,"uart","frame11.bmp"}},{{lkpipeline,"uart"}}, 128,64, fpga.util.deviceToOptions(arg[1]))

@@ -189,7 +189,7 @@ function estimate(kernelGraph, imageWidth)
       local consumers = {}
       for v,_ in node:parents(kernelGraph) do
         if v.kernel~=nil then
-          table.insert(consumers, v.kernel:stencil(node))
+          table.insert(consumers, v.kernel:stencil(node,v.kernel))
         end
       end
 
