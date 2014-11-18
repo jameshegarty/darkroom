@@ -156,8 +156,10 @@ io.write(perline)
 io.close()
 
 -----------------
+WIDTH = 200
+HEIGHT = 100
 print("Build For: "..arg[1])
-local v, metadata = fpga.compile({{frame1,"uart","frame10.bmp"},{frame2,"uart","frame11.bmp"}},{{lkpipeline,"uart"}}, 128,64, fpga.util.deviceToOptions(arg[1]))
+local v, metadata = fpga.compile({{frame1,"uart","frame10.bmp"},{frame2,"uart","frame11.bmp"}},{{lkpipeline,"uart"}}, WIDTH,HEIGHT, fpga.util.deviceToOptions(arg[1]))
 
 local s = string.sub(arg[0],1,#arg[0]-2)
 io.output("out/"..s..".v")
@@ -168,8 +170,8 @@ fpga.util.writeMetadata("out/"..s..".metadata.lua", metadata)
 
 ------------------
 local opt = fpga.util.deviceToOptions(arg[1])
-opt.stripWidth=200
-opt.stripHeight=388
+opt.stripWidth=WIDTH
+opt.stripHeight=HEIGHT
 local v, metadata = fpga.compile({{frame1,"sim","frame10.bmp"},{frame2,"sim","frame11.bmp"}},{{lkpipeline,"sim"}}, opt.stripWidth, opt.stripHeight, opt)
 
 local s = string.sub(arg[0],1,#arg[0]-2)

@@ -685,6 +685,21 @@ local function chooseStrip(options, inputs, kernelGraph)
     BLOCKX = math.floor(BLOCKX/v[1].expr.type:sizeof())
   end
 
+  local OUTPUT_BLOCKX = 74
+
+  assert(kernelGraph.kernel==nil)
+  local i = 1
+  while kernelGraph["child"..i] do
+    local v = kernelGraph["child"..i].kernel
+    OUTPUT_BLOCKX = math.floor(OUTPUT_BLOCKX/v.type:sizeof())
+    i = i+1
+  end
+
+  if OUTPUT_BLOCKX < BLOCKX then
+    BLOCKX = OUTPUT_BLOCKX
+    print("Setting blockX based on outputs",BLOCKX)
+  end
+
   local maxStencil=calcMaxStencil(kernelGraph)
 
 --  assert( (maxStencil:max(1)-maxStencil:min(1)+1) < BLOCKX )
