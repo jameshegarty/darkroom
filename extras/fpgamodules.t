@@ -1311,7 +1311,7 @@ wire [9:0] VGA_Y;
 VGA vga(.CLK(CLK), .RST(VGA_RST), .VGA_CLK(VGA_CLK), .VGA_VSYNC(VGA_VSYNC), .VGA_HSYNC(VGA_HSYNC), .VGA_RED(VGA_RED), .VGA_GREEN(VGA_GREEN), .VGA_BLUE(VGA_BLUE), .R(VGA_IN_R), .G(VGA_IN_G), .B(VGA_IN_B),.X(VGA_X), .Y(VGA_Y));
 //pipelineOutput
 OutputBuffer outputBuffer(.CLK_INPUT(PCLK), .CLK_OUTPUT(VGA_CLK), .WE(1'b1), .inaddr(writeAddr), .indata(pipelineOutput), .outaddr(readAddr), .outdata(outdata));
-Pipeline pipeline(.CLK(PCLK), .inX(posX), .inY(posY), .in(pipelineInput), .out(pipelineOutput));
+Pipeline pipeline(.CLK(PCLK), .inX(posX), .inY(posY), .packedinput(pipelineInput), .out(pipelineOutput));
 
 always @(posedge VGA_CLK) begin
   readAddr <= VGA_X;
