@@ -353,6 +353,8 @@ function modules.buffer(moduleName, sizeBytes, inputBytes, outputBytes)
     nonstrideAddr = "inaddr"
     strideClk = "CLK_OUTPUT"
   elseif inputBytes==outputBytes then
+    chunkSize = nearestPowerOf2(inputBytes)
+    contiguous = chunkSize
   else
     assert(false)
   end
