@@ -141,7 +141,7 @@ function binopToCost(op,type, lhsType, rhsType)
     t.dsps = 1
   elseif op=="pow" then
     t.luts = (type:sizeof()*8)*(type:sizeof()*8)
-  elseif op=="and" or op=="==" or op=="or"  then
+  elseif op=="and" or op=="==" or op=="or" or op=="~=" then
     t.luts = type:sizeof()*(8/2)
   elseif op=="dot" then
     assert(lhsType:isArray())
