@@ -34,13 +34,10 @@ function test(inast, inputList)
     io.write(pl)
     io.close()
   elseif arg[1]=="build" then
-
-
-
     for i=1,2 do
       local s = ""
-      local hwinputs
-      local hwoutputs
+      local hwinputs = nil
+      local hwoutputs = nil
       local opt
       if i==1 then
         hwinputs = inputList

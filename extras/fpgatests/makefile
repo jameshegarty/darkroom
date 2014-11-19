@@ -1,8 +1,10 @@
 ISRCS = $(wildcard *.lua)
 SRCS := $(filter-out test.t cover.t, $(ISRCS))
 RES = $(patsubst %.lua,out/%.v,$(SRCS))
-RES += $(patsubst %.lua,out/%.lua.bmp,$(SRCS))
-#RES += $(patsubst %.lua,out/%.sim.bmp,$(SRCS))
+LUA = $(patsubst %.lua,out/%.lua.bmp,$(SRCS))
+RES += $(LUA)
+SIM = $(patsubst %.lua,out/%.sim.bmp,$(SRCS))
+SIM += $(patsubst %.lua,out/%.sim.correct.txt,$(SRCS))
 RES += $(patsubst %.lua,out/%.bit,$(SRCS))
 IMAGES = $(patsubst %.lua,out/%.fpga.bmp,$(SRCS))
 RES += $(IMAGES)
@@ -23,6 +25,10 @@ bits: $(BITS)
 
 images: $(IMAGES)
 
+sim: $(SIM)
+
+lua: $(LUA)
+
 clean: 
 	rm -rf out/*
 	rm -rf build_*
@@ -32,6 +38,10 @@ out/%.lua.est.lua : %.lua
 
 out/%.lua.actual.lua : out/%.bit
 	$(TERRA) ../extractStats.t out/$*.par.txt $@
+
+out/%.sim.correct.txt : %.lua out/%.lua.bmp out/%.sim.bmp
+	diff out/$*.lua.bmp out/$*.sim.bmp > out/$*.sim.diff
+	test ! -s out/$*.sim.diff && touch $@
 
 out/%.sim.v out/%.v : %.lua
 	$(TERRA) $< build frame_128.bmp $(DARKROOM_CHIP)

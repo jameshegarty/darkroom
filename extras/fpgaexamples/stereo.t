@@ -4,7 +4,7 @@ darkroomSimple = terralib.require("darkroomSimple")
 terralib.require("bilinear")
 fpga = terralib.require("fpga")
 
-if SEARCH_RADIUS==nil then SEARCH_RADIUS = 2 end -- 60
+SEARCH_RADIUS = 10
 WINDOW_RADIUS = 4
 DO_RECTIFY = false
 
@@ -78,3 +78,16 @@ io.write(v)
 io.close()
 
 fpga.util.writeMetadata("out/"..s..".metadata.lua", metadata)
+
+------------------
+local opt = fpga.util.deviceToOptions(arg[1])
+opt.stripWidth=300
+opt.stripHeight=20
+local v, metadata = fpga.compile({{leftI,"uart","left0224_sm.bmp"},{rightI,"sim","right0224_sm.bmp"}},{{vectors,"sim"}}, opt.stripWidth, opt.stripHeight, opt)
+
+local s = string.sub(arg[0],1,#arg[0]-2)
+io.output("out/"..s..".sim.v")
+io.write(v)
+io.close()
+
+fpga.util.writeMetadata("out/"..s..".sim.metadata.lua", metadata)
