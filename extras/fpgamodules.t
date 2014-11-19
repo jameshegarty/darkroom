@@ -21,7 +21,7 @@ function modules.reduce(compilerState, op, cnt, datatype, argminVars)
                        table.insert(argmindecl,"wire["..(datatype:sizeof()*8-1)..":0] partial_"..partials.." = partial"..vals..";\n")
                        local r = 1
                        while argminVars["varname"..r] do
-                         table.insert(argmindecl,"wire["..(datatype:sizeof()*8-1)..":0] partial_"..partials.."_"..argminVars["varname"..r].." = "..valueToVerilog(mrvValues[argminVars["varname"..r]],datatype)..";\n")
+                         table.insert(argmindecl,"wire[31:0] partial_"..partials.."_"..argminVars["varname"..r].." = "..valueToVerilogLL(mrvValues[argminVars["varname"..r]],true,32)..";\n")
                          r = r + 1
                        end
                        partials = partials+1

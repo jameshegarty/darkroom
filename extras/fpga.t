@@ -86,7 +86,7 @@ function valueToVerilogLL(value,signed,bits)
     if value==0 then
       return bits.."'d0"
     elseif value<0 then
-      return bits.."'d"..math.abs(value)
+      return "-"..bits.."'d"..math.abs(value)
     else
       return bits.."'d"..value
     end
@@ -172,9 +172,11 @@ function typedASTFunctions:internalDelay()
   elseif self.kind=="load" or self.kind=="value" or self.kind=="cast" or self.kind=="position" or self.kind=="mapreducevar" or self.kind=="array" or self.kind=="index" or self.kind=="lifted" then
     return 0
   elseif self.kind=="mapreduce" then
+    -- the reason we don't have to account for the math within the loop is
+    -- that this node points to that math, so its delay on the input will include the delay of the inside of the loop
     local area = 1
     local i=1
-    while self["varid"..i] do
+    while self["varname"..i] do
       area = area * (self["varhigh"..i]-self["varlow"..i]+1)
       i = i + 1
     end
@@ -451,7 +453,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
                              liftedInputs = liftedInputs..",.lifted"..i.."("..args[v][1][1]..")"
                            end
 
-                           return {declareWire(n.type,n:name().."_partial"..partials).."Map_"..n:name().." map_"..n:name().."_"..partials.."(.CLK(CLK),.out("..n:name().."_partial"..partials.."),.inX(inX),.inY(inY)"..inputList..liftedInputs..table.concat(getInterface(exprbb,false),"")..");\n"} end}
+                           return {declareWire(n.expr.type,n:name().."_partial"..partials).."Map_"..n:name().." map_"..n:name().."_"..partials.."(.CLK(CLK),.out("..n:name().."_partial"..partials.."),.inX(inX),.inY(inY)"..inputList..liftedInputs..table.concat(getInterface(exprbb,false),"")..");\n"} end}
 
         local i = 1
         while n["varname"..i] do
@@ -463,7 +465,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         adddecl(bb, funroll[#funroll]("",{}))
 
         local rtype = n.expr.type
-        if n.reduceop=="argmin" then rtype=n.type:baseType() end
+        if n.reduceop=="argmin" then rtype=n.expr.type:baseType() end
         local rname, rmod = fpga.modules.reduce(compilerState, n.reduceop, partials+1, rtype, n)
 
         result = concat(rmod, result)
