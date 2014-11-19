@@ -13,4 +13,4 @@ INPUT_FILE=$(terra ../../extractMetadata.t $1.sim.metadata.lua inputFile1)
 echo $INPUT_FILE
 ./$1.exe -testplusarg inputFilename=../$INPUT_FILE -testplusarg outputFilename=$1.sim.raw -tclbatch ../../isim.cmd
 export LD_LIBRARY_PATH=
-terra ../../raw2bmp.t $*.sim.raw $*.sim.bmp
+terra ../../raw2bmp.t $*.sim.raw $*.sim.bmp $1.sim.metadata.lua

@@ -423,7 +423,7 @@ end
   return res
 end
 
-function modules.sim(inputBytes, outputBytes, stripWidth, outputShift)
+function modules.sim(inputBytes, outputBytes, stripWidth, imageHeight, outputShift, metadata)
   assert(type(inputBytes)=="number")
   assert(type(outputBytes)=="number")
   assert(type(stripWidth)=="number")
@@ -436,6 +436,8 @@ module sim;
   wire []=]..(outputBytes*8-1)..[=[:0] pipelineOutput;
   reg [12:0] posX = 0;
   reg [12:0] posY = 0;
+  integer realX = ]=]..metadata.minX..[=[;
+  integer realY = ]=]..metadata.minY..[=[;
   integer addr = -PIPE_DELAY+1-]=]..outputShift..[=[;
   reg [10000:0] inputFilename;
   reg [10000:0] outputFilename; 
@@ -452,33 +454,34 @@ module sim;
    file = $fopen(inputFilename,"r");
    fileout = $fopen(outputFilename,"w");
 
-   c = $fgetc(file);
-   while (c != `EOF) begin
-//     $display(c);
-     pipelineInput = c;
-     CLK = 0;
-     #10
-     CLK = 1;
-     #10
+   while (realY < ]=]..(imageHeight+metadata.maxY)..[=[) begin
+     realX = ]=]..(metadata.minX)..[=[;
+     while (realX < ]=]..(stripWidth+metadata.maxX)..[=[) begin
+       if ( realX>=0 && realX<]=]..stripWidth..[=[ && realY>=0 && realY <]=]..imageHeight..[=[ ) begin
+         pipelineInput = $fgetc(file);
+       end else begin
+         pipelineInput = 0;
+       end
+       posX = realX;
+       posY = realY;
+       CLK = 0;
+       #10
+       CLK = 1;
+       #10
 //     $display(modOutput);
 
-     if(addr>=0) begin 
-       i = 0;
-       while( i<]=]..outputBytes..[=[) begin
-         $fwrite(fileout, "%c", pipelineOutput[i*8+:8]); 
-         i = i + 1;
+       if(addr>=0) begin 
+         i = 0;
+         while( i<]=]..outputBytes..[=[) begin
+           $fwrite(fileout, "%c", pipelineOutput[i*8+:8]); 
+           i = i + 1;
+         end
        end
-     end
 
-     c = $fgetc(file);
-     if(posX >= ]=]..(stripWidth-1)..[=[) begin
-       posX = 0;
-       posY = posY+1;
-     end else begin
-       posX = posX + 1;
+       addr = addr + 1;
+       realX = realX + 1;
      end
-     addr = addr + 1;
-
+     realY = realY + 1;
    end // while (c != `EOF)
 
    // drain pipe

@@ -699,7 +699,17 @@ local function calcMaxStencil(kernelGraph)
   return maxStencil
 end
 
-local function chooseStrip(options, inputs, kernelGraph)
+local function chooseStrip(options, inputs, kernelGraph, imageWidth, imageHeight)
+  assert(type(imageWidth)=="number")
+  assert(type(imageHeight)=="number")
+
+  local maxStencil=calcMaxStencil(kernelGraph)
+
+  if inputs[1][2]=="sim" then
+    print("SIM STRIP SIZE",maxStencil:max(2),maxStencil:min(2))
+    return imageWidth+maxStencil:max(1)-maxStencil:min(1), imageHeight+maxStencil:max(2)-maxStencil:min(2)
+  end
+
   if options.stripWidth~=nil or options.stripHeight~=nil then 
     assert(type(options.stripWidth)=="number")
     assert(type(options.stripHeight)=="number")
@@ -729,7 +739,6 @@ local function chooseStrip(options, inputs, kernelGraph)
     print("Setting blockX based on outputs",BLOCKX)
   end
 
-  local maxStencil=calcMaxStencil(kernelGraph)
 
 --  assert( (maxStencil:max(1)-maxStencil:min(1)+1) < BLOCKX )
 --  assert( (maxStencil:max(2)-maxStencil:min(2)+1) < BLOCKY )
@@ -868,7 +877,7 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, options)
 
   local kernelGraph = darkroom.frontEnd( ast, {} )
 
-  options.stripWidth, options.stripHeight = chooseStrip(options,inputs,kernelGraph)
+  options.stripWidth, options.stripHeight = chooseStrip(options,inputs,kernelGraph,imageWidth,imageHeight)
 
   local shifts = schedule(kernelGraph, 1, options.stripWidth)
   kernelGraph, shifts = shift(kernelGraph, shifts, 1, options.stripWidth)
@@ -1044,9 +1053,10 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
     table.insert(result, fpga.modules.stageUART(options, totalInputBytes, outputBytes, options.stripWidth, options.stripHeight))
   elseif outputs[1][2]=="sim" then
     -- sim framework assumes this is the case
-    assert(imageWidth==options.stripWidth)
-    assert(imageHeight==options.stripHeight)
-    table.insert(result, fpga.modules.sim(totalInputBytes, outputBytes, imageWidth, shifts[kernelGraph.child1]))
+    print(imageWidth,imageHeight,options.stripWidth, options.stripHeight)
+    assert(imageWidth+metadata.maxX-metadata.minX==options.stripWidth)
+    assert(imageHeight+metadata.maxY-metadata.minY==options.stripHeight)
+    table.insert(result, fpga.modules.sim(totalInputBytes, outputBytes, imageWidth, imageHeight, shifts[kernelGraph.child1], metadata))
   else
     print("unknown data source "..outputs[1][2])
     assert(false)

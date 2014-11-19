@@ -57,8 +57,6 @@ function test(inast, inputList)
 
         s = ".sim"
         opt = fpga.util.deviceToOptions(arg[3])
-        opt.stripWidth = 128
-        opt.stripHeight = 64
       end
 
       local v, metadata = fpga.compile(hwinputs, hwoutputs, 128, 64, opt)
