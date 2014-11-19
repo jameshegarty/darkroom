@@ -246,7 +246,7 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
       end
 
       table.insert(t, [=[RAMB16_S]=]..(bytesPerPixel*9)..[=[_S]=]..(bytesPerPixel*9)..[=[ #(]=]..configParams..[=[) ram_line]=]..numToVarname(i)..[=[(
-//.DIPA(1'b0),
+.DIPA(1'b0), // needed for the spartan 6 chips for some reason
 .ADDRA(lbWriteAddr]=]..numToVarname(i)..[=[),
 // we write new data into the oldest entry in the buffer, and simultaneously read the old value out
 .DIA(]=]..indata..[=[),
