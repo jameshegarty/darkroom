@@ -8,6 +8,6 @@ im b(x,y) {2,4,6} end
 
 im final(x,y) [uint8[3]]( (a(x,y)+b(x,y))*10 ) end
 
-test({{final,"sim", darkroom.type.array(darkroom.type.uint(8),3)}})
+test(final)
 
 -- should print {30,60,90}

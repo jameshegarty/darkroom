@@ -154,13 +154,10 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
     end
   end
 
-  local t = {"module "..name.."(input CLK, input[12:0] inX, input[12:0] inY, output[12:0] outX, output[12:0] outY,\n"..outputs.."input ["..(bytesPerPixel*8-1)..":0] in);\n"}
+  local t = {"module "..name.."(input CLK,\n"..outputs.."input ["..(bytesPerPixel*8-1)..":0] in);\n"}
 
   local xpixels, lines = delayToXY(maxdelay, stripWidth)
   print("linebuffer lines",lines,"xpixels",xpixels)
-
-  table.insert(t,"assign outX = inX;\n")
-  table.insert(t,"assign outY = inY;\n")
 
   if lines==0 and xpixels==0 then
     for k,v in ipairs(consumers) do      
@@ -219,17 +216,24 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
       if v:min(1) < smallestX then smallestX = v:min(1) end
     end
 
-    table.insert(t,"reg ["..(10-extraBits)..":0] lbWriteAddr = 0;\n")
+    -- we start these one address ahead of where we want to read this cycle
+    -- b/c it takes one cycle to get data out of the ram
     table.insert(t,"reg ["..(10-extraBits)..":0] lbReadAddr = 1;\n")
-    table.insert(clockedLogic, "if (lbWriteAddr == "..(stripWidth-1)..") begin lbWriteAddr <= 0; end else begin lbWriteAddr <= lbWriteAddr + 1; end\n")
     table.insert(clockedLogic, "if (lbReadAddr == "..(stripWidth-1)..") begin lbReadAddr <= 0; end else begin lbReadAddr <= lbReadAddr + 1; end\n")
+
 
     local i=0
     while i>-lines do
+      local startAddr = i
+      if startAddr <0 then startAddr = startAddr + stripWidth end
+      table.insert(t,"reg ["..(10-extraBits)..":0] lbWriteAddr"..numToVarname(i).." = "..valueToVerilogLL(startAddr,false,(10-extraBits))..";\n")
+      table.insert(clockedLogic, "if (lbWriteAddr"..numToVarname(i).." == "..(stripWidth-1)..") begin lbWriteAddr"..numToVarname(i).." <= 0; end else begin lbWriteAddr"..numToVarname(i).." <= lbWriteAddr"..numToVarname(i).." + 1; end\n")
+
       table.insert(t,declareWire(datatype,"evicted_"..numToVarname(i)))
+      table.insert(t,declareWire(datatype,"readout_"..numToVarname(i)))
 
       local indata = "in"
-      local configParams = [=[.WRITE_MODE_A("READ_FIRST")]=]
+      local configParams = [=[.WRITE_MODE_A("READ_FIRST"),.WRITE_MODE_B("READ_FIRST")]=]
 
       local leadingVar = "lb_x0_y"..numToVarname(i)
       table.insert(t,declareWire(datatype,leadingVar))
@@ -237,21 +241,24 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
       if i==0 then
         table.insert(t,"assign "..leadingVar.." = in;\n")
       else
-        table.insert(t,"assign "..leadingVar.." = evicted_"..numToVarname(i+1)..";\n")
+        table.insert(t,"assign "..leadingVar.." = readout_"..numToVarname(i+1)..";\n")
         indata = "evicted_"..numToVarname(i+1)
       end
 
       table.insert(t, [=[RAMB16_S]=]..(bytesPerPixel*9)..[=[_S]=]..(bytesPerPixel*9)..[=[ #(]=]..configParams..[=[) ram_line]=]..numToVarname(i)..[=[(
 .DIPA(1'b0), // needed for the spartan 6 chips for some reason
+.ADDRA(lbWriteAddr]=]..numToVarname(i)..[=[),
+// we write new data into the oldest entry in the buffer, and simultaneously read the old value out
 .DIA(]=]..indata..[=[),
-//.DOA(),
-.DOB(evicted_]=]..numToVarname(i)..[=[),
-.ADDRA(lbWriteAddr),
+.DOA(evicted_]=]..numToVarname(i)..[=[),
 .WEA(1'b1),
-.WEB(1'b0),
 .ENA(1'b1),
+
+.WEB(1'b0),
 .ENB(1'b1),
 .ADDRB(lbReadAddr),
+.DOB(readout_]=]..numToVarname(i)..[=[),
+
 .CLKA(CLK),
 .CLKB(CLK),
 .SSRA(1'b0),
@@ -262,7 +269,7 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
 
     local leadingVar = "lb_x0_y"..numToVarname(-lines)
     table.insert(t,declareWire(datatype,leadingVar))
-    table.insert(t,"assign "..leadingVar.." = evicted_"..numToVarname(-lines+1)..";\n")
+    table.insert(t,"assign "..leadingVar.." = readout_"..numToVarname(-lines+1)..";\n")
 
     -- stencil shift register
     -- note that this also codegens for the dangles in the last (oldest) row

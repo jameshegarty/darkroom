@@ -79,6 +79,23 @@ function getStencilCoord(rel, irRoot)
   end
 end
 
+function valueToVerilogLL(value,signed,bits)
+  assert(type(value)=="number")
+
+  if signed then
+    if value==0 then
+      return bits.."'d0"
+    elseif value<0 then
+      return bits.."'d"..math.abs(value)
+    else
+      return bits.."'d"..value
+    end
+  else
+    assert(value>=0)
+    return bits.."'d"..math.abs(value)
+  end
+end
+
 function valueToVerilog(value,ty)
 
   if ty:isInt() then
@@ -187,14 +204,16 @@ end
 -- There is no side-band information needed to implement the pipeline the
 -- scheduler produces. So we can totally ignore the darkroom schedule here,
 -- and just rate match due to the extra retiming registers we introduced.
-function fpga.trivialRetime(typedAST)
+function fpga.trivialRetime(AST)
+  assert(darkroom.typedAST.isTypedAST(AST) or darkroom.kernelGraph.isKernelGraph(AST))
   local retiming = {}
 
-  typedAST:visitEach(
+  AST:visitEach(
     function(n, inputs)
       local maxDelay = 0
       for k,v in n:inputs() do
-        if inputs[k]>maxDelay then maxDelay = inputs[k] end
+        -- only retime nodes that are actually used
+        if (darkroom.typedAST.isTypedAST(v)==false or v:codegened(AST)) and inputs[k]>maxDelay then maxDelay = inputs[k] end
       end
       retiming[n] = maxDelay + n:internalDelay()
       return retiming[n]
@@ -238,21 +257,6 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
   table.insert(result,"assign inX_0 = inX;\n")
   table.insert(result,"wire [12:0] inY_0;\n")
   table.insert(result,"assign inY_0 = inY;\n")
-
-  -- these variable only serve to delay the input x,y to the output x,y
-  -- They are not used internally by this kernel - the x,y used
-  -- internally by the kernel are delayed using the normal retiming infrastructure.
-  -- Potentially, we could accomplish the same thing with adding a delay
-  -- to x,y using an add operator, which may be better in some cases?
-  for i=1,retiming[kernel] do
-    table.insert(result,"reg [12:0] inX_"..i..";\n")
-    table.insert(result,"reg [12:0] inY_"..i..";\n")
-    table.insert(clockedLogic, "inX_"..i.." <= inX_"..(i-1)..";\n")
-    table.insert(clockedLogic, "inY_"..i.." <= inY_"..(i-1)..";\n")
-  end
-
-  table.insert(result,"assign outX = inX_"..retiming[kernel]..";\n")
-  table.insert(result,"assign outY = inY_"..retiming[kernel]..";\n")
 
 
   local mdeclarationsSeen = {}
@@ -320,8 +324,29 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
     return t
   end
 
+  -- these variable only serve to delay the input x,y to the output x,y
+  -- They are not used internally by this kernel - the x,y used
+  -- internally by the kernel are delayed using the normal retiming infrastructure.
+  -- Potentially, we could accomplish the same thing with adding a delay
+  -- to x,y using an add operator, which may be better in some cases?
+  for i=1,retiming[kernel] do
+    adddecl(darkroom.typedAST._topbb,{"reg [12:0] inX_"..i..";\n"})
+    adddecl(darkroom.typedAST._topbb,{"reg [12:0] inY_"..i..";\n"})
+    addclocked(darkroom.typedAST._topbb, {"inX_"..i.." <= inX_"..(i-1)..";\n"})
+    addclocked(darkroom.typedAST._topbb, {"inY_"..i.." <= inY_"..(i-1)..";\n"})
+  end
+
+  adddecl(darkroom.typedAST._topbb,{"assign outX = inX_"..retiming[kernel]..";\n"})
+  adddecl(darkroom.typedAST._topbb,{"assign outY = inY_"..retiming[kernel]..";\n"})
+
   local finalOut = kernel:visitEach(
     function(n, args)
+
+      if n:codegened(kernel)==false then
+        local t = {}
+        for c=1,n.type:channels() do t="ERROR_UNUSED_VAR" end
+        return {t}
+      end
 
       local inputs = {}
 
@@ -341,21 +366,23 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
       -- insert pipeline delays
       local retimeSeen = {} -- it's possible for a node to use another node multiple times.  Don't double add its retiming delays.
       for k,v in n:inputs() do
-        local delays = retiming[n] - retiming[v] - n:internalDelay()
-        assert(delays>=0)
-        
-        for c=1,v.type:channels() do
-          local prev = inputs[k][c]
-          for i=1, delays do
-            local sn = inputs[k][c].."_to_"..n:cname(c).."_retime"..i
-            -- type is determined by producer, b/c consumer op can change type
-            local d = declareReg( v.type:baseType(), sn, "", " // retiming" )
-            local cl = sn.." <= "..prev.."; // retiming\n"
-            if retimeSeen[d]==nil then adddecl(bb, {d}); retimeSeen[d]=1 end
-            if retimeSeen[cl]==nil then addclocked(bb, {cl}); retimeSeen[cl]=1 end
-            prev = sn
+        if v:codegened(kernel) then -- only retime nodes we actually use
+          local delays = retiming[n] - retiming[v] - n:internalDelay()
+          assert(delays>=0)
+          
+          for c=1,v.type:channels() do
+            local prev = inputs[k][c]
+            for i=1, delays do
+              local sn = inputs[k][c].."_to_"..n:cname(c).."_retime"..i
+              -- type is determined by producer, b/c consumer op can change type
+              local d = declareReg( v.type:baseType(), sn, "", " // retiming" )
+              local cl = sn.." <= "..prev.."; // retiming\n"
+              if retimeSeen[d]==nil then adddecl(bb, {d}); retimeSeen[d]=1 end
+              if retimeSeen[cl]==nil then addclocked(bb, {cl}); retimeSeen[cl]=1 end
+              prev = sn
+            end
+            if delays>0 then inputs[k][c] = inputs[k][c].."_to_"..n:cname(c).."_retime"..delays end
           end
-          if delays>0 then inputs[k][c] = inputs[k][c].."_to_"..n:cname(c).."_retime"..delays end
         end
       end
 
@@ -444,10 +471,10 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         local finalOut = {}
 
         if n.reduceop=="argmin" then
-          for c=1,n.type:channels() do adddecl(bb, declareWire(rtype, n:cname(c))) end
-          table.insert(declarations,rname.." reduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(n.type:channels())..")")
-          for c=1,n.type:channels()-1 do adddecl(bb, ",.out_"..n["varname"..c].."("..n:cname(c)..")") end
-          table.insert(declarations,argminPartials..");\n")
+          for c=1,n.type:channels() do adddecl(bb, {declareWire(rtype, n:cname(c))}) end
+          adddecl(bb,{rname.." reduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(n.type:channels())..")"})
+          for c=1,n.type:channels()-1 do adddecl(bb, {",.out_"..n["varname"..c].."("..n:cname(c)..")"}) end
+          adddecl(bb,{argminPartials..");\n"})
           for c=1,n.type:channels() do table.insert(finalOut, n:cname(c)) end
         else
           for c=1,n.type:channels() do
@@ -517,11 +544,13 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           table.insert(resClockedLogic, n:cname(c).." <= ("..inputs.cond[condC]..")?("..inputs.a[c].."):("..inputs.b[c].."); // "..n.kind.."\n")
           res = n:cname(c)
         elseif n.kind=="load" then
+          assert(retiming[n]==0)
           local v = "in"..kernelToVarname(n.from).."_x"..getStencilCoord(n.relX,kernel).."_y"..getStencilCoord(n.relY,kernel)
           local tys = n.type:baseType():sizeof()*8
           table.insert(resDeclarations,declareWire( n.type:baseType(), n:cname(c), v.."["..(c*tys-1)..":"..((c-1)*tys).."]"," // load" ))
           res = n:cname(c)
         elseif n.kind=="position" then
+          assert(retiming[n]==0)
           local str = "inX"
           if n.coord=="y" then str="inY" end
           table.insert(resDeclarations, declareWire(n.type, n:name(), str))

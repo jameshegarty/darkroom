@@ -135,6 +135,26 @@ function typedASTFunctions:calculateMinBB(root)
   end
 end
 
+-- some nodes we never actually use
+darkroom.typedAST._codegenedCache=setmetatable({}, {__mode=CTABMODE})
+function typedASTFunctions:codegened(root)
+  if darkroom.typedAST._codegenedCache[root] == nil then
+    darkroom.typedAST._codegenedCache[root] = setmetatable({}, {__mode=CTABMODE})
+  end
+
+  if darkroom.typedAST._codegenedCache[root][self]==nil then
+    darkroom.typedAST._codegenedCache[root][self]=false
+    for pn,k in self:parents(root) do
+      if k:sub(1,1)~="_" and pn:codegened(root) then darkroom.typedAST._codegenedCache[root][self]=true; end
+    end
+    if self:parentCount(root)==0 then
+      darkroom.typedAST._codegenedCache[root][self] = true
+    end
+  end
+
+  return darkroom.typedAST._codegenedCache[root][self]
+end
+
 function darkroom.typedAST.checkConstantExpr(expr, coord)
 
   -- no x+x allowed
@@ -532,7 +552,7 @@ function darkroom.typedAST._toTypedAST(inast)
         end
 
         ast.index = origast["index"]
-        ast.indexTAST = inputs.index[1] -- used to track references
+        ast._indexTAST = inputs.index[1] -- used to track references
         ast.type = darkroom.type.astArrayOver(expr)
         
       elseif ast.kind=="transform" then
