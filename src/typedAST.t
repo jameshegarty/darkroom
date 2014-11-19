@@ -6,7 +6,7 @@ typedASTMT={__index=typedASTFunctions,
                   end}
 
 darkroom.typedAST = {}
-CTABMODE = "k"
+CTABMODE = ""
 -- This function tracks in what basic blocks each value
 -- is needed. This does not necessary say that they need to be
 -- computed in that block, but their value is needed.

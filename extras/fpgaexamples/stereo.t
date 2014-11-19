@@ -4,7 +4,8 @@ darkroomSimple = terralib.require("darkroomSimple")
 terralib.require("bilinear")
 fpga = terralib.require("fpga")
 
-if SEARCH_RADIUS==nil then SEARCH_RADIUS = 2 end -- 60
+--if SEARCH_RADIUS==nil then SEARCH_RADIUS = 2 end -- 60
+SEARCH_RADIUS=10
 WINDOW_RADIUS = 4
 DO_RECTIFY = false
 
