@@ -16,9 +16,19 @@ int main(int argc, char *argv[]) {
         perror(argv[0]);
         return 1;
     }
+    unsigned data = 1;
+    int err;
+    err = write(fd,&data,4);
+    
+    if(err != 4) {
+        perror(argv[0]);
+        return 1;
+    }
+    
     printf("waiting for interrupt\n");
-    unsigned data;
-    int err = read(fd, &data, 4);
+    
+    err = read(fd, &data, 4);
+    
     if(err != 4) {
         perror(argv[0]);
         return 1;

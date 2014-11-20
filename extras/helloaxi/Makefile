@@ -5,7 +5,7 @@ CD = cd build;
 UNAME := $(shell uname)
 system.bit.bin: system.v
 ifeq ($(UNAME), Darwin)
-	vagrant ssh -- "source ~/.profile; make -C /vagrant/helloaxi $@"
+	vagrant ssh -- "source ~/.profile; make -C /vagrant/darkroom/extras/helloaxi $@"
 else
 	$(CD) xst -ifn ../system.xst
 	$(CD) ngdbuild -nt timestamp -uc ../ps7_constraints.ucf -uc ../system.ucf -p xc7z020-clg484-1 system.ngc system.ngd
@@ -19,9 +19,17 @@ else
 	bootgen -w -image boot.bif -split bin -o boot.bin
 endif
 
-load: system.bit.bin
+
+%:  %.c
+ifeq ($(UNAME), Darwin)
+	vagrant ssh -- "make -C /vagrant/darkroom/extras/helloaxi $@"
+else
+	arm-linux-gnueabi-gcc -std=c99  $< -o $@
+endif
+
+load: system.bit.bin gpio-dev-mem-test memcpy readuio
 	rm -f ~/.ssh/known_hosts
-	scp system.bit.bin gpio-dev-mem-test memcpy root@$(ADDR):$(LOC)
+	scp system.bit.bin gpio-dev-mem-test memcpy readuio root@$(ADDR):$(LOC)
 	ssh root@$(ADDR) "cat $(LOC)/system.bit.bin > /dev/xdevcfg"
 
 clean:
@@ -29,3 +37,4 @@ clean:
 	
 crash: load
 	ssh root@$(ADDR) ./gpio-dev-mem-test -g 0x70000000 -i
+	ssh root@$(ADDR)

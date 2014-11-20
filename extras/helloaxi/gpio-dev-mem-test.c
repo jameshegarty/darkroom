@@ -20,6 +20,7 @@ void usage(void)
 	printf("    -o <VALUE>       Output to GPIO\n");
 	return;
 }
+extern char * optarg;
 
 int main(int argc, char *argv[])
 {

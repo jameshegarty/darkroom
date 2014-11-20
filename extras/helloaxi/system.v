@@ -94,6 +94,7 @@ module system
     wire [31:0] CONFIG_SRC;
     wire [31:0] CONFIG_DEST;
     wire [31:0] CONFIG_LEN;
+    wire CONFIG_IRQ;
   
     wire READER_READY;
     wire WRITER_READY;
@@ -130,7 +131,8 @@ module system
     .CONFIG_CMD(CONFIG_CMD),
     .CONFIG_SRC(CONFIG_SRC),
     .CONFIG_DEST(CONFIG_DEST),
-    .CONFIG_LEN(CONFIG_LEN));
+    .CONFIG_LEN(CONFIG_LEN),
+    .CONFIG_IRQ(CONFIG_IRQ));
     
   always @(posedge FCLK0) begin
     if(ARESETN == 0)
@@ -705,7 +707,7 @@ module system
     .FTMTF2PDEBUG(32'b0),	// in std_logic_vector(31 downto 0);
     .FTMTF2PTRIG(4'b0),	// in std_logic_vector(3 downto 0);
     .FTMTP2FTRIGACK(4'b0),	// in std_logic_vector(3 downto 0);
-    .IRQF2P(20'b0),	// in std_logic_vector(19 downto 0);
+    .IRQF2P({19'b0,CONFIG_IRQ || SWITCH[0]}),	// in std_logic_vector(19 downto 0);
     .MAXIGP1ACLK(1'b0), 	// in std_ulogic;
     .MAXIGP1ARREADY(1'b0), // in std_ulogic;
     .MAXIGP1AWREADY(1'b0), // in std_ulogic;
