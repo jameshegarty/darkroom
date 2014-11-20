@@ -438,6 +438,8 @@ module sim;
   wire []=]..(outputBytes*8-1)..[=[:0] pipelineOutput;
   reg [12:0] posX = 0;
   reg [12:0] posY = 0;
+  reg inValid = 0;
+  wire outValid;
   integer realX = ]=]..metadata.minX..[=[;
   integer realY = ]=]..metadata.minY..[=[;
   integer addr = -PIPE_DELAY+1-]=]..outputShift..[=[;
@@ -445,7 +447,7 @@ module sim;
   reg [10000:0] outputFilename; 
   reg [7:0] i = 0;
 
-  Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInput),.out(pipelineOutput));
+  Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInput),.out(pipelineOutput),.inValid(inValid),.outValid(outValid));
 
   initial begin
    $display("HELLO");
@@ -466,13 +468,14 @@ module sim;
        end
        posX = realX;
        posY = realY;
+       inValid = 1;
        CLK = 0;
        #10
        CLK = 1;
        #10
 //     $display(modOutput);
 
-       if(addr>=0) begin 
+       if(addr>=0 && outValid) begin 
          i = 0;
          while( i<]=]..outputBytes..[=[) begin
            $fwrite(fileout, "%c", pipelineOutput[i*8+:8]); 
@@ -489,7 +492,7 @@ module sim;
    // drain pipe
    addr = -PIPE_DELAY+1-]=]..outputShift..[=[;
 
-   while (addr<0) begin
+   while (addr<0 && outValid) begin
      CLK = 0;
      #10
      CLK = 1;
