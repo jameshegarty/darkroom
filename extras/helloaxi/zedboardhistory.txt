@@ -1,0 +1,193 @@
+    1  ls
+    2  ./gpio-dev-mem-test -g 0x70000000 -i
+    3  ./gpio-dev-mem-test -g 0x70000000 -i
+    4  ./gpio-dev-mem-test -g 0x30000000 -i
+    5  ./gpio-dev-mem-test -g 0x30000000 -o 0
+    6  ./gpio-dev-mem-test -g 0x30000000 -i
+    7  seq 1 100
+    8  man seq
+    9  seq -f "%x" 1 100
+   10  seq 805306368 805307392
+   11  for i in `seq 805306368 805307392`; do echo $i; done;
+   12  for i in `seq 805306368 805307392`; do echo $i; ./gpio-dev-mem-test -g $i  -i;  done;
+   13  echo $i+1
+   14  for i in `seq 805306368 805307392`; do echo $((i+1)); ./gpio-dev-mem-test -g $i  -i;  done;
+   15  for i in `seq 1 1024`; do echo $i; ./gpio-dev-mem-test -g $i  -i;  done;
+   16  for i in `seq 0 1023`; do echo $i; ./gpio-dev-mem-test -g $i  -i;  done;
+   17  for i in `seq 0 1023`; do echo $i; ./gpio-dev-mem-test -g $((i+805306368))  -i;  done;
+   18  for i in `seq 0 1023`; do echo $i; ./gpio-dev-mem-test -g $((i+805306368)) -o $i;  done;
+   19  for i in `seq 0 1023`; do echo $i; ./gpio-dev-mem-test -g $((i+805306368)) -i;  done;
+   20  for i in `seq 0 4095 4`; do echo $i; ./gpio-dev-mem-test -g $((i+805306368)) -o $i;  done;
+   21  seq 0 4095 4
+   22  seq
+   23  seq 0 4 4095 
+   24  for i in `seq 0 4 4095`; do echo $i; ./gpio-dev-mem-test -g $((i+805306368)) -o $i;  done;
+   25  for i in `seq 0 4 4095`; do echo $i; ./gpio-dev-mem-test -g $((i+805306368)) -i;  done;
+   26  for i in `seq 0 1023`; do echo $i; ./gpio-dev-mem-test -g $((i*4+805306368)) -o $i;  done;
+   27  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+   28  ./gpio-dev-mem-test -g 0x70000000 -i
+   29  ./gpio-dev-mem-test -g 0x70000000 -i
+   30  ./gpio-dev-mem-test -g 0x70000000 -i
+   31  ./gpio-dev-mem-test -g 0x30000000 -o 1
+   32  ./gpio-dev-mem-test -g 0x30000000 -i
+   33  ./gpio-dev-mem-test -g 0x30000004 -i
+   34  ./gpio-dev-mem-test -g 0x30000008 -i
+   35  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+   36  for i in `seq 0 1023`; do echo $i; ./gpio-dev-mem-test -g $((i*8+805306368)) -o $i; ./gpio-dev-mem-test -g $((i*8+805306368+4)) -o 0;  done;
+   37  ./gpio-dev-mem-test -g 0x30000008 -i
+   38  ./gpio-dev-mem-test -g 0x30000010 -i
+   39  ./gpio-dev-mem-test -g 0x30000014 -i
+   40  exit
+   41  for i in `seq 0 1023`; do echo $i; ./gpio-dev-mem-test -g $((i*8+805306368)) -o $i; ./gpio-dev-mem-test -g $((i*8+805306368+4)) -o 0;  done;
+   42  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+   43  ./gpio-dev-mem-test -g 0x70000000 -i
+   44  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+   45  ./gpio-dev-mem-test -g 0x70000000 -i
+   46  ./gpio-dev-mem-test -g 0x30000000 -o 3
+   47  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+   48  ./gpio-dev-mem-test -g ((805306368+1023*8)) -o ((1023+3))
+   49  ./gpio-dev-mem-test -g $((805306368+1023*8)) -o $((1023+3))
+   50  ./gpio-dev-mem-test -g $((805306368+1023*8)) -i
+   51  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+   52  ./gpio-dev-mem-test -g 0x70000000 -i
+   53  ./gpio-dev-mem-test -g 0x70000000 -i
+   54  ls -R /sys
+   55  ls -R /sys | grep fclk
+   56  ls /sys/class/fclk/fclk_export
+   57  ls /sys/class/fclk/
+   58  ls -R /sys | grep -B 10 fclk
+   59  find /sys/ -name 'fclk_export'
+   60  cat /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk_export
+   61  cat /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk_import
+   62  cat /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk_unexport
+   63  find /sys/ -name 'set_rate'
+   64  find /sys -name 'set_rate'
+   65  find /sys -name '*set_rate*'
+   66  exit
+   67  ls
+   68  find /sys -name 'fclk_export'
+   69  cat /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk_export
+   70  echo "fclk0" > /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk_export
+   71  find /sys -name 'fclk0'
+   72  ls /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk/fclk0
+   73  cat /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk/fclk0/set_rate
+   74  echo "250000000" /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk/fclk0/set_rate
+   75  echo "250000000" > /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk/fclk0/set_rate
+   76  ./gpio-dev-mem-test -g 0x70000000 -i
+   77  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+   78  ./gpio-dev-mem-test -g 0x70000000 -i
+   79  exit
+   80  for i in `seq 0 1023`; do echo $i; ./gpio-dev-mem-test -g $((i*8+805306368)) -o $i; ./gpio-dev-mem-test -g $((i*8+4+805306368)) -o 0;  done;
+   81  for i in `seq 0 1023`; do echo $i; ./gpio-dev-mem-test -g $((i*8+805306368)) -i;  done;
+   82  ./gpio-dev-mem-test -g 0x70000000 -i
+   83  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+   84  ./gpio-dev-mem-test -g 0x70000000 -i
+   85  ./gpio-dev-mem-test -g $((805306368+1023*8)) -i
+   86  ./gpio-dev-mem-test -g $((805306368+1023*8)) -o 1026
+   87  ./gpio-dev-mem-test -g $((805306368+1023*8)) -i
+   88  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+   89  ./gpio-dev-mem-test -g 0x70000000 -i
+   90  echo "100000000" > /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk/fclk0/set_rate
+   91  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+   92  ./gpio-dev-mem-test -g 0x70000000 -i
+   93  echo "200000000" > /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk/fclk0/set_rate
+   94  cat /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk/fclk0/set_rate~
+   95  cat /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk/fclk0/set_rate
+   96  echo "250000000" > /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk/fclk0/set_rate
+   97  cat /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk/fclk0/set_rate
+   98  echo "250000000" > /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk/fclk0/set_rate
+   99  echo "200000000" > /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk/fclk0/set_rate
+  100  ./gpio-dev-mem-test -g 0x70000000 -i
+  101  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  102  ./gpio-dev-mem-test -g 0x70000000 -i
+  103  echo "250000000" > /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk/fclk0/set_rate
+  104  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  105  ./gpio-dev-mem-test -g 0x70000000 -i
+  106  echo "100000000" > /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk/fclk0/set_rate
+  107  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  108  ./gpio-dev-mem-test -g 0x70000000 -i
+  109  echo "200000000" > /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk/fclk0/set_rate
+  110  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  111  ./gpio-dev-mem-test -g 0x70000000 -i
+  112  exit
+  113  ls
+  114  ./gpio-dev-mem-test -g $((805306368+1022*8)) -o 1023
+  115  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  116  ./gpio-dev-mem-test -g 0x70000000 -i
+  117  exit
+  118  echo "150000000" > /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk/fclk0/set_rate
+  119  ./gpio-dev-mem-test -g 0x70000000 -i
+  120  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  121  ./gpio-dev-mem-test -g 0x70000000 -i
+  122  exit
+  123  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  124  ./gpio-dev-mem-test -g 0x70000000 -i
+  125  ./gpio-dev-mem-test -g 0x70000000 -i
+  126  ./gpio-dev-mem-test -g 0x70000000 -i
+  127  exit
+  128  ./gpio-dev-mem-test -g 0x70000000 -i
+  129  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  130  ./gpio-dev-mem-test -g 0x70000000 -i
+  131  ./gpio-dev-mem-test -g 0x70000000 -i
+  132  ./gpio-dev-mem-test -g 0x70000000 -i
+  133  ./gpio-dev-mem-test -g 0x70000000 -i
+  134  ./gpio-dev-mem-test -g 0x70000000 -i
+  135  ./gpio-dev-mem-test -g 0x70000000 -i
+  136  ./gpio-dev-mem-test -g 0x70000000 -i
+  137  ./gpio-dev-mem-test -g 0x70000000 -i
+  138  ./gpio-dev-mem-test -g 0x70000000 -i
+  139  ./gpio-dev-mem-test -g 0x70000000 -i
+  140  ./gpio-dev-mem-test -g 0x70000000 -i
+  141  ./gpio-dev-mem-test -g 0x70000000 -i
+  142  ./gpio-dev-mem-test -g 0x70000000 -i
+  143  ./gpio-dev-mem-test -g 0x70000000 -i
+  144  ./gpio-dev-mem-test -g 0x70000000 -i
+  145  exit
+  146  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  147  ./gpio-dev-mem-test -g 0x70000000 -i
+  148  ./gpio-dev-mem-test -g 0x70000000 -i
+  149  ./gpio-dev-mem-test -g 0x70000000 -i
+  150  ./gpio-dev-mem-test -g 0x70000000 -i
+  151  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  152  ./gpio-dev-mem-test -g 0x70000000 -i
+  153  ./gpio-dev-mem-test -g 0x70000000 -i
+  154  cat /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk/fclk0/set_rate
+  155  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  156  ./gpio-dev-mem-test -g 0x70000000 -i
+  157  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  158  ./gpio-dev-mem-test -g 0x70000000 -i
+  159  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  160  ./gpio-dev-mem-test -g 0x70000000 -i
+  161  ./gpio-dev-mem-test -g $((805306368+1023*8)) -i
+  162  ./gpio-dev-mem-test -g $((805306368+1023*8)) -o 1029
+  163  ./gpio-dev-mem-test -g $((805306368+1023*8)) -i
+  164  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  165  ./gpio-dev-mem-test -g 0x70000000 -i
+  166  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  167  ./gpio-dev-mem-test -g 0x70000000 -i
+  168  ./gpio-dev-mem-test -g 0x70000000 -i
+  169  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  170  ./gpio-dev-mem-test -g 0x70000000 -i
+  171  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  172  ./gpio-dev-mem-test -g 0x70000000 -i
+  173  echo "100000000" > /sys/devices/amba.0/f8007000.ps7-dev-cfg/fclk/fclk0/set_rate
+  174  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  175  ./gpio-dev-mem-test -g 0x70000000 -i
+  176  ./gpio-dev-mem-test -g 0x70000000 -i
+  177  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  178  ./gpio-dev-mem-test -g 0x70000000 -i
+  179  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  180  ./gpio-dev-mem-test -g 0x70000000 -i
+  181  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  182  ./gpio-dev-mem-test -g 0x70000000 -i
+  183  exit
+  184  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  185  ./gpio-dev-mem-test -g 0x70000000 -i
+  186  ./gpio-dev-mem-test -g 0x70000000 -i
+  187  ./gpio-dev-mem-test -g 0x70000000 -i
+  188  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  189  ./gpio-dev-mem-test -g 0x70000000 -i
+  190  ./gpio-dev-mem-test -g 0x70000000 -i
+  191  ./gpio-dev-mem-test -g 0x70000000 -i
+  192  ./gpio-dev-mem-test -g 0x70000000 -o 805306368
+  193  history
