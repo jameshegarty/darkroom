@@ -369,6 +369,8 @@ function darkroom.typedAST._toTypedAST(inast)
 
   local largestScaleN = {1,1}
   local largestScaleD = {1,1}
+  local smallestScaleN = {1,1}
+  local smallestScaleD = {1,1}
 
   local res = inast:visitEach(
     function(origast,inputs)
@@ -819,12 +821,19 @@ function darkroom.typedAST._toTypedAST(inast)
           if lcdN>largestScaleN[i] then largestScaleN[i] = lcdN 
           elseif N>largestScaleN[i] then largestScaleN[i] = N end
         end
+        
+        if ast["scaleN"..i]/ast["scaleD"..i] < smallestScaleN[i]/smallestScaleD[i] then
+          smallestScaleN[i] = ast["scaleN"..i]
+          smallestScaleD[i] = ast["scaleD"..i]
+        end
       end
 
       return {ast}
     end)
 
-  return res[1], largestScaleN[1], largestScaleN[2]
+  assert(smallestScaleN[1]==1)
+  assert(smallestScaleN[2]==1)
+  return res[1], largestScaleN[1], largestScaleN[2], smallestScaleD[1], smallestScaleD[2]
 end
 
 function darkroom.typedAST.astToTypedAST(ast, options)
@@ -905,14 +914,14 @@ function darkroom.typedAST.astToTypedAST(ast, options)
     print("_toTypedAST",collectgarbage("count"))
   end
 
-  local typedAST, largestScaleX, largestScaleY = darkroom.typedAST._toTypedAST(ast)
+  local typedAST, largestScaleX, largestScaleY, smallestScaleX, smallestScaleY = darkroom.typedAST._toTypedAST(ast)
 
   if options.verbose or options.printstage then
     print("largestScaleX",largestScaleX,"largestScaleY",largestScaleY)
     print("conversion to typed AST done ------------")
   end
 
-  return typedAST, largestScaleX, largestScaleY
+  return typedAST, largestScaleX, largestScaleY, smallestScaleX, smallestScaleY
 end
 
 

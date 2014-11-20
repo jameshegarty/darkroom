@@ -43,7 +43,7 @@ function darkroom.frontEnd(ast, options)
 
   if options.callbackAST~=nil then options.callbackAST(ast) end
 
-  local typedAST, largestScaleX, largestScaleY = darkroom.typedAST.astToTypedAST( ast, options )
+  local typedAST, largestScaleX, largestScaleY, smallestScaleX, smallestScaleY = darkroom.typedAST.astToTypedAST( ast, options )
   if options.callbackTypedAST~=nil then options.callbackTypedAST(typedAST) end
 
   -- optimize
@@ -53,7 +53,7 @@ function darkroom.frontEnd(ast, options)
   local kernelGraph = darkroom.kernelGraph.typedASTToKernelGraph(optimizedTypedAST, options)
   if options.callbackKernelGraph~=nil then options.callbackKernelGraph(kernelGraph) end
 
-  return kernelGraph, largestScaleY
+  return kernelGraph, largestScaleY, smallestScaleX, smallestScaleY
 end
 
 function darkroom.backEnd( kernelGraph, inputImages, taps, largestScaleY, options )

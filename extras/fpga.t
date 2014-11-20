@@ -283,7 +283,29 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
     table.insert(result,"wire [12:0] inValid_0;\n")
     table.insert(result,"assign inValid_0 = inValid;\n")
   else
-    assert(false)
+    for i=1,2 do
+      local coord = "X"
+      if i==2 then coord="Y" end
+      table.insert(result,"wire [12:0] in"..coord.."_0;\n")
+      table.insert(result,"wire [12:0] inValid"..coord.."_0;\n")
+
+      if xys.kernel["scaleN"..i]==kernel["scaleN"..i] and xys.kernel["scaleD"..i]==kernel["scaleD"..i] then
+        table.insert(result,"assign in"..coord.."_0 = in"..coord..";\n")        
+        table.insert(result,"assign inValid"..coord.."_0 = 1;\n")
+      elseif kernel["scaleD"..i]>xys.kernel["scaleD"..i] then
+        assert(xys.kernel["scaleN"..i]==1)
+        assert(kernel["scaleN"..i]==1)
+        local downscaleFactor = kernel["scaleD"..i]/xys.kernel["scaleD"..i]
+        local sft = math.log(downscaleFactor)/math.log(2)
+        assert(math.floor(sft)==sft)
+        table.insert(result,"assign in"..coord.."_0 = in"..coord.." >> "..sft..";\n")
+        table.insert(result,"assign inValid"..coord.."_0 = !(in"..coord.." & "..(downscaleFactor-1)..");\n")
+      else
+        assert(false)
+      end
+    end
+    table.insert(result,"wire [12:0] inValid_0;\n")
+    table.insert(result,"assign inValid_0 = inValidX_0 && inValidY_0;\n")
   end
 
   local mdeclarationsSeen = {}
@@ -729,21 +751,28 @@ local function calcMaxStencil(kernelGraph)
   return maxStencil
 end
 
-local function chooseStrip(options, inputs, kernelGraph, imageWidth, imageHeight)
+local function chooseStrip(options, inputs, kernelGraph, imageWidth, imageHeight, smallestScaleX, smallestScaleY)
   assert(type(imageWidth)=="number")
   assert(type(imageHeight)=="number")
+  assert(type(smallestScaleX)=="number")
+  assert(type(smallestScaleY)=="number")
 
   local maxStencil=calcMaxStencil(kernelGraph)
 
+  print("CHOOSE STRIP",inputs[1][2])
   if inputs[1][2]=="sim" then
     print("SIM STRIP SIZE",maxStencil:max(2),maxStencil:min(2))
-    return imageWidth+maxStencil:max(1)-maxStencil:min(1), imageHeight+maxStencil:max(2)-maxStencil:min(2)
+    local padMinX = downToNearest(smallestScaleX,maxStencil:min(1))
+    local padMaxX = upToNearest(smallestScaleX,maxStencil:max(1))
+    local padMinY = downToNearest(smallestScaleY,maxStencil:min(2))
+    local padMaxY = upToNearest(smallestScaleY,maxStencil:max(2))
+    return imageWidth+padMaxX-padMinX, imageHeight+padMaxY-padMinY, padMinX, padMaxX, padMinY, padMaxY
   end
 
   if options.stripWidth~=nil or options.stripHeight~=nil then 
     assert(type(options.stripWidth)=="number")
     assert(type(options.stripHeight)=="number")
-    return options.stripWidth, options.stripHeight
+    return options.stripWidth, options.stripHeight,0,0,0,0
   end
 
   local BLOCKX = 74
@@ -787,7 +816,7 @@ local function chooseStrip(options, inputs, kernelGraph, imageWidth, imageHeight
     print("newheight", BLOCKY)
   end
 
-  return BLOCKX, BLOCKY
+  return upToNearest(smallestScaleX,BLOCKX), upToNearest(smallestScaleY,BLOCKY),0,0,0,0
 end
 
 local function liftMapreduce(kernelGraph, shifts)
@@ -905,9 +934,10 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, options)
     end
   end
 
-  local kernelGraph = darkroom.frontEnd( ast, {} )
+  local kernelGraph, _, smallestScaleX, smallestScaleY = darkroom.frontEnd( ast, {} )
 
-  options.stripWidth, options.stripHeight = chooseStrip(options,inputs,kernelGraph,imageWidth,imageHeight)
+  local padMinX, padMaxX, padMinY, padMaxY
+  options.stripWidth, options.stripHeight, padMinX, padMaxX, padMinY, padMaxY = chooseStrip(options,inputs,kernelGraph,imageWidth,imageHeight, smallestScaleX, smallestScaleY)
 
   local shifts = schedule(kernelGraph, 1, options.stripWidth)
   kernelGraph, shifts = shift(kernelGraph, shifts, 1, options.stripWidth)
@@ -1011,6 +1041,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
         local linebufferSize = 0 -- note: this code duplicates kernelGraph:bufferSize()
         assert(node.kernel.scaleN1==1)
         local effStripWidth = options.stripWidth/node.kernel.scaleD1
+        print("EFFSW",effStripWidth,options.stripWidth,node.kernel.scaleD1)
         assert(effStripWidth==math.floor(effStripWidth))
 
         for v,_ in node:parents(kernelGraph) do
@@ -1072,7 +1103,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
 --  totalDelay = pipelineRetiming[kernelGraph.child1] + shifts[kernelGraph.child1]
   totalDelay = pipelineRetiming[kernelGraph.child1]
 
-  local metadata = {minX = maxStencil:min(1), maxX=maxStencil:max(1), minY=maxStencil:min(2), maxY = maxStencil:max(2), outputShift = shifts[kernelGraph.child1], outputChannels = outputChannels, outputBytes = outputBytes, stripWidth = options.stripWidth, stripHeight=options.stripHeight, uartClock=options.uartClock}
+  local metadata = {minX = maxStencil:min(1), maxX=maxStencil:max(1), minY=maxStencil:min(2), maxY = maxStencil:max(2), outputShift = shifts[kernelGraph.child1], outputChannels = outputChannels, outputBytes = outputBytes, stripWidth = options.stripWidth, stripHeight=options.stripHeight, uartClock=options.uartClock, downsampleX=kernelGraph.child1.kernel.scaleD1, downsampleY=kernelGraph.child1.kernel.scaleD2, padMinX=padMinX, padMaxX=padMaxX, padMinY=padMinY, padMaxY=padMaxY}
 
   for k,v in ipairs(inputs) do
     metadata["inputFile"..k] = v[3]

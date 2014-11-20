@@ -17,9 +17,9 @@ terra raw2bmp(infile : &int8, outfile : &int8)
   var imgIn = cstdio.fopen(infile, "rb");
   cstdio.fread(inp.dataPtr,1,totalSize,imgIn)
   cstdio.fclose(imgIn)
-  inp.width = metadata.stripWidth+metadata.minX-metadata.maxX
-  inp.height = metadata.stripHeight+metadata.minY-metadata.maxY
-  inp.stride = metadata.stripWidth
+  inp.width = (metadata.stripWidth+metadata.minX-metadata.maxX)/metadata.downsampleX
+  inp.height = (metadata.stripHeight+metadata.minY-metadata.maxY)/metadata.downsampleY
+  inp.stride = metadata.stripWidth/metadata.downsampleX
   inp.channels = metadata.outputChannels
   inp.bits = 8
   inp.floating = false
