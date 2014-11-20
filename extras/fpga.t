@@ -288,12 +288,14 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
       table.insert(result,"assign in"..coord.."_internal = in"..coord..";\n")        
       table.insert(result,"assign inValid"..coord.."_0 = 1;\n")
     else
-      assert(kernel["scaleN"..i]==1)
+      --print("SCALEN",kernel["scaleN"..i])
+      --assert(kernel["scaleN"..i]==1)
+      local scale = looprate(kernel["scaleN"..i],kernel["scaleD"..i],1)
       
-      local sft = math.log(kernel["scaleD"..i])/math.log(2)
+      local sft = math.log(scale)/math.log(2)
       assert(math.floor(sft)==sft)
       table.insert(result,"assign in"..coord.."_internal = in"..coord.." >> "..sft..";\n")
-      table.insert(result,"assign inValid"..coord.."_0 = !(in"..coord.." & "..(kernel["scaleD"..i]-1)..");\n")
+      table.insert(result,"assign inValid"..coord.."_0 = !(in"..coord.." & "..(scale-1)..");\n")
     end
   end
 
@@ -1030,11 +1032,8 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
 
         local consumers = {}
         local linebufferSize = 0 -- note: this code duplicates kernelGraph:bufferSize()
-        local effStripWidth = options.stripWidth
-        if node.kernel.scaleN1~=0 then
-          assert(node.kernel.scaleN1==1)
-          effStripWidth = options.stripWidth/node.kernel.scaleD1
-        end
+        local scale = looprate(node.kernel.scaleN1,node.kernel.scaleD1,1)
+        local effStripWidth = options.stripWidth/scale
         print("EFFSW",effStripWidth,options.stripWidth,node.kernel.scaleD1)
         assert(effStripWidth==math.floor(effStripWidth))
 
@@ -1068,7 +1067,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
         if parentIsOutput(node)==false then -- output nodes don't write to linebuffer
           local lbname, lbmod = fpga.modules.linebuffer(linebufferSize, node.kernel.type, effStripWidth, consumers)
           result = concat(result, lbmod)
-          table.insert(pipeline,lbname.." kernelBuffer_"..node:name().."(.CLK(CLK),"..lboutputs..".in(kernelOut_"..node:name().."));\n")
+          table.insert(pipeline,lbname.." kernelBuffer_"..node:name().."(.CLK(CLK),"..lboutputs..".in(kernelOut_"..node:name().."),.WE(kernelOutValid_"..node:name().."));\n")
         end
 
         return 0

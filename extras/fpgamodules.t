@@ -154,7 +154,7 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
     end
   end
 
-  local t = {"module "..name.."(input CLK,\n"..outputs.."input ["..(bytesPerPixel*8-1)..":0] in);\n"}
+  local t = {"module "..name.."(input CLK,\n"..outputs.."input ["..(bytesPerPixel*8-1)..":0] in, input WE);\n"}
 
   local xpixels, lines = delayToXY(maxdelay, stripWidth)
   print("linebuffer lines",lines,"xpixels",xpixels)
@@ -297,7 +297,9 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
     end
 
     table.insert(t,"always @ (posedge CLK) begin\n")
+    table.insert(t,"if(WE) begin\n")
     t = concat(t,clockedLogic)
+    table.insert(t,"end\n")
     table.insert(t,"end\n")
 
   end
