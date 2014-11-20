@@ -1039,8 +1039,11 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
 
         local consumers = {}
         local linebufferSize = 0 -- note: this code duplicates kernelGraph:bufferSize()
-        assert(node.kernel.scaleN1==1)
-        local effStripWidth = options.stripWidth/node.kernel.scaleD1
+        local effStripWidth = options.stripWidth
+        if node.kernel.scaleN1~=0 then
+          assert(node.kernel.scaleN1==1)
+          effStripWidth = options.stripWidth/node.kernel.scaleD1
+        end
         print("EFFSW",effStripWidth,options.stripWidth,node.kernel.scaleD1)
         assert(effStripWidth==math.floor(effStripWidth))
 
@@ -1104,6 +1107,8 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
   totalDelay = pipelineRetiming[kernelGraph.child1]
 
   local metadata = {minX = maxStencil:min(1), maxX=maxStencil:max(1), minY=maxStencil:min(2), maxY = maxStencil:max(2), outputShift = shifts[kernelGraph.child1], outputChannels = outputChannels, outputBytes = outputBytes, stripWidth = options.stripWidth, stripHeight=options.stripHeight, uartClock=options.uartClock, downsampleX=kernelGraph.child1.kernel.scaleD1, downsampleY=kernelGraph.child1.kernel.scaleD2, padMinX=padMinX, padMaxX=padMaxX, padMinY=padMinY, padMaxY=padMaxY}
+  if metadata.downsampleX==0 then metadata.downsampleX=1 end
+  if metadata.downsampleY==0 then metadata.downsampleY=1 end
 
   for k,v in ipairs(inputs) do
     metadata["inputFile"..k] = v[3]
@@ -1125,8 +1130,8 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
   elseif outputs[1][2]=="sim" then
     -- sim framework assumes this is the case
     print(imageWidth,imageHeight,options.stripWidth, options.stripHeight)
-    assert(imageWidth+metadata.maxX-metadata.minX==options.stripWidth)
-    assert(imageHeight+metadata.maxY-metadata.minY==options.stripHeight)
+    assert(imageWidth+metadata.padMaxX-metadata.padMinX==options.stripWidth)
+    assert(imageHeight+metadata.padMaxY-metadata.padMinY==options.stripHeight)
     table.insert(result, fpga.modules.sim(totalInputBytes, outputBytes, imageWidth, imageHeight, shifts[kernelGraph.child1], metadata))
   else
     print("unknown data source "..outputs[1][2])

@@ -440,8 +440,8 @@ module sim;
   reg [12:0] posY = 0;
   reg inValid = 0;
   wire outValid;
-  integer realX = ]=]..metadata.minX..[=[;
-  integer realY = ]=]..metadata.minY..[=[;
+  integer realX = ]=]..metadata.padMinX..[=[;
+  integer realY = ]=]..metadata.padMinY..[=[;
   integer addr = -PIPE_DELAY+1-]=]..outputShift..[=[;
   reg [10000:0] inputFilename;
   reg [10000:0] outputFilename; 
@@ -458,9 +458,9 @@ module sim;
    file = $fopen(inputFilename,"r");
    fileout = $fopen(outputFilename,"w");
 
-   while (realY < ]=]..(imageHeight+metadata.maxY)..[=[) begin
-     realX = ]=]..(metadata.minX)..[=[;
-     while (realX < ]=]..(stripWidth+metadata.maxX)..[=[) begin
+   while (realY < ]=]..(imageHeight+metadata.padMaxY)..[=[) begin
+     realX = ]=]..(metadata.padMinX)..[=[;
+     while (realX < ]=]..(stripWidth+metadata.padMaxX)..[=[) begin
        if ( realX>=0 && realX<]=]..stripWidth..[=[ && realY>=0 && realY <]=]..imageHeight..[=[ ) begin
          pipelineInput = $fgetc(file);
        end else begin
