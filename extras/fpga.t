@@ -272,41 +272,32 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
   local result = {"module Kernel_"..kernelGraphNode:name().."(input CLK, input[12:0] inX, input[12:0] inY, output[12:0] outX, output[12:0] outY, \n"..inputs.."output ["..(kernel.type:sizeof()*8-1)..":0] out, input inValid, output outValid);\n"}
   local clockedLogic = {}
 
-  local xys = kernelGraphNode:xySource(kernelGraphRoot, pipelineRetiming)
-  -- xys==nil => this kernel is a leaf
-  if xys==nil or (xys.kernel.scaleN1==kernel.scaleN1 and xys.kernel.scaleN2==kernel.scaleN2 and
-                  xys.kernel.scaleD1==kernel.scaleD1 and xys.kernel.scaleD2==kernel.scaleD2) then
-    table.insert(result,"wire [12:0] inX_0;\n")
-    table.insert(result,"assign inX_0 = inX;\n")
-    table.insert(result,"wire [12:0] inY_0;\n")
-    table.insert(result,"assign inY_0 = inY;\n")
-    table.insert(result,"wire [12:0] inValid_0;\n")
-    table.insert(result,"assign inValid_0 = inValid;\n")
-  else
-    for i=1,2 do
-      local coord = "X"
-      if i==2 then coord="Y" end
-      table.insert(result,"wire [12:0] in"..coord.."_0;\n")
-      table.insert(result,"wire [12:0] inValid"..coord.."_0;\n")
-
-      if xys.kernel["scaleN"..i]==kernel["scaleN"..i] and xys.kernel["scaleD"..i]==kernel["scaleD"..i] then
-        table.insert(result,"assign in"..coord.."_0 = in"..coord..";\n")        
-        table.insert(result,"assign inValid"..coord.."_0 = 1;\n")
-      elseif kernel["scaleD"..i]>xys.kernel["scaleD"..i] then
-        assert(xys.kernel["scaleN"..i]==1)
-        assert(kernel["scaleN"..i]==1)
-        local downscaleFactor = kernel["scaleD"..i]/xys.kernel["scaleD"..i]
-        local sft = math.log(downscaleFactor)/math.log(2)
-        assert(math.floor(sft)==sft)
-        table.insert(result,"assign in"..coord.."_0 = in"..coord.." >> "..sft..";\n")
-        table.insert(result,"assign inValid"..coord.."_0 = !(in"..coord.." & "..(downscaleFactor-1)..");\n")
-      else
-        assert(false)
-      end
+  table.insert(result,"wire [12:0] inX_0;\n")
+  table.insert(result,"assign inX_0 = inX;\n")
+  table.insert(result,"wire [12:0] inY_0;\n")
+  table.insert(result,"assign inY_0 = inY;\n")
+  table.insert(result,"wire inValid_0;\n")
+  
+  for i=1,2 do
+    local coord = "X"
+    if i==2 then coord="Y" end
+    table.insert(result,"wire [12:0] in"..coord.."_internal;\n")
+    table.insert(result,"wire [12:0] inValid"..coord.."_0;\n")
+    
+    if kernel["scaleD"..i]==0 or kernel["scaleD"..i]==1 then
+      table.insert(result,"assign in"..coord.."_internal = in"..coord..";\n")        
+      table.insert(result,"assign inValid"..coord.."_0 = 1;\n")
+    else
+      assert(kernel["scaleN"..i]==1)
+      
+      local sft = math.log(kernel["scaleD"..i])/math.log(2)
+      assert(math.floor(sft)==sft)
+      table.insert(result,"assign in"..coord.."_internal = in"..coord.." >> "..sft..";\n")
+      table.insert(result,"assign inValid"..coord.."_0 = !(in"..coord.." & "..(kernel["scaleD"..i]-1)..");\n")
     end
-    table.insert(result,"wire [12:0] inValid_0;\n")
-    table.insert(result,"assign inValid_0 = inValidX_0 && inValidY_0;\n")
   end
+
+  table.insert(result,"assign inValid_0 = inValidX_0 && inValidY_0;\n")
 
   local mdeclarationsSeen = {}
   local mdeclarations = {}
@@ -603,8 +594,8 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           res = n:cname(c)
         elseif n.kind=="position" then
           assert(retiming[n]==0)
-          local str = "inX"
-          if n.coord=="y" then str="inY" end
+          local str = "inX_internal"
+          if n.coord=="y" then str="inY_internal" end
           table.insert(resDeclarations, declareWire(n.type, n:name(), str))
           res = n:name()
         elseif n.kind=="crop" then
