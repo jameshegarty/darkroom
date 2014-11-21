@@ -170,9 +170,7 @@ fpga.util.writeMetadata("out/"..s..".metadata.lua", metadata)
 
 ------------------
 local opt = fpga.util.deviceToOptions(arg[1])
-opt.stripWidth=WIDTH
-opt.stripHeight=HEIGHT
-local v, metadata = fpga.compile({{frame1,"sim","frame10.bmp"},{frame2,"sim","frame11.bmp"}},{{lkpipeline,"sim"}}, opt.stripWidth, opt.stripHeight, opt)
+local v, metadata = fpga.compile({{frame1,"sim","frame10.raw"},{frame2,"sim","frame11.raw"}},{{lkpipeline,"sim"}}, WIDTH, HEIGHT, opt)
 
 local s = string.sub(arg[0],1,#arg[0]-2)
 io.output("out/"..s..".sim.v")

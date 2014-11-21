@@ -21,7 +21,7 @@ function modules.reduce(compilerState, op, cnt, datatype, argminVars)
                        table.insert(argmindecl,"wire["..(datatype:sizeof()*8-1)..":0] partial_"..partials.." = partial"..vals..";\n")
                        local r = 1
                        while argminVars["varname"..r] do
-                         table.insert(argmindecl,"wire["..(datatype:sizeof()*8-1)..":0] partial_"..partials.."_"..argminVars["varname"..r].." = "..valueToVerilog(mrvValues[argminVars["varname"..r]],datatype)..";\n")
+                         table.insert(argmindecl,"wire[31:0] partial_"..partials.."_"..argminVars["varname"..r].." = "..valueToVerilogLL(mrvValues[argminVars["varname"..r]],true,32)..";\n")
                          r = r + 1
                        end
                        partials = partials+1
@@ -154,7 +154,7 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
     end
   end
 
-  local t = {"module "..name.."(input CLK,\n"..outputs.."input ["..(bytesPerPixel*8-1)..":0] in);\n"}
+  local t = {"module "..name.."(input CLK,\n"..outputs.."input ["..(bytesPerPixel*8-1)..":0] in, input WE);\n"}
 
   local xpixels, lines = delayToXY(maxdelay, stripWidth)
   print("linebuffer lines",lines,"xpixels",xpixels)
@@ -245,8 +245,10 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
         indata = "evicted_"..numToVarname(i+1)
       end
 
+      local DIPA = "1'b0"
+      if bytesPerPixel==4 then DIPA = "4'b0" end -- needs to be correct for the simulator
       table.insert(t, [=[RAMB16_S]=]..(bytesPerPixel*9)..[=[_S]=]..(bytesPerPixel*9)..[=[ #(]=]..configParams..[=[) ram_line]=]..numToVarname(i)..[=[(
-.DIPA(1'b0), // needed for the spartan 6 chips for some reason
+.DIPA(]=]..DIPA..[=[), // needed for the spartan 6 chips for some reason
 .ADDRA(lbWriteAddr]=]..numToVarname(i)..[=[),
 // we write new data into the oldest entry in the buffer, and simultaneously read the old value out
 .DIA(]=]..indata..[=[),
@@ -295,7 +297,9 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
     end
 
     table.insert(t,"always @ (posedge CLK) begin\n")
+    table.insert(t,"if(WE) begin\n")
     t = concat(t,clockedLogic)
+    table.insert(t,"end\n")
     table.insert(t,"end\n")
 
   end
@@ -436,14 +440,16 @@ module sim;
   wire []=]..(outputBytes*8-1)..[=[:0] pipelineOutput;
   reg [12:0] posX = 0;
   reg [12:0] posY = 0;
-  integer realX = ]=]..metadata.minX..[=[;
-  integer realY = ]=]..metadata.minY..[=[;
+  reg inValid = 0;
+  wire outValid;
+  integer realX = ]=]..metadata.padMinX..[=[;
+  integer realY = ]=]..metadata.padMinY..[=[;
   integer addr = -PIPE_DELAY+1-]=]..outputShift..[=[;
   reg [10000:0] inputFilename;
   reg [10000:0] outputFilename; 
   reg [7:0] i = 0;
 
-  Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInput),.out(pipelineOutput));
+  Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInput),.out(pipelineOutput),.inValid(inValid),.outValid(outValid));
 
   initial begin
    $display("HELLO");
@@ -454,9 +460,9 @@ module sim;
    file = $fopen(inputFilename,"r");
    fileout = $fopen(outputFilename,"w");
 
-   while (realY < ]=]..(imageHeight+metadata.maxY)..[=[) begin
-     realX = ]=]..(metadata.minX)..[=[;
-     while (realX < ]=]..(stripWidth+metadata.maxX)..[=[) begin
+   while (realY < ]=]..(imageHeight+metadata.padMaxY)..[=[) begin
+     realX = ]=]..(metadata.padMinX)..[=[;
+     while (realX < ]=]..(stripWidth+metadata.padMaxX)..[=[) begin
        if ( realX>=0 && realX<]=]..stripWidth..[=[ && realY>=0 && realY <]=]..imageHeight..[=[ ) begin
          pipelineInput = $fgetc(file);
        end else begin
@@ -464,13 +470,14 @@ module sim;
        end
        posX = realX;
        posY = realY;
+       inValid = 1;
        CLK = 0;
        #10
        CLK = 1;
        #10
 //     $display(modOutput);
 
-       if(addr>=0) begin 
+       if(addr>=0 && outValid) begin 
          i = 0;
          while( i<]=]..outputBytes..[=[) begin
            $fwrite(fileout, "%c", pipelineOutput[i*8+:8]); 
@@ -487,7 +494,7 @@ module sim;
    // drain pipe
    addr = -PIPE_DELAY+1-]=]..outputShift..[=[;
 
-   while (addr<0) begin
+   while (addr<0 && outValid) begin
      CLK = 0;
      #10
      CLK = 1;
