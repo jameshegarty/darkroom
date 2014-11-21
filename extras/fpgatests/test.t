@@ -33,40 +33,50 @@ function test(inast, inputList)
     io.output("out/"..arg[0]..".perlineest.txt")
     io.write(pl)
     io.close()
-  elseif arg[1]=="build" then
-    for i=1,2 do
-      local s = ""
-      local hwinputs = nil
-      local hwoutputs = nil
-      local opt
-      if i==1 then
-        hwinputs = inputList
-        if hwinputs==nil then hwinputs={{testinput,"uart","frame_128.bmp"}} end
-        hwoutputs = inast
-        if darkroom.ast.isAST(hwoutputs) then
-          hwoutputs = {{inast,"uart"}}
-        end
-        opt = fpga.util.deviceToOptions(arg[3])
-      elseif i==2 then
-        hwinputs = inputList
-        if hwinputs==nil then hwinputs={{testinput,"sim","frame_128.raw"}} end
-        hwoutputs = inast
-        if darkroom.ast.isAST(hwoutputs) then
-          hwoutputs = {{inast,"sim"}}
-        end
+  elseif arg[1]=="build" or arg[1]=="buildaxi" or arg[1]=="buildsim" then
 
-        s = ".sim"
-        opt = fpga.util.deviceToOptions(arg[3])
+    local s = ""
+    local hwinputs = nil
+    local hwoutputs = nil
+    local opt
+    if arg[1]=="build" then
+      hwinputs = inputList
+      if hwinputs==nil then hwinputs={{testinput,"uart","frame_128.bmp"}} end
+      hwoutputs = inast
+      if darkroom.ast.isAST(hwoutputs) then
+        hwoutputs = {{inast,"uart"}}
       end
-
-      local v, metadata = fpga.compile(hwinputs, hwoutputs, 128, 64, opt)
-      s = string.sub(arg[0],1,#arg[0]-4)..s
-      io.output("out/"..s..".v")
-      io.write(v)
-      io.close()
+      opt = fpga.util.deviceToOptions(arg[3])
+    elseif arg[1]=="buildsim" then
+      hwinputs = inputList
+      if hwinputs==nil then hwinputs={{testinput,"sim","frame_128.raw"}} end
+      hwoutputs = inast
+      if darkroom.ast.isAST(hwoutputs) then
+        hwoutputs = {{inast,"sim"}}
+      end
       
-      fpga.util.writeMetadata("out/"..s..".metadata.lua", metadata)
+      s = ".sim"
+      opt = fpga.util.deviceToOptions(arg[3])
+    elseif arg[1]=="buildaxi" then
+      print("BUILDAXI")
+      hwinputs = inputList
+      if hwinputs==nil then hwinputs={{testinput,"axi","frame_128.raw"}} end
+      hwoutputs = inast
+      if darkroom.ast.isAST(hwoutputs) then
+        hwoutputs = {{inast,"axi"}}
+      end
+      
+      s = ".axi"
+      opt = fpga.util.deviceToOptions(arg[3])
     end
+
+    local v, metadata = fpga.compile(hwinputs, hwoutputs, 128, 64, opt)
+    s = string.sub(arg[0],1,#arg[0]-4)..s
+    io.output("out/"..s..".v")
+    io.write(v)
+    io.close()
+    
+    fpga.util.writeMetadata("out/"..s..".metadata.lua", metadata)
   else
     local cpuinast
     if darkroom.ast.isAST(inast) then 

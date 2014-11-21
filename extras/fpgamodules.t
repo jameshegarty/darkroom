@@ -1348,4 +1348,25 @@ endmodule
   return table.concat(res,"")
 end
 
+function modules.axi(inputBytes, outputBytes, stripWidth, metadata)
+  return [=[module PipelineInterface(input CLK,input validIn, output validOut, input []=]..(inputBytes*8-1)..[=[:0] pipelineInput, output []=]..(outputBytes*8-1)..[=[:0] pipelineOutput);
+reg [12:0] posX = ]=]..valueToVerilogLL(metadata.padMinX,true,13)..[=[;
+reg [12:0] posY = ]=]..valueToVerilogLL(metadata.padMinY,true,13)..[=[;
+Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInput),.out(pipelineOutput),.inValid(validIn),.outValid(validOut));
+always @ (posedge CLK) begin
+  if (validIn) begin
+    if (posX == ]=]..(stripWidth+metadata.padMaxX-1)..[=[) begin
+      posX <= 0;
+      posY <= posY + 1;
+    end else begin
+      posX <= posX + 1;
+    end
+  end else begin
+    posX <= ]=]..valueToVerilogLL(metadata.padMinX,true,13)..[=[;
+    posY <= ]=]..valueToVerilogLL(metadata.padMinY,true,13)..[=[;
+  end
+end
+endmodule]=]
+end
+
 return modules

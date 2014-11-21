@@ -282,7 +282,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
     local coord = "X"
     if i==2 then coord="Y" end
     table.insert(result,"wire [12:0] in"..coord.."_internal;\n")
-    table.insert(result,"wire [12:0] inValid"..coord.."_0;\n")
+    table.insert(result,"wire inValid"..coord.."_0;\n")
     
     if kernel["scaleD"..i]==0 or kernel["scaleD"..i]==1 then
       table.insert(result,"assign in"..coord.."_internal = in"..coord..";\n")        
@@ -753,7 +753,7 @@ local function chooseStrip(options, inputs, kernelGraph, imageWidth, imageHeight
   local maxStencil=calcMaxStencil(kernelGraph)
 
   print("CHOOSE STRIP",inputs[1][2])
-  if inputs[1][2]=="sim" then
+  if inputs[1][2]=="sim" or inputs[1][2]=="axi" then
     print("SIM STRIP SIZE",maxStencil:max(2),maxStencil:min(2))
     local padMinX = downToNearest(smallestScaleX,maxStencil:min(1))
     local padMaxX = upToNearest(smallestScaleX,maxStencil:max(1))
@@ -956,6 +956,7 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, options)
 
   local pipeline = {[=[module Pipeline(
 input CLK, input[12:0] inX, input[12:0] inY,
+output [12:0] outX, output [12:0] outY,
 input inValid,
 output outValid,
 input []=]..(totalInputBytes*8-1)..[=[:0] packedinput,
@@ -1123,6 +1124,12 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
     assert(imageWidth+metadata.padMaxX-metadata.padMinX==options.stripWidth)
     assert(imageHeight+metadata.padMaxY-metadata.padMinY==options.stripHeight)
     table.insert(result, fpga.modules.sim(totalInputBytes, outputBytes, imageWidth, imageHeight, shifts[kernelGraph.child1], metadata))
+  elseif outputs[1][2]=="axi" then
+    -- sim framework assumes this is the case
+    print(imageWidth,imageHeight,options.stripWidth, options.stripHeight)
+    assert(imageWidth+metadata.padMaxX-metadata.padMinX==options.stripWidth)
+    assert(imageHeight+metadata.padMaxY-metadata.padMinY==options.stripHeight)
+    table.insert(result, fpga.modules.axi(totalInputBytes, outputBytes, imageWidth, metadata))
   else
     print("unknown data source "..outputs[1][2])
     assert(false)
