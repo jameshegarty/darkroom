@@ -516,19 +516,27 @@ module sim;
    end // while (c != `EOF)
 
    // drain pipe
-   addr = -PIPE_DELAY+1-]=]..outputShift..[=[;
+   addr = -PIPE_DELAY-]=]..outputShift..[=[;
 
-   while (addr<0 && outValid) begin
+   realX = ]=]..(metadata.padMinX)..[=[;
+   while (addr<0) begin
+     pipelineInput = 0;
+     posX = realX;
+     posY = realY;
+     inValid = 1;
      CLK = 0;
      #10
      CLK = 1;
      #10
-     addr = addr + 1;
-     i=0;
-     while( i<]=]..outputBytes..[=[) begin
-       $fwrite(fileout, "%c", pipelineOutput[i*8+:8]);
-       i = i + 1;
+     if (outValid) begin 
+       i=0;
+       while( i<]=]..outputBytes..[=[) begin
+         $fwrite(fileout, "%c", pipelineOutput[i*8+:8]);
+         i = i + 1;
+       end
      end
+     addr = addr + 1;
+     realX = realX + 1;
    end	   
 
    $display("DONE");
