@@ -18,7 +18,7 @@ function schedule(graph, largestScaleY, HWWidth)
           if type(HWWidth)=="number" then
             -- this is an impossible situation - our math won't work anymore if this is the case
             assert(node:maxUse(1,v)<HWWidth)
-            s = node:maxUse(2,v)*HWWidth + node:maxUse(1,v) + shifts[v]
+            s = node:maxUse(2,v)*HWWidth*looprate(v.kernel.scaleN2,v.kernel.scaleD2,1) + node:maxUse(1,v)*looprate(v.kernel.scaleN1,v.kernel.scaleD1,1) + shifts[v]
 
             if s<0 and node:maxUse(1,v)>0 then
               -- HACK: our current linebuffer design assumes that the max

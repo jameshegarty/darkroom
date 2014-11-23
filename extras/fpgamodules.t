@@ -165,7 +165,7 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
     end
 
     table.insert(t,"reg ["..(bytesPerPixel*8-1)..":0] inLastCycle;\n")
-    table.insert(t,"always @ (posedge CLK) begin inLastCycle <= in; end\n")
+    table.insert(t,"always @ (posedge CLK) begin if(validInThisCycle) begin inLastCycle <= in; end end\n")
 --    table.insert(t,[=[initial begin $monitor("LB this %d next %d\n",validInThisCycle, validInNextCycle); end]=].."\n")
   elseif lines==0 then
 
