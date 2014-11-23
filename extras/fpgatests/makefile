@@ -52,7 +52,7 @@ out/%.sim.correct.txt : %.lua out/%.lua.bmp out/%.sim.bmp
 	diff out/$*.lua.bmp out/$*.sim.bmp > out/$*.sim.diff
 	test ! -s out/$*.sim.diff && touch $@
 
-out/%.sim.v : %.lua
+out/%.sim.v : %.lua ../fpga.t ../fpgamodules.t
 	$(TERRA) $< buildsim frame_128.bmp $(DARKROOM_CHIP)
 
 out/%.axi.v : %.lua
