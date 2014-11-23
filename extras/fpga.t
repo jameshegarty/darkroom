@@ -242,11 +242,13 @@ end
 local binopToVerilog={["+"]="+",["*"]="*",["<<"]="<<",[">>"]=">>",["pow"]="**",["=="]="==",["and"]="&",["-"]="-",["<"]="<",[">"]=">",["<="]="<=",[">="]=">="}
 local binopToVerilogBoolean={["=="]="==",["and"]="&&",["~="]="!="}
 
-function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth, imageHeight, kernelGraphRoot, pipelineRetiming)
+function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth, imageHeight, kernelGraphRoot, pipelineRetiming, shift, options)
   assert(type(imageWidth)=="number")
   assert(type(imageHeight)=="number")
   assert(darkroom.kernelGraph.isKernelGraph(kernelGraphRoot))
   assert(type(pipelineRetiming)=="table")
+  assert(type(shift)=="number")
+  assert(type(options)=="table")
 
   local kernel = kernelGraphNode.kernel
 
@@ -278,10 +280,15 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
   table.insert(result,"assign inY_0 = inY;\n")
   table.insert(result,"wire validOutNextCycle_0;\n")
 
+  local shiftX, shiftY = delayToXY(shift, options.stripWidth)
+  local shiftT={shiftX,shiftY}
+
   for i=1,2 do
     local coord = "X"
     if i==2 then coord="Y" end
     table.insert(result,"wire [12:0] in"..coord.."_internal;\n")
+    table.insert(result,"wire [12:0] in"..coord.."_shifted;\n")
+    table.insert(result,"assign in"..coord.."_shifted = in"..coord.." - 13'd"..shiftT[i]..";\n")
     table.insert(result,"wire validOutNextCycle"..coord.."_0;\n")
     
     local rate = looprate(kernel["scaleN"..i],kernel["scaleD"..i],1)
@@ -298,9 +305,9 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
       assert(math.floor(sft)==sft)
       table.insert(result,"assign in"..coord.."_internal = in"..coord.." >> "..sft..";\n")
       if i==1 then
-        table.insert(result,"assign validOutNextCycle"..coord.."_0 = ( in"..coord.."["..(sft-1)..":0] =="..sft.."'d"..(rate-1)..");\n")
+        table.insert(result,"assign validOutNextCycle"..coord.."_0 = ( in"..coord.."_shifted["..(sft-1)..":0] =="..sft.."'d"..(rate-1)..");\n")
       else
-        table.insert(result,"assign validOutNextCycle"..coord.."_0 = ( (in"..coord.."["..(sft-1)..":0] =="..sft.."'d0 & inX!=12'd"..(imageWidth-1)..") | ((inX==12'd"..(imageWidth-1)..") & (inY["..(sft-1)..":0]=="..sft.."'d"..(rate-1)..")));\n")
+        table.insert(result,"assign validOutNextCycle"..coord.."_0 = ( (in"..coord.."_shifted["..(sft-1)..":0] =="..sft.."'d0 & inX_shifted!=12'd"..(imageWidth-1)..") | ((inX_shifted==12'd"..(imageWidth-1)..") & (inY_shifted["..(sft-1)..":0]=="..sft.."'d"..(rate-1)..")));\n")
       end
     end
   end
@@ -1014,7 +1021,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
   local totalDelay = kernelGraph:visitEach(
     function(node, inputArgs)
       if node.kernel~=nil then
-        local verilogKernel = fpga.codegenKernel(compilerState, node, kernelRetiming[node], imageWidth, imageHeight, kernelGraph, pipelineRetiming)
+        local verilogKernel = fpga.codegenKernel(compilerState, node, kernelRetiming[node], imageWidth, imageHeight, kernelGraph, pipelineRetiming, shifts[node],options)
         result = concat(result, verilogKernel)
         
         local inputs = ""
