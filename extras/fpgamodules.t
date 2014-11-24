@@ -210,6 +210,9 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
   else
     local clockedLogic = {}
 
+    table.insert(t,"reg validInLastCycle = 1'b0;\n")
+    table.insert(t,"always @ (posedge CLK) begin validInLastCycle <= validInThisCycle; end\n")
+
     -- we make a bram for each full line. 
     assert(stripWidth*bytesPerPixel < BRAM_SIZE_BYTES)
     assert(bytesPerPixel==1 or bytesPerPixel==2 or bytesPerPixel==4)
@@ -249,12 +252,14 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
 
       local leadingVar = "lb_x1_y"..numToVarname(i)
       if i==0 then leadingVar = "lb_x0_y"..numToVarname(i) end
-      table.insert(t,declareWire(datatype,leadingVar))
+
 
       if i==0 then
+        table.insert(t,declareWire(datatype,leadingVar))
         table.insert(t,"assign "..leadingVar.." = (validInThisCycle)?(in):(lastIn);\n")
       else
-        table.insert(t,"assign "..leadingVar.." = readout_"..numToVarname(i+1)..";\n")
+        table.insert(t,declareReg(datatype,leadingVar))
+        table.insert(clockedLogic,"if (validInLastCycle) begin "..leadingVar.." <= readout_"..numToVarname(i+1).."; end\n")
         indata = "evicted_"..numToVarname(i+1)
       end
 
@@ -283,16 +288,22 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
     end
 
     local leadingVar = "lb_x1_y"..numToVarname(-lines)
-    table.insert(t,declareWire(datatype,leadingVar))
-    table.insert(t,"assign "..leadingVar.." = readout_"..numToVarname(-lines+1)..";\n")
+    table.insert(t,declareReg(datatype,leadingVar))
+    table.insert(clockedLogic,"if (validInLastCycle) begin "..leadingVar.." <= readout_"..numToVarname(-lines+1).."; end\n")
 
     -- stencil shift register
     -- note that this also codegens for the dangles in the last (oldest) row
     for y=-lines,0 do
 
       local x=0
-      if y==0 then x=-1 end
-      local prev = "lb_x"..(x+1).."_y"..numToVarname(y)
+      local prev
+      if y==0 then 
+        x=-1 
+        prev = "lb_x"..(x+1).."_y"..numToVarname(y)
+      else
+        prev = "(validInLastCycle)?(readout_"..numToVarname(y+1).."):(lb_x"..(x+1).."_y"..numToVarname(y)..")"
+      end
+
 
       while x>=-xpixels do
         local n = "lb_x"..numToVarname(x).."_y"..numToVarname(y)
