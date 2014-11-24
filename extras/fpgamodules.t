@@ -138,10 +138,10 @@ function modules.reduce(compilerState, op, cnt, datatype, argminVars)
 end
 
 lbCnt = 0
-function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampledInput, upsampledConsumer)
+function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampledInput, upsampledYConsumer)
   assert(type(maxdelay)=="number")
   assert(type(downsampledInput)=="boolean")
-  assert(type(upsampledConsumer)=="boolean")
+  assert(type(upsampledYConsumer)=="boolean")
 
   assert(darkroom.type.isType(datatype))
   local bytesPerPixel = datatype:sizeof()
@@ -164,13 +164,17 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampl
 
   if downsampledInput then
     table.insert(t,"reg validInThisCycle = 1'b0;\n")
+    table.insert(t,"reg validInThisCycleX = 1'b0;\n")
   else
     table.insert(t,"reg validInThisCycle = 1'b1;\n")
+    table.insert(t,"reg validInThisCycleX = 1'b1;\n")
   end
 
   table.insert(t,"always @ (posedge CLK) begin validInThisCycle <= validInNextCycle; end\n")
+  table.insert(t,"always @ (posedge CLK) begin validInThisCycleX <= validInNextCycleX; end\n")
 
   local xpixels, lines = delayToXY(maxdelay, stripWidth)
+  if upsampledYConsumer then lines = lines + 1 end -- if we're usampling in Y, we have to store at least 1 line, b/c we need to be able to repeat that line
   print("linebuffer lines",lines,"xpixels",xpixels)
 
   if lines==0 and xpixels==0 then
@@ -247,7 +251,7 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampl
     -- After a valid cycle, we advance the address. We do this because it takes 1 cycle for the new address
     -- to load from ram. We basically preload the value that we are going to need,
     -- but we don't latch it into the SSR until we need it in the SSR (validInNextCycle)
-    table.insert(clockedLogic, "if (validInThisCycle) begin if (lbReadAddr == "..(stripWidth-1)..") begin lbReadAddr <= 0; end else begin lbReadAddr <= lbReadAddr + 1; end end\n")
+    table.insert(clockedLogic, "if (validInThisCycleX) begin if (lbReadAddr == "..(stripWidth-1)..") begin lbReadAddr <= 0; end else begin lbReadAddr <= lbReadAddr + 1; end end\n")
 
     table.insert(t,declareReg(datatype,"lastIn"))
 
@@ -338,7 +342,7 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampl
 
     table.insert(t,"always @ (posedge CLK) begin\n")
     t = concat(t,clockedLogic)
-    table.insert(t,"if (validInThisCycle) begin lastIn <= in; end\n")
+    table.insert(t,"if (validInThisCycle) begin lastIn <= in; end else if (validInNextCycleX) begin lastIn <= readout_0; end\n")
     table.insert(t,"end\n")
 
   end
