@@ -257,10 +257,17 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampl
 
     local i=0
     while i>-lines do
-      local startAddr = i
+      local startAddr = 1
+      if downsampledInput==false then
+        -- if we're running full tilt, we need to skew where we write into older line buffers -
+        -- because it takes 1 clock cycle to read from the address, the older LB address needs to
+        -- be skewed by one, and the next one one more, etc
+        startAddr = i
+      end
+
       if startAddr <0 then startAddr = startAddr + stripWidth end
       table.insert(t,"reg ["..(10-extraBits)..":0] lbWriteAddr"..numToVarname(i).." = "..valueToVerilogLL(startAddr,false,(10-extraBits))..";\n")
-      table.insert(clockedLogic, "if (validInNextCycle) begin if (lbWriteAddr"..numToVarname(i).." == "..(stripWidth-1)..") begin lbWriteAddr"..numToVarname(i).." <= 0; end else begin lbWriteAddr"..numToVarname(i).." <= lbWriteAddr"..numToVarname(i).." + 1; end end\n")
+      table.insert(clockedLogic, "if (validInThisCycle) begin if (lbWriteAddr"..numToVarname(i).." == "..(stripWidth-1)..") begin lbWriteAddr"..numToVarname(i).." <= 0; end else begin lbWriteAddr"..numToVarname(i).." <= lbWriteAddr"..numToVarname(i).." + 1; end end\n")
 
       table.insert(t,declareWire(datatype,"evicted_"..numToVarname(i)))
       table.insert(t,declareWire(datatype,"readout_"..numToVarname(i)))
