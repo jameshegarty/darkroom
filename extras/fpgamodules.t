@@ -138,8 +138,11 @@ function modules.reduce(compilerState, op, cnt, datatype, argminVars)
 end
 
 lbCnt = 0
-function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
+function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampledInput, upsampledConsumer)
   assert(type(maxdelay)=="number")
+  assert(type(downsampledInput)=="boolean")
+  assert(type(upsampledConsumer)=="boolean")
+
   assert(darkroom.type.isType(datatype))
   local bytesPerPixel = datatype:sizeof()
   local name = "Linebuffer_"..numToVarname(maxdelay).."delay_"..bytesPerPixel.."bpp_"..stripWidth.."w_"..lbCnt
@@ -154,7 +157,18 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
     end
   end
 
-  local t = {"module "..name.."(input CLK,\n"..outputs.."input ["..(bytesPerPixel*8-1)..":0] in, input validInNextCycle, input validInThisCycle);\n"}
+  local t = {"module "..name.."(input CLK,\n"..outputs.."input ["..(bytesPerPixel*8-1)..":0] in, input validInNextCycleX, input validInNextCycleY);\n"}
+
+  table.insert(t,"wire validInNextCycle;\n")
+  table.insert(t,"assign validInNextCycle = validInNextCycleX & validInNextCycleY;\n")
+
+  if downsampledInput then
+    table.insert(t,"reg validInThisCycle = 1'b0;\n")
+  else
+    table.insert(t,"reg validInThisCycle = 1'b1;\n")
+  end
+
+  table.insert(t,"always @ (posedge CLK) begin validInThisCycle <= validInNextCycle; end\n")
 
   local xpixels, lines = delayToXY(maxdelay, stripWidth)
   print("linebuffer lines",lines,"xpixels",xpixels)
