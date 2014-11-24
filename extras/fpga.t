@@ -306,7 +306,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
       if i==1 then
         table.insert(result,"assign validOutNextCycle"..coord.."_0 = ( in"..coord.."_shifted["..(sft-1)..":0] =="..sft.."'d"..(rate-1)..");\n")
       else
-        table.insert(result,"assign validOutNextCycle"..coord.."_0 = ( (in"..coord.."_shifted["..(sft-1)..":0] =="..sft.."'d0 & inX_shifted!=12'd"..(imageWidth-1)..") | ((inX_shifted==12'd"..(imageWidth-1)..") & (inY_shifted["..(sft-1)..":0]=="..sft.."'d"..(rate-1)..")));\n")
+        table.insert(result,"assign validOutNextCycle"..coord.."_0 = ( (in"..coord.."_shifted["..(sft-1)..":0] =="..sft.."'d0 & inX!=12'd"..(imageWidth-1)..") | ((inX==12'd"..(imageWidth-1)..") & (inY_shifted["..(sft-1)..":0]=="..sft.."'d"..(rate-1)..")));\n")
       end
     end
   end
