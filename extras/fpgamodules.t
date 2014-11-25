@@ -165,13 +165,16 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampl
   if downsampledInput then
     table.insert(t,"reg validInThisCycle = 1'b0;\n")
     table.insert(t,"reg validInThisCycleX = 1'b0;\n")
+    table.insert(t,"reg validInThisCycleY = 1'b0;\n")
   else
     table.insert(t,"reg validInThisCycle = 1'b1;\n")
     table.insert(t,"reg validInThisCycleX = 1'b1;\n")
+    table.insert(t,"reg validInThisCycleY = 1'b1;\n")
   end
 
   table.insert(t,"always @ (posedge CLK) begin validInThisCycle <= validInNextCycle; end\n")
   table.insert(t,"always @ (posedge CLK) begin validInThisCycleX <= validInNextCycleX; end\n")
+  table.insert(t,"always @ (posedge CLK) begin validInThisCycleY <= validInNextCycleY; end\n")
 
   local xpixels, lines = delayToXY(maxdelay, stripWidth)
   if upsampledYConsumer then lines = lines + 1 end -- if we're usampling in Y, we have to store at least 1 line, b/c we need to be able to repeat that line
@@ -232,6 +235,8 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampl
     table.insert(t,"always @ (posedge CLK) begin validInLastCycle <= validInThisCycle; end\n")
     table.insert(t,"reg validInLastCycleX = 1'b0;\n")
     table.insert(t,"always @ (posedge CLK) begin validInLastCycleX <= validInThisCycleX; end\n")
+    table.insert(t,"reg validInLastCycleY = 1'b0;\n")
+    table.insert(t,"always @ (posedge CLK) begin validInLastCycleY <= validInThisCycleY; end\n")
 
     -- we make a bram for each full line. 
     assert(stripWidth*bytesPerPixel < BRAM_SIZE_BYTES)
@@ -286,7 +291,16 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampl
         table.insert(t,"assign "..leadingVar.." = (validInThisCycle)?(in):(lastIn);\n")
       else
         table.insert(t,declareReg(datatype,leadingVar))
-        table.insert(clockedLogic,"if (validInLastCycle) begin "..leadingVar.." <= readout_"..numToVarname(i+1).."; end\n")
+
+        if upsampledYConsumer then
+          -- this is nasty: if we are upsampling, and reading from the linebuffer at the same time the producer is writing (ie power of two lines),
+          -- Then the data we want to read at old lines (y=-1, -2 etc) is still in the prior line buffer, because it hasn't been shifted out.
+          -- So, we read from a line above where you would think you should
+          
+          table.insert(clockedLogic,"if (validInLastCycle) begin "..leadingVar.." <= (validInLastCycleY)?(readout_"..numToVarname(i+1).."):(readout_"..numToVarname(i).."); end\n")
+        else
+          table.insert(clockedLogic,"if (validInLastCycle) begin "..leadingVar.." <= readout_"..numToVarname(i+1).."; end\n")
+        end
         indata = "evicted_"..numToVarname(i+1)
       end
 
@@ -314,13 +328,17 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampl
       i = i - 1
     end
 
-    local leadingVar = "lb_x1_y"..numToVarname(-lines)
-    table.insert(t,declareReg(datatype,leadingVar))
-    table.insert(clockedLogic,"if (validInLastCycle) begin "..leadingVar.." <= readout_"..numToVarname(-lines+1).."; end\n")
+    if upsampledYConsumer==false then
+      local leadingVar = "lb_x1_y"..numToVarname(-lines)
+      table.insert(t,declareReg(datatype,leadingVar))
+      table.insert(clockedLogic,"if (validInLastCycle) begin "..leadingVar.." <= readout_"..numToVarname(-lines+1).."; end\n")
+    end
 
     -- stencil shift register
     -- note that this also codegens for the dangles in the last (oldest) row
-    for y=-lines,0 do
+    local startY = -lines
+    if upsampledYConsumer then startY = startY+1 end
+    for y=startY,0 do
 
       local x=0
       local prev
@@ -328,7 +346,11 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampl
         x=-1 
         prev = "lb_x"..(x+1).."_y"..numToVarname(y)
       else
-        prev = "(validInLastCycleX)?(readout_"..numToVarname(y+1).."):(lb_x"..(x+1).."_y"..numToVarname(y)..")"
+        if upsampledYConsumer then
+          prev = "(validInLastCycleX)?((validInLastCycleY)?(readout_"..numToVarname(y+1).."):(readout_"..numToVarname(y)..")):(lb_x"..(x+1).."_y"..numToVarname(y)..")"
+        else
+          prev = "(validInLastCycleX)?(readout_"..numToVarname(y+1).."):(lb_x"..(x+1).."_y"..numToVarname(y)..")"
+        end
       end
 
 
