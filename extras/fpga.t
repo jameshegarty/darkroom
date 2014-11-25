@@ -306,7 +306,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
       if i==1 then
         table.insert(result,"assign validOutNextCycle"..coord.."_0 = ( in"..coord.."_shifted["..(sft-1)..":0] =="..sft.."'d"..(rate-1)..");\n")
       else
-        table.insert(result,"assign validOutNextCycle"..coord.."_0 = ( (in"..coord.."_shifted["..(sft-1)..":0] =="..sft.."'d0 & inX!=12'd"..(imageWidth-1)..") | ((inX==12'd"..(imageWidth-1)..") & (inY_shifted["..(sft-1)..":0]=="..sft.."'d"..(rate-1)..")));\n")
+        table.insert(result,"assign validOutNextCycle"..coord.."_0 = ( (in"..coord.."_shifted["..(sft-1)..":0] =="..sft.."'d0 & inX!=12'd"..(options.stripWidth-1+options.padMinX)..") | ((inX==12'd"..(options.stripWidth-1+options.padMinX)..") & (inY_shifted["..(sft-1)..":0]=="..sft.."'d"..(rate-1)..")));\n")
       end
     end
   end
@@ -744,7 +744,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
 
 --  table.insert(result,[=[initial begin 
 --$display("]=]..kernelGraphNode:name()..[=[");
---$monitor("]=]..kernelGraphNode:name()..[=[ this %d next %d x %d y %d\n",validOutThisCycle_0,validOutNextCycle_0,inX_0,inY_0); end
+--$monitor("]=]..kernelGraphNode:name()..[=[ nextX %d nextY %d x %d y %d\n",validOutNextCycleX_0,validOutNextCycleY_0,inX_0,inY_0); end
 --]=])
 
   table.insert(result,"endmodule\n\n")
@@ -1015,6 +1015,7 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, options)
 
   local padMinX, padMaxX, padMinY, padMaxY
   options.stripWidth, options.stripHeight, padMinX, padMaxX, padMinY, padMaxY = chooseStrip(options,inputs,kernelGraph,imageWidth,imageHeight, smallestScaleX, smallestScaleY)
+  options.padMinX = padMinX -- used for valid bit calculation
 
   local shifts = schedule(kernelGraph, 1, options.stripWidth)
   kernelGraph, shifts = shift(kernelGraph, shifts, 1, options.stripWidth)
