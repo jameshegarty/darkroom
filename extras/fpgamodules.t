@@ -230,6 +230,8 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampl
 
     table.insert(t,"reg validInLastCycle = 1'b0;\n")
     table.insert(t,"always @ (posedge CLK) begin validInLastCycle <= validInThisCycle; end\n")
+    table.insert(t,"reg validInLastCycleX = 1'b0;\n")
+    table.insert(t,"always @ (posedge CLK) begin validInLastCycleX <= validInThisCycleX; end\n")
 
     -- we make a bram for each full line. 
     assert(stripWidth*bytesPerPixel < BRAM_SIZE_BYTES)
@@ -326,14 +328,14 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampl
         x=-1 
         prev = "lb_x"..(x+1).."_y"..numToVarname(y)
       else
-        prev = "(validInLastCycle)?(readout_"..numToVarname(y+1).."):(lb_x"..(x+1).."_y"..numToVarname(y)..")"
+        prev = "(validInLastCycleX)?(readout_"..numToVarname(y+1).."):(lb_x"..(x+1).."_y"..numToVarname(y)..")"
       end
 
 
       while x>=-xpixels do
         local n = "lb_x"..numToVarname(x).."_y"..numToVarname(y)
         table.insert(t,declareReg(datatype,n))
-        table.insert(clockedLogic, "if (validInNextCycle) begin "..n.." <= "..prev.."; end // SSR\n")
+        table.insert(clockedLogic, "if (validInNextCycleX) begin "..n.." <= "..prev.."; end // SSR\n")
         prev = n
         x = x - 1
       end

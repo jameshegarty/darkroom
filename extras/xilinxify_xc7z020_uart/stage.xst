@@ -1,5 +1,5 @@
 run
--ifn ../../xilinxify_xc7z020/stage.prj
+-ifn ../../xilinxify_xc7z020_uart/stage.prj
 -ofn stage
 -ofmt NGC
 -p xc7z020-1-clg484
