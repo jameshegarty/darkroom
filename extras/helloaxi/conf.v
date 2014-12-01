@@ -31,7 +31,8 @@ module Conf(
     output [31:0] CONFIG_CMD,
     output [31:0] CONFIG_SRC,
     output [31:0] CONFIG_DEST,
-    output [31:0] CONFIG_LEN
+    output [31:0] CONFIG_LEN,
+    output CONFIG_IRQ
     );
 
     //Convert Input signals to AXI lite, to avoid ID matching
@@ -197,6 +198,8 @@ assign CONFIG_SRC = data[1];
 assign CONFIG_DEST = data[2];
 assign CONFIG_LEN = data[3];
 
+
+//how many cycles does the operation take?
 always @(posedge ACLK) begin
     if (ARESETN == 0)
         counter <= 0;
@@ -205,5 +208,21 @@ always @(posedge ACLK) begin
     else if (!CONFIG_READY)
         counter <= counter + 1;
 end
+
+reg busy;
+reg busy_last;
+always @(posedge ACLK) begin
+    if (ARESETN == 0) begin
+        busy <= 0;
+        busy_last <= 0;
+    end else begin
+        if (CONFIG_READY) begin
+            busy <= CONFIG_VALID ? 1 : 0;
+        end
+        busy_last <= busy;
+    end
+end
+
+assign CONFIG_IRQ = !busy;
 
 endmodule

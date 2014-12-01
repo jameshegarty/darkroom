@@ -18,7 +18,7 @@ function schedule(graph, largestScaleY, HWWidth)
           if type(HWWidth)=="number" then
             -- this is an impossible situation - our math won't work anymore if this is the case
             assert(node:maxUse(1,v)<HWWidth)
-            s = node:maxUse(2,v)*HWWidth + node:maxUse(1,v) + shifts[v]
+            s = node:maxUse(2,v)*HWWidth*looprate(v.kernel.scaleN2,v.kernel.scaleD2,1) + node:maxUse(1,v)*looprate(v.kernel.scaleN1,v.kernel.scaleD1,1) + shifts[v]
 
             if s<0 and node:maxUse(1,v)>0 then
               -- HACK: our current linebuffer design assumes that the max
@@ -130,10 +130,18 @@ function shift(graph, shifts, largestScaleY, HWWidth)
                 local r = nn:shallowcopy()
                 
                 if type(HWWidth)=="number" then
+                  local inputKernel = newToOldRemap[nn.from]
                   local s = shifts[newToOldRemap[nn.from]]-shifts[orig]
                   assert(s<=0) -- I don't think we shift things into the future?
                   local sy = -math.floor(-s/HWWidth)
                   local sx = s-sy*HWWidth
+
+                  sy = sy / looprate(inputKernel.kernel.scaleN2,inputKernel.kernel.scaleD2,1)
+                  assert(sy==math.floor(sy)) -- only powers of 2 supported
+
+                  sx = sx / looprate(inputKernel.kernel.scaleN1,inputKernel.kernel.scaleD1,1)
+                  assert(sx==math.floor(sx)) -- only powers of 2 supported
+
                   r.relY = synthRel(r.relY, sy):optimize()
                   r.relX = synthRel(r.relX, sx):optimize()
                   r._relXTAST = darkroom.typedAST._toTypedAST(r.relX) -- used to track dependencies for loop invariant code motion
@@ -154,8 +162,16 @@ function shift(graph, shifts, largestScaleY, HWWidth)
 
               if type(HWWidth)=="number" then
                 local sy = math.floor(shifts[orig]/HWWidth)
+                local sx = shifts[orig]-sy*HWWidth
+
+                sy = sy / looprate(orig.kernel.scaleN2, orig.kernel.scaleD2,1)
+                assert(sy==math.floor(sy)) -- only powers of 2 supported
+
+                sx = sx / looprate(orig.kernel.scaleN1, orig.kernel.scaleD1,1)
+                assert(sx==math.floor(sx)) -- only powers of 2 supported
+
                 r.shiftY = r.shiftY + sy
-                r.shiftX = r.shiftX + (shifts[orig]-sy*HWWidth)
+                r.shiftX = r.shiftX + sx
               else
                 r.shiftY = r.shiftY + math.floor(shifts[orig]/looprate(orig.kernel.scaleN2,orig.kernel.scaleD2,largestScaleY))
               end

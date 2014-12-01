@@ -722,6 +722,14 @@ darkroom.terracompiler.numberUnary={
       assert(false)
     end
   end,
+  ["sqrt"] = function(expr,ast,V)
+    if ast.type:baseType():isFloat() then
+      return darkroom.terracompiler.vectorizeUnaryPointwise(  cmath.sqrt, expr, V )
+    else
+      ast.type:print()
+      assert(false)
+    end
+  end,
   ["ln"] = function(expr,ast,V)
     if ast.type:baseType():isFloat() then
       return darkroom.terracompiler.vectorizeUnaryPointwise(  cmath.log, expr, V )

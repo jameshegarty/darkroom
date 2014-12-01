@@ -1,8 +1,7 @@
 //-----------------------------------------------------------------------------
 // system.v
 //-----------------------------------------------------------------------------
-
-module system
+module stage
   (
     inout [53:0] MIO,
     inout PS_SRSTB,
@@ -25,7 +24,6 @@ module system
     inout [3:0] DDR_DQS_n,
     inout DDR_VRN,
     inout DDR_VRP,
-    input [7:0] SWITCH,
     output reg [7:0] LED
   );
 
@@ -141,40 +139,105 @@ module system
         LED <= {CONFIG_CMD[1:0],CONFIG_SRC[2:0],CONFIG_DEST[2:0]};
   end
 
+  wire [7:0] PipelineInput;
+  wire [7:0] PipelineOutput;
+  reg [11:0] pipelineReadAddr = 12'b0;
+  reg [11:0] pipelineWriteAddr=12'd4095;
+   reg       pipelineStarted = 1'b0;
+   
+  PipelineInterface pipelineInterface(.CLK(FCLK0),.validIn(pipelineStarted),.pipelineInput(PipelineInput),.pipelineOutput(PipelineOutput));
+            
   wire [63:0] DO;
   wire [63:0] DI;
   wire [8:0] RDADDR;
   wire RDEN;
   wire [8:0] WRADDR;
   wire WREN;
+//   wire [7:0] PDO;
   
   BRAM_SDP_MACRO
-  #(.READ_WIDTH(64),.WRITE_WIDTH(64),.BRAM_SIZE("36Kb"), .DEVICE("7SERIES"),.WRITE_MODE("READ_FIRST"),.DO_REG(0))
-  theram(.DO(DO),
+  #(.READ_WIDTH(8),.WRITE_WIDTH(64),.BRAM_SIZE("36Kb"), .DEVICE("7SERIES"),.WRITE_MODE("READ_FIRST"),.DO_REG(0))
+  theramR(.DO(PipelineInput),
          .DI(DI),
-         .RDADDR(RDADDR),
+         .RDADDR(pipelineReadAddr),
          .RDCLK(FCLK0),
-         .RDEN(RDEN),
-         .REGCE(RDEN),
+         .RDEN(1'b1),
+         .REGCE(RDEN), // doesn't matter
          .RST(1'b0),
          .WE(8'b11111111),
          .WRADDR(WRADDR), 
          .WRCLK(FCLK0),
          .WREN(WREN));
+
+//   reg [7:0] pipelineLOL = 8'd128;
+   
+  // ram that services the Writer
+  BRAM_SDP_MACRO
+  #(.READ_WIDTH(64),.WRITE_WIDTH(8),.BRAM_SIZE("36Kb"), .DEVICE("7SERIES"),.WRITE_MODE("READ_FIRST"),.DO_REG(0))
+  theramW(.DO(DO),
+         .DI(PipelineOutput),
+         .RDADDR(RDADDR),
+         .RDCLK(FCLK0),
+         .RDEN(RDEN),
+         .REGCE(RDEN), // doesn't matter
+         .RST(1'b0),
+         .WE(1'b1),
+         .WRADDR(pipelineWriteAddr), 
+         .WRCLK(FCLK0),
+         .WREN(1'b1));
   
   wire READ_BYTES;
   wire WROTE_BYTES;
-  reg [12:0] BYTES_FREE;
+  reg [12:0] BYTES_FREE_READ;
+  reg [12:0] BYTES_FREE_WRITE;
+  reg [31:0] processedPixels = 0;
+   
   always @(posedge FCLK0) begin
-     if (CONFIG_VALID && CONFIG_READY)
-        BYTES_FREE <= 13'd4096;
-     else
-        if (READ_BYTES && WROTE_BYTES)
-            BYTES_FREE <= BYTES_FREE;
-        else if (READ_BYTES) 
-            BYTES_FREE <= BYTES_FREE + 13'd8;
-        else if (WROTE_BYTES)
-            BYTES_FREE <= BYTES_FREE - 13'd8;
+     if (CONFIG_VALID && CONFIG_READY) begin
+        pipelineStarted <= 1'b0;
+        processedPixels <= 0;
+        pipelineReadAddr <= 12'b0;
+        pipelineWriteAddr <= 12'd4095;
+     end else if (pipelineStarted && processedPixels == CONFIG_LEN) begin
+        pipelineStarted <= 1'b0;
+     end else if (BYTES_FREE_READ < 13'd3072 && (!pipelineStarted)) begin
+        pipelineStarted <= 1'b1;
+        processedPixels <= 0;
+        pipelineReadAddr <= 12'b0;
+        pipelineWriteAddr <= 12'd4095;
+     end else if (pipelineStarted) begin
+        processedPixels <= processedPixels + 1;
+        pipelineReadAddr <= pipelineReadAddr + 1;
+        pipelineWriteAddr <= pipelineWriteAddr + 1;
+     end
+  end
+
+  always @(posedge FCLK0) begin
+     if (CONFIG_VALID && CONFIG_READY) begin
+        BYTES_FREE_READ <= 13'd4096;
+     end else begin
+        if (WROTE_BYTES && pipelineStarted) begin
+            BYTES_FREE_READ <= (BYTES_FREE_READ<13'd7)?(13'd0):(BYTES_FREE_READ - 13'd7);
+        end else if (WROTE_BYTES) begin
+            BYTES_FREE_READ <= (BYTES_FREE_READ<13'd8)?(13'd0):(BYTES_FREE_READ - 13'd8);
+        end else if(pipelineStarted) begin
+            BYTES_FREE_READ <= BYTES_FREE_READ + 13'd1;
+        end
+     end
+  end
+
+  always @(posedge FCLK0) begin
+     if (CONFIG_VALID && CONFIG_READY) begin
+        BYTES_FREE_WRITE <= 13'd4096;
+     end else begin
+        if (READ_BYTES && pipelineStarted) begin
+           BYTES_FREE_WRITE <= BYTES_FREE_WRITE + 13'd7;
+        end else if (READ_BYTES) begin
+            BYTES_FREE_WRITE <= BYTES_FREE_WRITE + 13'd8;
+        end else if (pipelineStarted) begin
+            BYTES_FREE_WRITE <= (BYTES_FREE_WRITE==13'd0)?(13'd0):(BYTES_FREE_WRITE - 13'd1);
+        end
+     end
   end
   
   RAMReader reader(
@@ -200,7 +263,7 @@ module system
     .RAM_ADDR(WRADDR),
     .RAM_WE(WREN),
     .RAM_DI(DI),
-    .BYTES_FREE(BYTES_FREE),
+    .BYTES_FREE(BYTES_FREE_READ),
     .WROTE_BYTES(WROTE_BYTES)
   );
   
@@ -232,7 +295,7 @@ module system
     .RAM_ADDR(RDADDR),
     .RAM_RE(RDEN),
     .RAM_DO(DO),
-    .BYTES_FREE(BYTES_FREE),
+    .BYTES_FREE(BYTES_FREE_WRITE),
     .READ_BYTES(READ_BYTES)
   );
 
@@ -707,7 +770,7 @@ module system
     .FTMTF2PDEBUG(32'b0),	// in std_logic_vector(31 downto 0);
     .FTMTF2PTRIG(4'b0),	// in std_logic_vector(3 downto 0);
     .FTMTP2FTRIGACK(4'b0),	// in std_logic_vector(3 downto 0);
-    .IRQF2P({19'b0,CONFIG_IRQ || SWITCH[0]}),	// in std_logic_vector(19 downto 0);
+    .IRQF2P({19'b0,CONFIG_IRQ}),	// in std_logic_vector(19 downto 0);
     .MAXIGP1ACLK(1'b0), 	// in std_ulogic;
     .MAXIGP1ARREADY(1'b0), // in std_ulogic;
     .MAXIGP1AWREADY(1'b0), // in std_ulogic;

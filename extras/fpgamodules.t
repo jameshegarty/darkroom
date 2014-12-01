@@ -138,8 +138,11 @@ function modules.reduce(compilerState, op, cnt, datatype, argminVars)
 end
 
 lbCnt = 0
-function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
+function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampledInput, upsampledYConsumer)
   assert(type(maxdelay)=="number")
+  assert(type(downsampledInput)=="boolean")
+  assert(type(upsampledYConsumer)=="boolean")
+
   assert(darkroom.type.isType(datatype))
   local bytesPerPixel = datatype:sizeof()
   local name = "Linebuffer_"..numToVarname(maxdelay).."delay_"..bytesPerPixel.."bpp_"..stripWidth.."w_"..lbCnt
@@ -154,20 +157,43 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
     end
   end
 
-  local t = {"module "..name.."(input CLK,\n"..outputs.."input ["..(bytesPerPixel*8-1)..":0] in, input WE);\n"}
+  local t = {"module "..name.."(input CLK,\n"..outputs.."input ["..(bytesPerPixel*8-1)..":0] in, input validInNextCycleX, input validInNextCycleY);\n"}
+
+  table.insert(t,"wire validInNextCycle;\n")
+  table.insert(t,"assign validInNextCycle = validInNextCycleX & validInNextCycleY;\n")
+
+  if downsampledInput then
+    table.insert(t,"reg validInThisCycle = 1'b0;\n")
+    table.insert(t,"reg validInThisCycleX = 1'b0;\n")
+    table.insert(t,"reg validInThisCycleY = 1'b0;\n")
+  else
+    table.insert(t,"reg validInThisCycle = 1'b1;\n")
+    table.insert(t,"reg validInThisCycleX = 1'b1;\n")
+    table.insert(t,"reg validInThisCycleY = 1'b1;\n")
+  end
+
+  table.insert(t,"always @ (posedge CLK) begin validInThisCycle <= validInNextCycle; end\n")
+  table.insert(t,"always @ (posedge CLK) begin validInThisCycleX <= validInNextCycleX; end\n")
+  table.insert(t,"always @ (posedge CLK) begin validInThisCycleY <= validInNextCycleY; end\n")
 
   local xpixels, lines = delayToXY(maxdelay, stripWidth)
+  if upsampledYConsumer then lines = lines + 1 end -- if we're usampling in Y, we have to store at least 1 line, b/c we need to be able to repeat that line
   print("linebuffer lines",lines,"xpixels",xpixels)
 
   if lines==0 and xpixels==0 then
     for k,v in ipairs(consumers) do      
-      table.insert(t, "assign out"..k.."_x0_y0 = in;\n")
+      table.insert(t, "assign out"..k.."_x0_y0 = (validInThisCycle)?(in):(inLastCycle);\n")
     end
+
+    table.insert(t,"reg ["..(bytesPerPixel*8-1)..":0] inLastCycle;\n")
+    table.insert(t,"always @ (posedge CLK) begin if(validInThisCycle) begin inLastCycle <= in; end end\n")
+--    table.insert(t,[=[initial begin $monitor("LB this %d next %d\n",validInThisCycle, validInNextCycle); end]=].."\n")
   elseif lines==0 then
 
     -- we're only delaying a few pixels, don't use a bram
     local clockedLogic = {}
-    local prev = "in"
+    local prev = "(validInThisCycle)?(in):(lb_0)"
+    table.insert(t,declareReg(datatype,"lb_0"))
     local i=-1
     while i>=-xpixels do
       local n = "lb_"..numToVarname(i)
@@ -191,16 +217,26 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
         assert(v:min(2)==0 and v:max(2)==0)
         for x=v:min(1),v:max(1) do
           if x==0 then
-            table.insert(t, "assign out"..k.."_x0_y0 = in;\n")
+            table.insert(t, "assign out"..k.."_x0_y0 = (validInThisCycle)?(in):(lb_0);\n")
           end
         end
       end
 
     table.insert(t,"always @ (posedge CLK) begin\n")
+    table.insert(t,"if (validInThisCycle) begin lb_0 <= in; end\n")
+    table.insert(t,"if (validInNextCycle) begin\n")
     t = concat(t,clockedLogic)
+    table.insert(t,"end\n")
     table.insert(t,"end\n")
   else
     local clockedLogic = {}
+
+    table.insert(t,"reg validInLastCycle = 1'b0;\n")
+    table.insert(t,"always @ (posedge CLK) begin validInLastCycle <= validInThisCycle; end\n")
+    table.insert(t,"reg validInLastCycleX = 1'b0;\n")
+    table.insert(t,"always @ (posedge CLK) begin validInLastCycleX <= validInThisCycleX; end\n")
+    table.insert(t,"reg validInLastCycleY = 1'b0;\n")
+    table.insert(t,"always @ (posedge CLK) begin validInLastCycleY <= validInThisCycleY; end\n")
 
     -- we make a bram for each full line. 
     assert(stripWidth*bytesPerPixel < BRAM_SIZE_BYTES)
@@ -218,16 +254,27 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
 
     -- we start these one address ahead of where we want to read this cycle
     -- b/c it takes one cycle to get data out of the ram
-    table.insert(t,"reg ["..(10-extraBits)..":0] lbReadAddr = 1;\n")
-    table.insert(clockedLogic, "if (lbReadAddr == "..(stripWidth-1)..") begin lbReadAddr <= 0; end else begin lbReadAddr <= lbReadAddr + 1; end\n")
+    table.insert(t,"reg ["..(10-extraBits)..":0] lbReadAddr = "..(10-extraBits+1).."'d2;\n")
+    -- After a valid cycle, we advance the address. We do this because it takes 1 cycle for the new address
+    -- to load from ram. We basically preload the value that we are going to need,
+    -- but we don't latch it into the SSR until we need it in the SSR (validInNextCycle)
+    table.insert(clockedLogic, "if (validInThisCycleX) begin if (lbReadAddr == "..(stripWidth-1)..") begin lbReadAddr <= 0; end else begin lbReadAddr <= lbReadAddr + 1; end end\n")
 
+    table.insert(t,declareReg(datatype,"lastIn"))
 
     local i=0
     while i>-lines do
-      local startAddr = i
+      local startAddr = 1
+      if downsampledInput==false then
+        -- if we're running full tilt, we need to skew where we write into older line buffers -
+        -- because it takes 1 clock cycle to read from the address, the older LB address needs to
+        -- be skewed by one, and the next one one more, etc
+        startAddr = i
+      end
+
       if startAddr <0 then startAddr = startAddr + stripWidth end
       table.insert(t,"reg ["..(10-extraBits)..":0] lbWriteAddr"..numToVarname(i).." = "..valueToVerilogLL(startAddr,false,(10-extraBits))..";\n")
-      table.insert(clockedLogic, "if (lbWriteAddr"..numToVarname(i).." == "..(stripWidth-1)..") begin lbWriteAddr"..numToVarname(i).." <= 0; end else begin lbWriteAddr"..numToVarname(i).." <= lbWriteAddr"..numToVarname(i).." + 1; end\n")
+      table.insert(clockedLogic, "if (validInThisCycle) begin if (lbWriteAddr"..numToVarname(i).." == "..(stripWidth-1)..") begin lbWriteAddr"..numToVarname(i).." <= 0; end else begin lbWriteAddr"..numToVarname(i).." <= lbWriteAddr"..numToVarname(i).." + 1; end end\n")
 
       table.insert(t,declareWire(datatype,"evicted_"..numToVarname(i)))
       table.insert(t,declareWire(datatype,"readout_"..numToVarname(i)))
@@ -235,13 +282,25 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
       local indata = "in"
       local configParams = [=[.WRITE_MODE_A("READ_FIRST"),.WRITE_MODE_B("READ_FIRST")]=]
 
-      local leadingVar = "lb_x0_y"..numToVarname(i)
-      table.insert(t,declareWire(datatype,leadingVar))
+      local leadingVar = "lb_x1_y"..numToVarname(i)
+      if i==0 then leadingVar = "lb_x0_y"..numToVarname(i) end
+
 
       if i==0 then
-        table.insert(t,"assign "..leadingVar.." = in;\n")
+        table.insert(t,declareWire(datatype,leadingVar))
+        table.insert(t,"assign "..leadingVar.." = (validInThisCycle)?(in):(lastIn);\n")
       else
-        table.insert(t,"assign "..leadingVar.." = readout_"..numToVarname(i+1)..";\n")
+        table.insert(t,declareReg(datatype,leadingVar))
+
+        if upsampledYConsumer then
+          -- this is nasty: if we are upsampling, and reading from the linebuffer at the same time the producer is writing (ie power of two lines),
+          -- Then the data we want to read at old lines (y=-1, -2 etc) is still in the prior line buffer, because it hasn't been shifted out.
+          -- So, we read from a line above where you would think you should
+          
+          table.insert(clockedLogic,"if (validInLastCycle) begin "..leadingVar.." <= (validInLastCycleY)?(readout_"..numToVarname(i+1).."):(readout_"..numToVarname(i).."); end\n")
+        else
+          table.insert(clockedLogic,"if (validInLastCycle) begin "..leadingVar.." <= readout_"..numToVarname(i+1).."; end\n")
+        end
         indata = "evicted_"..numToVarname(i+1)
       end
 
@@ -253,7 +312,7 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
 // we write new data into the oldest entry in the buffer, and simultaneously read the old value out
 .DIA(]=]..indata..[=[),
 .DOA(evicted_]=]..numToVarname(i)..[=[),
-.WEA(1'b1),
+.WEA(validInThisCycle),
 .ENA(1'b1),
 
 .WEB(1'b0),
@@ -269,20 +328,36 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
       i = i - 1
     end
 
-    local leadingVar = "lb_x0_y"..numToVarname(-lines)
-    table.insert(t,declareWire(datatype,leadingVar))
-    table.insert(t,"assign "..leadingVar.." = readout_"..numToVarname(-lines+1)..";\n")
+    if upsampledYConsumer==false then
+      local leadingVar = "lb_x1_y"..numToVarname(-lines)
+      table.insert(t,declareReg(datatype,leadingVar))
+      table.insert(clockedLogic,"if (validInLastCycle) begin "..leadingVar.." <= readout_"..numToVarname(-lines+1).."; end\n")
+    end
 
     -- stencil shift register
     -- note that this also codegens for the dangles in the last (oldest) row
-    for y=-lines,0 do
-      local prev = "lb_x0_y"..numToVarname(y)
+    local startY = -lines
+    if upsampledYConsumer then startY = startY+1 end
+    for y=startY,0 do
 
-      local x=-1
+      local x=0
+      local prev
+      if y==0 then 
+        x=-1 
+        prev = "lb_x"..(x+1).."_y"..numToVarname(y)
+      else
+        if upsampledYConsumer then
+          prev = "(validInLastCycleX)?((validInLastCycleY)?(readout_"..numToVarname(y+1).."):(readout_"..numToVarname(y)..")):(lb_x"..(x+1).."_y"..numToVarname(y)..")"
+        else
+          prev = "(validInLastCycleX)?(readout_"..numToVarname(y+1).."):(lb_x"..(x+1).."_y"..numToVarname(y)..")"
+        end
+      end
+
+
       while x>=-xpixels do
         local n = "lb_x"..numToVarname(x).."_y"..numToVarname(y)
         table.insert(t,declareReg(datatype,n))
-        table.insert(clockedLogic, n.." <= "..prev.."; // SSR\n")
+        table.insert(clockedLogic, "if (validInNextCycleX) begin "..n.." <= "..prev.."; end // SSR\n")
         prev = n
         x = x - 1
       end
@@ -297,9 +372,8 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers)
     end
 
     table.insert(t,"always @ (posedge CLK) begin\n")
-    table.insert(t,"if(WE) begin\n")
     t = concat(t,clockedLogic)
-    table.insert(t,"end\n")
+    table.insert(t,"if (validInThisCycle) begin lastIn <= in; end else if (validInNextCycleX) begin lastIn <= readout_0; end\n")
     table.insert(t,"end\n")
 
   end
@@ -442,8 +516,8 @@ module sim;
   reg [12:0] posY = 0;
   reg inValid = 0;
   wire outValid;
-  integer realX = ]=]..metadata.padMinX..[=[;
-  integer realY = ]=]..metadata.padMinY..[=[;
+  integer realX = ]=]..(stripWidth+metadata.padMaxX-1)..[=[;
+  integer realY = ]=]..(metadata.padMinY-1)..[=[;
   integer addr = -PIPE_DELAY+1-]=]..outputShift..[=[;
   reg [10000:0] inputFilename;
   reg [10000:0] outputFilename; 
@@ -460,6 +534,16 @@ module sim;
    file = $fopen(inputFilename,"r");
    fileout = $fopen(outputFilename,"w");
 
+   // prime the pipe
+   posX = realX;
+   posY = realY;
+   inValid = 0;
+   CLK = 0;
+   #10
+   CLK = 1;
+   #10
+
+   realY = ]=]..(metadata.padMinY)..[=[;
    while (realY < ]=]..(imageHeight+metadata.padMaxY)..[=[) begin
      realX = ]=]..(metadata.padMinX)..[=[;
      while (realX < ]=]..(stripWidth+metadata.padMaxX)..[=[) begin
@@ -492,19 +576,27 @@ module sim;
    end // while (c != `EOF)
 
    // drain pipe
-   addr = -PIPE_DELAY+1-]=]..outputShift..[=[;
+   addr = -PIPE_DELAY-]=]..outputShift..[=[;
 
-   while (addr<0 && outValid) begin
+   realX = ]=]..(metadata.padMinX)..[=[;
+   while (addr<0) begin
+     pipelineInput = 0;
+     posX = realX;
+     posY = realY;
+     inValid = 1;
      CLK = 0;
      #10
      CLK = 1;
      #10
-     addr = addr + 1;
-     i=0;
-     while( i<]=]..outputBytes..[=[) begin
-       $fwrite(fileout, "%c", pipelineOutput[i*8+:8]);
-       i = i + 1;
+     if (outValid) begin 
+       i=0;
+       while( i<]=]..outputBytes..[=[) begin
+         $fwrite(fileout, "%c", pipelineOutput[i*8+:8]);
+         i = i + 1;
+       end
      end
+     addr = addr + 1;
+     realX = realX + 1;
    end	   
 
    $display("DONE");
@@ -1346,6 +1438,27 @@ endmodule
 ]=])
 
   return table.concat(res,"")
+end
+
+function modules.axi(inputBytes, outputBytes, stripWidth, metadata)
+  return [=[module PipelineInterface(input CLK,input validIn, output validOut, input []=]..(inputBytes*8-1)..[=[:0] pipelineInput, output []=]..(outputBytes*8-1)..[=[:0] pipelineOutput);
+reg [12:0] posX = ]=]..valueToVerilogLL(metadata.padMinX,true,13)..[=[;
+reg [12:0] posY = ]=]..valueToVerilogLL(metadata.padMinY,true,13)..[=[;
+Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInput),.out(pipelineOutput),.inValid(validIn),.outValid(validOut));
+always @ (posedge CLK) begin
+  if (validIn) begin
+    if (posX == ]=]..(stripWidth+metadata.padMaxX-1)..[=[) begin
+      posX <= 0;
+      posY <= posY + 1;
+    end else begin
+      posX <= posX + 1;
+    end
+  end else begin
+    posX <= ]=]..valueToVerilogLL(metadata.padMinX,true,13)..[=[;
+    posY <= ]=]..valueToVerilogLL(metadata.padMinY,true,13)..[=[;
+  end
+end
+endmodule]=]
 end
 
 return modules

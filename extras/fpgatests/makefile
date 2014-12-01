@@ -3,8 +3,17 @@ SRCS := $(filter-out test.t cover.t, $(ISRCS))
 RES = $(patsubst %.lua,out/%.v,$(SRCS))
 LUA = $(patsubst %.lua,out/%.lua.bmp,$(SRCS))
 RES += $(LUA)
+
 SIM = $(patsubst %.lua,out/%.sim.bmp,$(SRCS))
 SIM += $(patsubst %.lua,out/%.sim.correct.txt,$(SRCS))
+SIM += $(patsubst %.lua,out/%.sim.v,$(SRCS))
+
+AXI = $(patsubst %.lua,out/%.axi.bmp,$(SRCS))
+AXI += $(patsubst %.lua,out/%.axi.correct.txt,$(SRCS))
+AXI += $(patsubst %.lua,out/%.axi.bit,$(SRCS))
+AXI += $(patsubst %.lua,out/%.axi.v,$(SRCS))
+RES += $(AXI)
+
 RES += $(patsubst %.lua,out/%.bit,$(SRCS))
 IMAGES = $(patsubst %.lua,out/%.fpga.bmp,$(SRCS))
 RES += $(IMAGES)
@@ -43,8 +52,11 @@ out/%.sim.correct.txt : %.lua out/%.lua.bmp out/%.sim.bmp
 	diff out/$*.lua.bmp out/$*.sim.bmp > out/$*.sim.diff
 	test ! -s out/$*.sim.diff && touch $@
 
-out/%.sim.v out/%.v : %.lua
-	$(TERRA) $< build frame_128.bmp $(DARKROOM_CHIP)
+out/%.sim.v : %.lua ../fpga.t ../fpgamodules.t
+	$(TERRA) $< buildsim frame_128.bmp $(DARKROOM_CHIP)
+
+out/%.axi.v : %.lua
+	$(TERRA) $< buildaxi frame_128.bmp $(DARKROOM_CHIP)
 
 out/%.lua.bmp : %.lua
 	$(TERRA) $< cpu frame_128.bmp
@@ -52,12 +64,27 @@ out/%.lua.bmp : %.lua
 out/%.sim.bmp : out/%.sim.v
 	bash ../sim.sh $*
 
+out/%.axi.bmp : out/%.axi.bit
+	bash -x ../axi.sh $*
+
 out/%.fpga.bmp : %.lua out/%.lua.bmp out/%.bit
 	bash ../$(DARKROOM_CHIP).test.sh $*
 
 out/%.correct.txt : %.lua out/%.lua.bmp out/%.fpga.bmp
 	diff out/$*.lua.bmp out/$*.fpga.bmp > out/$*.lua.diff
 	test ! -s out/$*.lua.diff && touch $@
+
+out/%.axi.bit : out/%.axi.v
+	mkdir -p build_$*_axi
+	cp $< build_$*_axi/pipeline.v
+	bash ../$(DARKROOM_CHIP)_axi.sh $*
+	export LD_LIBRARY_PATH=
+	cp build_$*_axi/OUT_xst.txt out/$*.xst.txt
+	cp build_$*_axi/OUT_map.txt out/$*.map.txt
+	cp build_$*_axi/OUT_par.txt out/$*.par.txt
+	cp build_$*_axi/OUT_ngd.txt out/$*.ngd.txt
+	cp build_$*_axi/OUT_bitgen.txt out/$*.bitgen.txt
+	cp build_$*_axi/stage.bit $@
 
 out/%.bit : out/%.v
 	mkdir -p build_$*
@@ -70,3 +97,4 @@ out/%.bit : out/%.v
 	cp build_$*/OUT_ngd.txt out/$*.ngd.txt
 	cp build_$*/OUT_bitgen.txt out/$*.bitgen.txt
 	cp build_$*/stage.bit $@
+

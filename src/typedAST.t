@@ -436,7 +436,7 @@ function darkroom.typedAST._toTypedAST(inast)
             darkroom.error("not only works on bools",origast:linenumber(), origast:offset())
             assert(false)
           end
-        elseif ast.op=="sin" or ast.op=="cos" or ast.op=="exp" or ast.op=="arctan" or ast.op=="ln" then
+        elseif ast.op=="sin" or ast.op=="cos" or ast.op=="exp" or ast.op=="arctan" or ast.op=="ln" or ast.op=="sqrt" then
           if ast.expr.type==darkroom.type.float(32) then
             ast.type = darkroom.type.float(32)
           elseif ast.expr.type==darkroom.type.float(64) then

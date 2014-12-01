@@ -1,0 +1,6 @@
+verilog work "../../helloaxi/ict106_axilite_conv.v"
+verilog work "../../helloaxi/conf.v"
+verilog work "../../helloaxi/ramreader.v"
+verilog work "../../helloaxi/ramwriter.v"
+verilog work "pipeline.v"
+verilog work "../../helloaxi/stage.v"
