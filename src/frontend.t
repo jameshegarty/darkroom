@@ -103,6 +103,11 @@ function darkroom.ln( thisast, expr)
   return darkroom.ast.new({kind="unary",op="ln",expr=expr}):copyMetadataFrom(thisast)
 end
 
+function darkroom.sqrt( thisast, expr)
+  assert(darkroom.ast.isAST(expr))
+  return darkroom.ast.new({kind="unary",op="sqrt",expr=expr}):copyMetadataFrom(thisast)
+end
+
 function darkroom.exp( thisast, expr)
   assert(darkroom.ast.isAST(expr))
   return darkroom.ast.new({kind="unary",op="exp",expr=expr}):copyMetadataFrom(thisast)
