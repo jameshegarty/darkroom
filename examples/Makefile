@@ -1,4 +1,5 @@
-SRCS = $(wildcard *.t)
+ISRCS = $(wildcard *.t)
+SRCS := $(filter-out clibrary.t, $(ISRCS))
 RES = $(patsubst %.t,out/%.bmp,$(SRCS))
 RES += out/clibrary.o
 RES += out/clibrary

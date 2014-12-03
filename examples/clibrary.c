@@ -43,4 +43,6 @@ int main(int argc, char** argv){
   tapStruct.tap=100;
   pipeline2(input,output2,&tapStruct);
   writePPM(argv[3],128,64,output2);
+
+  return 0;
 }
