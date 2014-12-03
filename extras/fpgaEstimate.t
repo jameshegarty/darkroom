@@ -133,7 +133,7 @@ function binopToCost(op,type, lhsType, rhsType)
   local t={}
 --  t["binop"..op] = 1
   if op==">>" or op=="<<" then
-  elseif op=="+" or op=="sum" or op=="-" or op==">" or op=="<" or op=="<=" or op==">=" then
+  elseif op=="+" or op=="sum" or op=="-" or op==">" or op=="<" or op=="<=" or op==">=" or op=="floorDivide" then
     t.luts = type:sizeof()*8
   elseif op=="max" or op=="min" then
     t.luts = type:sizeof()*(8+(8/2))
