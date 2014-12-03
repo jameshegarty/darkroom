@@ -66,12 +66,25 @@ function typedASTFunctions:calculateBB(root)
   if darkroom.typedAST._calculateBBCache[root][self]==nil then
     darkroom.typedAST._calculateBBCache[root][self]=setmetatable({}, {__mode=CTABMODE})
 
-    if self.kind=="mapreducevar" or self.kind=="lifted" then
+    if self.kind=="mapreducevar" then
       local MR = root:lookup(self.mapreduceNode)
+
       local dep = MR.expr:bbDependencies(root)
       assert(keycount(dep)==1)
       for k,v in pairs(dep) do
         darkroom.typedAST._calculateBBCache[root][self][k] = 1
+      end
+    elseif self.kind=="lifted" then
+      local mrcnt = 1
+      while self["mapreduceNode"..mrcnt]~=nil do
+        local MR = root:lookup(self["mapreduceNode"..mrcnt])
+        
+        local dep = MR.expr:bbDependencies(root)
+        assert(keycount(dep)==1)
+        for k,v in pairs(dep) do
+          darkroom.typedAST._calculateBBCache[root][self][k] = 1
+        end
+        mrcnt = mrcnt + 1
       end
     elseif self.kind=="mapreduce" then
       -- mapreduce itself should belong to a bb one level above
