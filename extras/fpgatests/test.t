@@ -33,23 +33,30 @@ function test(inast, inputList)
     io.output("out/"..arg[0]..".perlineest.txt")
     io.write(pl)
     io.close()
-  elseif arg[1]=="build" or arg[1]=="buildaxi" or arg[1]=="buildsim" then
+  elseif arg[1]=="builduart" or arg[1]=="buildaxi" or arg[1]=="buildsim" then
 
     local s = ""
     local hwinputs = nil
     local hwoutputs = nil
     local opt
-    if arg[1]=="build" then
+    if arg[1]=="builduart" then
       hwinputs = inputList
       if hwinputs==nil then hwinputs={{testinput,"uart","frame_128.bmp"}} end
       hwoutputs = inast
       if darkroom.ast.isAST(hwoutputs) then
         hwoutputs = {{inast,"uart"}}
       end
+      s = ".uart"
       opt = fpga.util.deviceToOptions(arg[3])
     elseif arg[1]=="buildsim" then
       hwinputs = inputList
-      if hwinputs==nil then hwinputs={{testinput,"sim","frame_128.raw"}} end
+      if hwinputs==nil then 
+         hwinputs={{testinput,"sim","frame_128.raw"}} 
+      else
+         for k,v in pairs(inputList) do
+            hwinputs[k] = {v[1],"sim",v[2]..".raw"}
+         end
+      end
       hwoutputs = inast
       if darkroom.ast.isAST(hwoutputs) then
         hwoutputs = {{inast,"sim"}}

@@ -347,13 +347,22 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
   local function recordInterface(n,inputs)
     local nbb = n:calculateMinBB(kernel)
     for k,v in n:inputs() do
-      local obb = v:calculateMinBB(kernel)
-      if nbb~=obb then
-        interface[nbb] = interface[nbb] or {}
-        interface[nbb][obb] = interface[nbb][obb] or {}
+      local outer = v:calculateMinBB(kernel)
+      local inner = nbb
+      -- we need to thread this up through all the enclosing scopes
+      -- we only care about threading stuff from outer scopes into inner scopes, not the other way around
+      while inner~=outer and inner.level > outer.level do
+        interface[inner] = interface[inner] or {}
+        interface[inner][outer] = interface[inner][outer] or {}
         for c,vv in pairs(inputs[k]) do
-          table.insert(interface[nbb][obb], {vv,v.type:baseType()})
+          table.insert(interface[inner][outer], {vv,v.type:baseType()})
         end
+        print(inner.level, outer.level, #inner.parents)
+        assert(keycount(inner.parents)>0)
+        -- just choose arbitrarily
+        local p
+        for k,v in pairs(inner.parents) do p=k end
+        inner = p
       end
     end
   end
@@ -365,7 +374,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
       for _,variable in pairs(obb) do
         if seen[variable[1]]==nil then
           if formal then
-            table.insert(t,"input ["..(variable[2]:sizeof()*8-1)..":0] "..variable[1]..",")
+            table.insert(t,"input ["..(variable[2]:sizeof()*8-1)..":0] "..variable[1]..", // from parent scope\n")
           else
             table.insert(t,",."..variable[1].."("..variable[1]..")")
           end
@@ -424,7 +433,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
       -- insert pipeline delays
       local retimeSeen = {} -- it's possible for a node to use another node multiple times.  Don't double add its retiming delays.
       for k,v in n:inputs() do
-        if v:codegened(kernel) then -- only retime nodes we actually use
+        if v:codegened(kernel) and (n.kind=="mapreduce" and k:sub(0,6)=="lifted")==false then -- only retime nodes we actually use
           local delays = retiming[n] - retiming[v] - n:internalDelay()
           assert(delays>=0)
           
@@ -529,7 +538,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         local finalOut = {}
 
         if n.reduceop=="argmin" then
-          for c=1,n.type:channels() do adddecl(bb, {declareWire(rtype, n:cname(c))}) end
+          for c=1,n.type:channels() do adddecl(bb, {declareWire(n.type:baseType(), n:cname(c))}) end
           adddecl(bb,{rname.." reduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(n.type:channels())..")"})
           for c=1,n.type:channels()-1 do adddecl(bb, {",.out_"..n["varname"..c].."("..n:cname(c)..")"}) end
           adddecl(bb,{argminPartials..");\n"})
@@ -543,7 +552,6 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
             table.insert(finalOut, n:cname(c))
           end
         end
-
         return {finalOut}
       end
 
@@ -863,7 +871,10 @@ local function liftMapreduce(kernelGraph, shifts)
                 liftedCnt = liftedCnt + 1
                 liftedList["lifted"..liftedCnt] = n
                 newMR["typeLifted"..liftedCnt] = n.type
-                return darkroom.typedAST.new({kind="lifted",mapreduceNode=mapreduceNode.__key,id=liftedCnt,type=n.type}):copyMetadataFrom(n)
+                local nn = {kind="lifted",id=liftedCnt,type=n.type}
+                local mrnCnt = 1
+                n:S("mapreducevar"):process(function(mrv) nn["mapreduceNode"..mrnCnt]=mrv.mapreduceNode; mrnCnt = mrnCnt+1 end)
+                return darkroom.typedAST.new(nn):copyMetadataFrom(n)
               end)
             newMR["countLifted"] = liftedCnt
             
@@ -1143,6 +1154,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
 
   for k,v in ipairs(inputs) do
     metadata["inputFile"..k] = v[3]
+    metadata["inputBytes"..k] = inputs[k][1].expr.type:sizeof()
   end
 
   table.insert(pipeline, "assign out = kernelOut_"..kernelGraph.child1:name()..";\n")
@@ -1161,6 +1173,10 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
   elseif outputs[1][2]=="uart" then
     table.insert(result, fpga.modules.stageUART(options, totalInputBytes, outputBytes, options.stripWidth, options.stripHeight))
   elseif outputs[1][2]=="sim" then
+    for k,v in ipairs(inputs) do
+      if v[3]:find(".raw")==nil then darkroom.error("sim only supports raw files") end
+    end
+
     -- sim framework assumes this is the case
     print(imageWidth,imageHeight,options.stripWidth, options.stripHeight)
     assert(imageWidth+metadata.padMaxX-metadata.padMinX==options.stripWidth)
