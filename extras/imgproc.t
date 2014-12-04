@@ -196,6 +196,7 @@ function imgproc.remap(input, xRange, yRange, X, Y, interpMode, oobMode, ...)
 end
 
 --TODO: Rename this to "warpBilinear"
+--TODO: Use safeGather
 function imgproc.resampleBilinear( clamp, input, maxX, maxY, offsetX, offsetY )
   if maxX==nil then darkroom.error("maxX is nil") end
   if maxY==nil then darkroom.error("maxY is nil") end
@@ -235,6 +236,41 @@ function imgproc.resampleBilinear( clamp, input, maxX, maxY, offsetX, offsetY )
   return out
 end
 
+-- atan2 - Standard 2-input arc tangent
+--
+-- Inputs:
+--  X - an image of x-coordiantes (abscissa)
+--  Y - an image of y-coordinates (ordinate)
+--
+-- Outputs:
+--  Returns an image of the corresponding quadrant-corrected arc tangents
+function imgproc.atan2(X, Y)
+
+    return im(x, y)
+
+	-- Constants
+	pi = [float] (math.pi)
+
+	-- Get the vector and arc tangent 
+	xf = [float] (X(x, y))
+	yf = [float] (Y(x, y))
+	angle = [float] (darkroom.arctan(yf, xf))
+    
+	-- Correct for quadrants
+	-- Q1, Q4
+	in if xf > 0 then angle
+	-- Q2
+	else (if xf < 0 and yf >= 0 then angle + pi 
+	-- Q3
+	else (if xf < 0 and yf < 0 then angle - pi 
+	-- Special cases
+	else (if xf == 0 and yf > 0 then pi / 2 
+	else (if xf == 0 and yf < 0 then -(pi / 2) 
+	else [float] (0) end) end) end) end)
+	end
+    end
+end
+
 -- cart2polar - convert cartesian coordinates (x, y) to polar
 --
 -- Inputs:
@@ -246,18 +282,19 @@ end
 --  angle - an image of angles from the x-axis corresponding to the (x, y) vectors
 function imgproc.cart2polar(X, Y)
 
-	-- TODO: xy = merge(X,Y) end mag = norm(xy, "L2") end
-	local mag = im(x, y) 
-		[float] (darkroom.sqrt(dx(x, y) * dx(x, y) + dy(x, y) * dy(x, y)))
-	end
+    -- TODO: xy = merge(X,Y) end mag = norm(xy, "L2") end
+    local mag = im(x, y) 
+	xf = [float] (X(x, y))
+	yf = [float] (Y(x, y))
+    	in [float] (darkroom.sqrt(xf * xf + yf * yf))
+    end
 
-	-- TODO: atan2
-	local angle = im(x, y)
-		[float] (darkroom.arctan([float] (dy(x + i, y + j)) / 
-					 [float] (dx(x + i, y + j))))
-	end
+    -- TODO: atan2
+    local angle = im(x, y)
+    	[float] ([imgproc.atan2(Y, X)])
+    end
 
-	return mag, angle
+    return mag, angle
 end
 
 -- gradient - get the x and y derivatives of an image
