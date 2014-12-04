@@ -506,9 +506,9 @@ function modules.sim(inputBytes, outputBytes, stripWidth, imageHeight, outputShi
   assert(type(outputBytes)=="number")
   assert(type(stripWidth)=="number")
 
-  return [=[`define EOF 32'hFFFF_FFFF
+  local res = [=[`define EOF 32'hFFFF_FFFF
 module sim;
-  integer file, c, r,fileout;
+  integer c, r,fileout;
   reg     CLK;
   reg []=]..(inputBytes*8-1)..[=[:0] pipelineInput;
   wire []=]..(outputBytes*8-1)..[=[:0] pipelineOutput;
@@ -518,20 +518,34 @@ module sim;
   wire outValid;
   integer realX = ]=]..(stripWidth+metadata.padMaxX-1)..[=[;
   integer realY = ]=]..(metadata.padMinY-1)..[=[;
-  integer addr = -PIPE_DELAY+1-]=]..outputShift..[=[;
-  reg [10000:0] inputFilename;
-  reg [10000:0] outputFilename; 
+  integer addr = -PIPE_DELAY+1-]=]..outputShift..[=[;]=]
+
+  local i=1
+  while metadata["inputFile"..i] do
+    res = res.."reg [10000:0] inputFilename"..i..";\n"
+    res = res.."integer file"..i..";\n"
+    i = i + 1
+  end
+
+res = res..[=[  reg [10000:0] outputFilename; 
   reg [7:0] i = 0;
 
   Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInput),.out(pipelineOutput),.inValid(inValid),.outValid(outValid));
 
   initial begin
-   $display("HELLO");
+   $display("HELLO");]=]
 
-   $value$plusargs("inputFilename=%s",inputFilename);
+   local i=1
+   while metadata["inputFile"..i] do
+     res = res .. [=[$value$plusargs("inputFilename]=]..i..[=[=%s",inputFilename]=]..i..[=[);
+     ]=]
+     res = res .. [=[file]=]..i..[=[ = $fopen(inputFilename]=]..i..[=[,"r");
+     ]=]
+     i = i + 1
+   end
+res = res..[=[
    $value$plusargs("outputFilename=%s",outputFilename);
 
-   file = $fopen(inputFilename,"r");
    fileout = $fopen(outputFilename,"w");
 
    // prime the pipe
@@ -548,8 +562,19 @@ module sim;
      realX = ]=]..(metadata.padMinX)..[=[;
      while (realX < ]=]..(stripWidth+metadata.padMaxX)..[=[) begin
        if ( realX>=0 && realX<]=]..stripWidth..[=[ && realY>=0 && realY <]=]..imageHeight..[=[ ) begin
-         pipelineInput = $fgetc(file);
-       end else begin
+]=]
+
+local i=1
+local bpos = 0
+while metadata["inputFile"..i] do
+  for ch=0,metadata["inputBytes"..i]-1 do
+    res = res.."pipelineInput["..(bpos*8+7)..":"..(bpos*8).."] = $fgetc(file"..i..");\n"
+    bpos = bpos + 1
+  end
+  i=i+1
+end
+         
+res = res..[=[       end else begin
          pipelineInput = 0;
        end
        posX = realX;
@@ -604,6 +629,8 @@ module sim;
   end // initial begin
 
 endmodule // sim        ]=]
+
+return res
 end
 
 function modules.tx(clockMhz, uartClock)

@@ -433,7 +433,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
       -- insert pipeline delays
       local retimeSeen = {} -- it's possible for a node to use another node multiple times.  Don't double add its retiming delays.
       for k,v in n:inputs() do
-        if v:codegened(kernel) then -- only retime nodes we actually use
+        if v:codegened(kernel) and (n.kind=="mapreduce" and k:sub(0,6)=="lifted")==false then -- only retime nodes we actually use
           local delays = retiming[n] - retiming[v] - n:internalDelay()
           assert(delays>=0)
           
@@ -538,7 +538,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         local finalOut = {}
 
         if n.reduceop=="argmin" then
-          for c=1,n.type:channels() do adddecl(bb, {declareWire(rtype, n:cname(c))}) end
+          for c=1,n.type:channels() do adddecl(bb, {declareWire(n.type:baseType(), n:cname(c))}) end
           adddecl(bb,{rname.." reduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(n.type:channels())..")"})
           for c=1,n.type:channels()-1 do adddecl(bb, {",.out_"..n["varname"..c].."("..n:cname(c)..")"}) end
           adddecl(bb,{argminPartials..");\n"})
@@ -1154,6 +1154,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
 
   for k,v in ipairs(inputs) do
     metadata["inputFile"..k] = v[3]
+    metadata["inputBytes"..k] = inputs[k][1].expr.type:sizeof()
   end
 
   table.insert(pipeline, "assign out = kernelOut_"..kernelGraph.child1:name()..";\n")
@@ -1172,6 +1173,10 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
   elseif outputs[1][2]=="uart" then
     table.insert(result, fpga.modules.stageUART(options, totalInputBytes, outputBytes, options.stripWidth, options.stripHeight))
   elseif outputs[1][2]=="sim" then
+    for k,v in ipairs(inputs) do
+      if v[3]:find(".raw")==nil then darkroom.error("sim only supports raw files") end
+    end
+
     -- sim framework assumes this is the case
     print(imageWidth,imageHeight,options.stripWidth, options.stripHeight)
     assert(imageWidth+metadata.padMaxX-metadata.padMinX==options.stripWidth)

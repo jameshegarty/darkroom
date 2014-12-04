@@ -1,5 +1,6 @@
 SRCS = $(wildcard *.t)
 RES = $(patsubst %.t,out/%.v,$(SRCS))
+RES += $(patsubst %.t,out/%.sim.v,$(SRCS))
 RES += $(patsubst %.t,out/%.bit,$(SRCS))
 RES += $(patsubst %.t,out/%.fpga.bmp,$(SRCS))
 

@@ -9,8 +9,8 @@ cd out;
 echo $PATH
 echo $LD_LIBRARY_PATH
 export LD_LIBRARY_PATH=
-INPUT_FILE=$(terra ../../extractMetadata.t $1.sim.metadata.lua inputFile1)
-echo $INPUT_FILE
-./$1.exe -testplusarg inputFilename=../$INPUT_FILE -testplusarg outputFilename=$1.sim.raw -tclbatch ../../isim.cmd
+INPUT_FILES=$(terra ../../extractMetadata.t $1.sim.metadata.lua INPUT_FILES)
+echo $INPUT_FILES
+./$1.exe $INPUT_FILES -testplusarg outputFilename=$1.sim.raw -tclbatch ../../isim.cmd
 export LD_LIBRARY_PATH=
 terra ../../raw2bmp.t $*.sim.raw $*.sim.bmp $1.sim.metadata.lua
