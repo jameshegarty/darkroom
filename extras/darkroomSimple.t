@@ -128,11 +128,11 @@ orionSimple._usedTapNames={}
 
 function orionSimple.tap( ty, value )
   if terralib.types.istype(ty)==false then
-    darkroom.error("First argument to orionSimple.tap must be a type")
+    darkroom.error("First argument to darkroomSimple.tap must be a type")
   end
 
   if type(value)~="number" and type(value)~="table" then
-    darkroom.error("Second argument to orionSimple.tap must be a value")
+    darkroom.error("Second argument to darkroomSimple.tap must be a value")
   end
 
   local r = darkroom.tap( ty )
