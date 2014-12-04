@@ -1187,7 +1187,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
     print(imageWidth,imageHeight,options.stripWidth, options.stripHeight)
     assert(imageWidth+metadata.padMaxX-metadata.padMinX==options.stripWidth)
     assert(imageHeight+metadata.padMaxY-metadata.padMinY==options.stripHeight)
-    table.insert(result, fpga.modules.axi(totalInputBytes, outputBytes, imageWidth, metadata))
+    table.insert(result, fpga.modules.axi(totalInputBytes, outputBytes, imageWidth, shifts[kernelGraph.child1], metadata))
   else
     print("unknown data source "..outputs[1][2])
     assert(false)

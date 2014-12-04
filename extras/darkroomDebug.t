@@ -297,6 +297,8 @@ function astPrintPrettys(root)
     out=tostring(self.value)
   elseif self.kind=="load" then
     out="_load_"..self.from.."("..self.relX..","..self.relY..")"
+  elseif self.kind=="iterate" then
+    out="iterate "..self.iteratorName.."="..inputs.iterationSpaceLow..","..inputs.iterationSpaceHigh.." reduce("..self.reduceop..") "..inputs.expr.." end"
   elseif self.kind=="mapreduce" then
     local vars,i = "",1
     while self["varname"..i] do
@@ -306,6 +308,10 @@ function astPrintPrettys(root)
     out="map "..vars.." reduce("..self.reduceop..") "..inputs.expr.." end"
   elseif self.kind=="mapreducevar" then
     out="_mr_"..tostring(self.mapreduceNode).."_"..self.id
+  elseif self.kind=="iterationvar" then
+    out="_itervar_"..self.varname
+  elseif self.kind=="iterateload" then
+    out="_iterload_"..self.varname
   elseif self.kind=="letvar" then
     out="_letvar_"..self.variable
   elseif self.kind=="reduce" then
@@ -382,6 +388,8 @@ function astPrintPrettys(root)
     out = out..inputs.x..",\n"
     out = out..inputs.y..",\n"
     out = out..tostring(self.maxX)..", "..tostring(self.maxY)..", "..tostring(self.clamp)..")"
+  elseif self.kind=="gatherColumn" then
+    out = "gatherColumn("..inputs.input..","..inputs.x..")"
   elseif self.kind=="index" then
     out = inputs.expr.."["..inputs.index.."]"
   elseif self.kind=="var" then
@@ -640,6 +648,14 @@ function typedASTPrintPrettys(root)
     out = "map "..vars.." reduce("..self.reduceop..") "..inputs.expr.." end"
   elseif self.kind=="mapreducevar" then
     out = "_mr_"..tostring(self.mapreduceNode).."_"..self.id
+  elseif self.kind=="iterationvar" then
+    out = "_itervar_"..self.varname
+  elseif self.kind=="gatherColumn" then
+    out = "gatherColumn("..inputs.input..","..inputs.x..")"
+  elseif self.kind=="iterateload" then
+    out="_iterload_"..self.varname
+  elseif self.kind=="iterate" then
+    out="iterate "..self.iteratorName.."="..self.iterationSpaceLow..","..self.iterationSpaceHigh.." reduce("..self.reduceop..") "..inputs.expr.." end"
   elseif self.kind=="filter" then
     out = "filter( "..inputs.cond..", "..inputs.expr.." )"
   else

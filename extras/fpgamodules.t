@@ -1467,13 +1467,29 @@ endmodule
   return table.concat(res,"")
 end
 
-function modules.axi(inputBytes, outputBytes, stripWidth, metadata)
+function modules.axi(inputBytes, outputBytes, stripWidth, outputShift, metadata)
+  assert(type(metadata)=="table")
+
+  local totalData = metadata.stripWidth*metadata.stripHeight
   return [=[module PipelineInterface(input CLK,input validIn, output validOut, input []=]..(inputBytes*8-1)..[=[:0] pipelineInput, output []=]..(outputBytes*8-1)..[=[:0] pipelineOutput);
 reg [12:0] posX = ]=]..valueToVerilogLL(metadata.padMinX,true,13)..[=[;
 reg [12:0] posY = ]=]..valueToVerilogLL(metadata.padMinY,true,13)..[=[;
-Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInput),.out(pipelineOutput),.inValid(validIn),.outValid(validOut));
+
+reg validInD;
+reg []=]..(inputBytes*8-1)..[=[:0] pipelineInputD;
+reg [15:0] cycleCnt;
+wire pipelineValidOut;
+
+Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInputD),.out(pipelineOutput),.inValid(validInD),.outValid(pipelineValidOut));
+
+assign validOut = pipelineValidOut && (cycleCnt >= PIPE_DELAY+]=]..outputShift..[=[) && (cycleCnt < PIPE_DELAY+]=]..(outputShift+totalData)..[=[);
+
 always @ (posedge CLK) begin
-  if (validIn) begin
+  if (validIn && !validInD) begin
+    // this runs the cycle before we start
+    posX <= ]=]..valueToVerilogLL(metadata.padMinX,true,13)..[=[;
+    posY <= ]=]..valueToVerilogLL(metadata.padMinY,true,13)..[=[;
+  end else if(validInD) begin
     if (posX == ]=]..(stripWidth+metadata.padMaxX-1)..[=[) begin
       posX <= 0;
       posY <= posY + 1;
@@ -1481,9 +1497,22 @@ always @ (posedge CLK) begin
       posX <= posX + 1;
     end
   end else begin
-    posX <= ]=]..valueToVerilogLL(metadata.padMinX,true,13)..[=[;
-    posY <= ]=]..valueToVerilogLL(metadata.padMinY,true,13)..[=[;
+    // prime the pipe
+    posX <= ]=]..valueToVerilogLL(stripWidth+metadata.padMinX-1,true,13)..[=[;
+    posY <= ]=]..valueToVerilogLL(metadata.padMinY-1,true,13)..[=[;
   end
+
+  if (validIn && !validInD) begin
+    cycleCnt <= 0;
+  end else if (cycleCnt > PIPE_DELAY+]=]..(outputShift+totalData+10)..[=[) begin
+    // prevent wraparound causing it to start sending again
+    cycleCnt <= cycleCnt;
+  end else begin 
+    cycleCnt <= cycleCnt+1;
+  end
+
+  validInD <= validIn;
+  pipelineInputD <= pipelineInput;
 end
 endmodule]=]
 end

@@ -697,6 +697,10 @@ function darkroom.typedAST._toTypedAST(inast)
       elseif ast.kind=="mapreducevar" then
         ast.type = darkroom.type.int(32)
         ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
+      elseif ast.kind=="iterateload" then
+        ast.type = inputs._expr[1].type
+        ast._expr = inputs._expr[1]
+        ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
       elseif ast.kind=="tap" then
         -- taps should be tagged with type already
         ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
@@ -757,6 +761,28 @@ function darkroom.typedAST._toTypedAST(inast)
         if darkroom.type.isInt(ast.y.type)==false then
           darkroom.error("Error, y argument to gather must be int but is "..ast.y.type:str(), origast:linenumber(), origast:offset())
         end
+      elseif ast.kind=="gatherColumn" then
+        ast.type = inputs.input[1].type
+        ast.input = inputs.input[1]
+        ast.x = inputs.x[1]
+
+        for _,v in pairs({"rowWidth","columnStartX","columnEndX","columnStartY","columnEndY"}) do
+          local res = ast[v]:eval(1,darkroom.typedAST.new({}):copyMetadataFrom(origast))
+          if res:area()~=1 then
+            darkroom.error("Argument "..v.." to gatherColumn must be a constant",ast:linenumber(),ast:offset(),ast:filename())
+          end
+          ast[v] = res:min(1)
+        end
+
+        if ast.columnStartY>ast.columnEndY then
+          darkroom.error("gatherColumn startY should not be larger than endY",ast:linenumber(),ast:offset(),ast:filename())
+        end
+
+        if ast.type:isArray() then
+          assert(false)
+        else
+          ast.type = darkroom.type.array(ast.type,ast.rowWidth*(ast.columnEndY-ast.columnStartY+1))
+        end
       elseif ast.kind=="load" then
         -- already has a type
         ast.scaleN1=1; ast.scaleD1=1; ast.scaleN2=1; ast.scaleD2=1;
@@ -806,10 +832,33 @@ function darkroom.typedAST._toTypedAST(inast)
         end
 
         ast.expr = inputs.expr[1]
+      elseif ast.kind=="iterate" then
+        ast.iterationSpaceLow = ast.iterationSpaceLow:eval(1,darkroom.typedAST.new({}):copyMetadataFrom(origast))
+        if ast.iterationSpaceLow:area()~=1 then
+          darkroom.error("iteration range must be a constant",ast:linenumber(),ast:offset(),ast:filename())
+        end
+        ast.iterationSpaceLow = ast.iterationSpaceLow:min(1)
+
+        ast.iterationSpaceHigh = ast.iterationSpaceHigh:eval(1,darkroom.typedAST.new({}):copyMetadataFrom(origast))
+        if ast.iterationSpaceHigh:area()~=1 then
+          darkroom.error("iteration range must be a constant",ast:linenumber(),ast:offset(),ast:filename())
+        end
+        ast.iterationSpaceHigh = ast.iterationSpaceHigh:min(1)
+
+        if ast.reduceop=="sum" or ast.reduceop=="max" or ast.reduceop=="min" then
+          ast.type = inputs.expr[1].type
+        else
+          darkroom.error("Unknown reduce operator '"..ast.reduceop.."'")
+        end
+
+        ast.expr = inputs.expr[1]
       elseif ast.kind=="filter" then
         ast.cond = inputs.cond[1]
         ast.expr = inputs.expr[1]
         ast.type = ast.expr.type
+      elseif ast.kind=="iterationvar" then
+        ast.type = darkroom.type.int(32)
+        ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
       else
         darkroom.error("Internal error, typechecking for "..ast.kind.." isn't implemented!",ast.line,ast.char)
         return nil

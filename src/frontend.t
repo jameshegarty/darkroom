@@ -168,6 +168,10 @@ function darkroom.gather( thisast, input,x,y,maxXV,maxYV)
                         maxY=maxY}):copyMetadataFrom(thisast)
 end
 
+function darkroom.gatherColumn( thisast, input, x, rowWidth, columnStartX, columnEndX, columnStartY, columnEndY)
+  return darkroom.ast.new({kind="gatherColumn",input=input, x=x, rowWidth=rowWidth, columnStartX=columnStartX, columnEndX=columnEndX, columnStartY=columnStartY, columnEndY=columnEndY}):copyMetadataFrom(thisast)
+end
+
 function darkroom.filter( thisast, cond, expr )
   assert(darkroom.ast.isAST(expr))
   return darkroom.ast.new({kind="filter",cond=cond,expr=expr}):copyMetadataFrom(thisast)
@@ -445,6 +449,39 @@ darkroom.lang.expr = darkroom.Parser.Pratt()
     for k,v in ipairs(vars) do newnode["varname"..k]=v[1];newnode["varlow"..k]=v[2];newnode["varhigh"..k]=v[3]; end
     return darkroom.ast.new(newnode):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
   end)
+:prefix("iterate",function(p)
+    p:expect("iterate")
+
+    local iterationSpaceName = p:expect(p.name).value
+    p:expect("=")
+    local iterationSpaceLow = p:expr()
+    p:expect(",")
+    local iterationSpaceHigh = p:expr()
+
+    local loads={}
+    local loadNameMap = {}
+    while p:matches(p.name) do
+      local name = p:expect(p.name).value
+      p:expect("=")
+      local expr = p:expr()
+      if loadNameMap[name]~=nil then p:error("Can't use the same name twice") end
+      loadNameMap[name] = 1
+      table.insert(loads,{name,expr})
+    end
+
+    p:expect("reduce")
+    p:expect("(")
+    local reduceop = p:expect(p.name).value
+    p:expect(")")
+
+    local expr = p:letexpr()
+    
+    p:expect("end")
+
+    local newnode = {kind="iterate",expr=expr,reduceop=reduceop, iteratorName=iterationSpaceName, iterationSpaceLow=iterationSpaceLow, iterationSpaceHigh=iterationSpaceHigh}
+    for k,v in ipairs(loads) do newnode["loadname"..k]=v[1];newnode["loadexpr"..k]=v[2]; end
+    return darkroom.ast.new(newnode):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
+  end)
 
 darkroom.lang.letexpr = function(p)
   local letast = {kind="let"}
@@ -576,6 +613,43 @@ function darkroom.compileTimeProcess(imfunc, envfn)
           end
           return fin
         end)
+      newNode = darkroom.ast.new(newNode):copyMetadataFrom(inp)
+      
+      return newNode
+    end)
+
+  rvalue=rvalue:S("iterate"):process(
+    function(inp)
+      local newNode = inp:shallowcopy()
+      newNode.__key = {}
+
+      newNode.iterationvar = darkroom.ast.new({kind="iterationvar", iterateNode = newNode.__key, varname = newNode.iteratorName}):copyMetadataFrom(inp)
+
+      local i,vars,varnode = 1,{},{}
+      vars[inp.iteratorName] = 1
+      varnode[inp.iteratorName] = newNode.iterationvar
+
+      while inp["loadname"..i] do 
+        newNode["loadid"..i] = {}
+
+        local expr = inp["loadexpr"..i]:S("var"):process(
+          function(fin) if fin.name==inp.iteratorName then return newNode.iterationvar end end)
+
+        newNode["loadnode"..i] = darkroom.ast.new({kind="iterateload", id = i, iterateNode = newNode["__loadid"..i], mapreduceNodeKey = newNode.__key, varname=inp["loadname"..i], _expr = expr}):copyMetadataFrom(inp)
+        newNode["loadexpr"..i] = nil
+        vars[inp["loadname"..i]] = 1
+        varnode[inp["loadname"..i]] = newNode["loadnode"..i]
+        i=i+1 
+      end
+      
+      newNode.expr = inp.expr:S("var"):process(
+        function(fin)
+          if vars[fin.name]~=nil then
+            return varnode[fin.name]
+          end
+          return fin
+        end)
+
       newNode = darkroom.ast.new(newNode):copyMetadataFrom(inp)
       
       return newNode
