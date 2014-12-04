@@ -81,7 +81,7 @@ fpga.util.writeMetadata("out/"..s..".metadata.lua", metadata)
 
 ------------------
 local opt = fpga.util.deviceToOptions(arg[1])
-opt.stripWidth=300
+opt.stripWidth=256
 opt.stripHeight=20
 local v, metadata = fpga.compile({{leftI,"sim","left0224_sm.raw"},{rightI,"sim","right0224_sm.raw"}},{{vectors,"sim"}}, opt.stripWidth, opt.stripHeight, opt)
 

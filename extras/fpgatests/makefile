@@ -56,6 +56,10 @@ out/%.sim.correct.txt : %.lua out/%.lua.bmp out/%.sim.bmp
 	diff out/$*.lua.bmp out/$*.sim.bmp > out/$*.sim.diff
 	test ! -s out/$*.sim.diff && touch $@
 
+out/%.axi.correct.txt : %.lua out/%.lua.bmp out/%.axi.bmp
+	diff out/$*.lua.bmp out/$*.axi.bmp > out/$*.axi.diff
+	test ! -s out/$*.axi.diff && touch $@
+
 out/%.sim.v : %.lua ../fpga.t ../fpgamodules.t
 	$(TERRA) $< buildsim frame_128.bmp $(DARKROOM_CHIP)
 
@@ -86,11 +90,12 @@ out/%.axi.bit : out/%.axi.v
 	cp $< build_$*_axi/pipeline.v
 	bash ../$(DARKROOM_CHIP)_axi.sh $*
 	export LD_LIBRARY_PATH=
-	cp build_$*_axi/OUT_xst.txt out/$*.xst.txt
-	cp build_$*_axi/OUT_map.txt out/$*.map.txt
-	cp build_$*_axi/OUT_par.txt out/$*.par.txt
-	cp build_$*_axi/OUT_ngd.txt out/$*.ngd.txt
-	cp build_$*_axi/OUT_bitgen.txt out/$*.bitgen.txt
+	cp build_$*_axi/OUT_xst.txt out/$*.axi.xst.txt
+	cp build_$*_axi/OUT_map.txt out/$*.axi.map.txt
+	cp build_$*_axi/OUT_par.txt out/$*.axi.par.txt
+	cp build_$*_axi/OUT_ngd.txt out/$*.axi.ngd.txt
+	cp build_$*_axi/OUT_trce.txt out/$*.axi.ngd.txt
+	cp build_$*_axi/OUT_bitgen.txt out/$*.axi.bitgen.txt
 	cp build_$*_axi/stage.bit $@
 
 out/%.uart.bit : out/%.uart.v
