@@ -131,7 +131,13 @@ module stage
     .CONFIG_DEST(CONFIG_DEST),
     .CONFIG_LEN(CONFIG_LEN),
     .CONFIG_IRQ(CONFIG_IRQ));
-    
+
+
+   wire [31:0] lengthInput;
+   assign lengthInput = {3'b000,CONFIG_LEN[28:0]};
+   wire [31:0] lengthOutput;
+   assign lengthOutput = CONFIG_LEN[28:0] >> CONFIG_LEN[31:29];
+
   always @(posedge FCLK0) begin
     if(ARESETN == 0)
         LED <= 0;
@@ -198,7 +204,7 @@ module stage
         pipelineStarted <= 1'b0;
         processedPixels <= 0;
         pipelineReadAddr <= 12'b0;
-     end else if (pipelineStarted && processedPixels == CONFIG_LEN) begin
+     end else if (pipelineStarted && processedPixels == lengthInput) begin // processedPixels counts the number of clocks
         // we're done
         pipelineStarted <= 1'b0;
      end else if (BYTES_FREE_READ < 13'd3072 && (!pipelineStarted)) begin
@@ -265,7 +271,7 @@ module stage
     .VALID(CONFIG_VALID),
     .READY(READER_READY),
     .START_ADDR(CONFIG_SRC),
-    .NBYTES(CONFIG_LEN),
+    .NBYTES(lengthInput),
     
     .RAM_ADDR(WRADDR),
     .RAM_WE(WREN),
@@ -297,7 +303,7 @@ module stage
     .VALID(CONFIG_VALID),
     .READY(WRITER_READY),
     .START_ADDR(CONFIG_DEST),
-    .NBYTES(CONFIG_LEN),
+    .NBYTES(lengthOutput),
     
     .RAM_ADDR(RDADDR),
     .RAM_RE(RDEN),

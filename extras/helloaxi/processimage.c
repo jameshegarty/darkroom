@@ -22,7 +22,7 @@ typedef struct {
     int cmd;
     int src;
     int dest;
-    int len;
+    unsigned int len;
 } Conf;
 
 FILE* openImage(char* filename, int* numbytes){
@@ -47,6 +47,13 @@ void loadImage(FILE* infile,  volatile void* address, int numbytes){
   fclose(infile);
 }
 
+unsigned int mylog2(unsigned int x){
+  printf("mylog2\n");
+  unsigned int res = 0;
+  while(x=x>>1){printf("H%d\n",x);res++;}
+  return res;
+}
+
 int saveImage(char* filename,  volatile void* address, int numbytes){
   FILE* outfile = fopen(filename, "wb");
   if(outfile==NULL){
@@ -64,6 +71,16 @@ int saveImage(char* filename,  volatile void* address, int numbytes){
 int main(int argc, char *argv[]) {
 	unsigned gpio_addr = 0x70000000;
 	unsigned copy_addr = atoi(argv[1]);
+
+  if(argc!=6){
+    printf("ERROR< insufficient args\n");
+  }
+
+  unsigned int downsampleX = atoi(argv[4]);
+  unsigned int downsampleY = atoi(argv[5]);
+  unsigned int downsample = downsampleX*downsampleY;
+  unsigned int downsampleShift = mylog2(downsample);
+  printf("DSX %d DSY %d DS %d DSS %d\n",downsampleX,downsampleY,downsample,downsampleShift);
 
 	unsigned page_size = sysconf(_SC_PAGESIZE);
 
@@ -86,8 +103,13 @@ int main(int argc, char *argv[]) {
   printf("file LEN %d\n",lenRaw);
 
   // we pad out the length to 128 bytes as required, but just leave it filled with garbage
-  unsigned int len = lenRaw + (8*16-(lenRaw % (8*16)));
+  unsigned lenRawDown = lenRaw/downsample;
+  unsigned int lenDown = lenRawDown + (8*16-(lenRawDown % (8*16)));
+  printf("LENDOWN %d\n", lenDown);
+  unsigned int len = lenDown*downsample;
   assert(len % (8*16) == 0);
+  printf("LEN %d\n",len);
+  assert((len/(downsample)) % (8*16) == 0);
 
   printf("mapping %08x\n",copy_addr);
   void * ptr = mmap(NULL, 2*len, PROT_READ|PROT_WRITE, MAP_SHARED, fd, copy_addr);
@@ -102,7 +124,9 @@ int main(int argc, char *argv[]) {
   
   conf->src = copy_addr;
   conf->dest = copy_addr + len;
-  conf->len = len;
+  unsigned int lenPacked = len | (downsampleShift << 29);
+  printf("LEN PACKED %d\n",lenPacked);
+  conf->len = lenPacked;
   conf->cmd = 3;
 
   usleep(10000);

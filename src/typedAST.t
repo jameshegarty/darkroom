@@ -344,15 +344,36 @@ function typedASTFunctions:stencil(input, typedASTRoot)
       if k:sub(0,6)=="lifted" then s = s:unionWith(v:stencil(input, typedASTRoot)) end
     end
     return s:unionWith(self.expr:stencil(input, typedASTRoot))
+  elseif self.kind=="iterate" then
+    local s = Stencil.new()
+    local i=1
+    return s:unionWith(self.expr:stencil(input, typedASTRoot))
   elseif self.kind=="mapreducevar" then
     return Stencil.new()
+  elseif self.kind=="iterationvar" then
+    return Stencil.new()
+  elseif self.kind=="iterateload" then
+    return self._expr:stencil(input, typedASTRoot)
+  elseif self.kind=="gatherColumn" then
+    assert(self.input.kind=="load")
+
+    local s = self.x:stencil(input, typedASTRoot)
+
+    if input~=nil and self.input.from~=input then
+      return s -- not the input we're interested in
+    else
+      -- note the kind of nasty hack we're doing here: gathers read from loads, and loads can be shifted.
+      -- so we need to shift this the same as the load
+      return darkroom.typedAST.transformArea(self.input.relX, self.input.relY, typedASTRoot):sum( Stencil.new():add(self.columnStartX,self.columnStartY,0):add(self.columnEndX,self.columnEndY,0)):unionWith(s)
+    end
+
   elseif self.kind=="filter" then
     return self.expr:stencil(input, typedASTRoot):unionWith(self.cond:stencil(input, typedASTRoot))
   elseif self.kind=="lifted" then
     return Stencil.new() -- stencil will come from mapreduce node
   end
 
-  print(self.kind, debug.traceback())
+  print("unknown stencil kind",self.kind, debug.traceback())
   assert(false)
 end
 
@@ -700,7 +721,6 @@ function darkroom.typedAST._toTypedAST(inast)
       elseif ast.kind=="iterateload" then
         ast.type = inputs._expr[1].type
         ast._expr = inputs._expr[1]
-        ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
       elseif ast.kind=="tap" then
         -- taps should be tagged with type already
         ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
@@ -783,6 +803,7 @@ function darkroom.typedAST._toTypedAST(inast)
         else
           ast.type = darkroom.type.array(ast.type,ast.rowWidth*(ast.columnEndY-ast.columnStartY+1))
         end
+
       elseif ast.kind=="load" then
         -- already has a type
         ast.scaleN1=1; ast.scaleD1=1; ast.scaleN2=1; ast.scaleD2=1;

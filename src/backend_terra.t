@@ -65,6 +65,7 @@ end
 function calculateStride(producerN, producerD, consumerN, consumerD)
   if consumerN==nil or (producerN==0 and producerD==0 and consumerN==0 and consumerD==0) then return 1,1 end
   if producerN==0 and producerD==0 then producerN=1; producerD=1 end
+  if consumerN==0 and consumerD==0 then consumerN=1; consumerD=1 end
   producerN, producerD = ratioFactor(producerN, producerD)
   consumerN, consumerD = ratioFactor(consumerN, consumerD)
 
@@ -80,6 +81,7 @@ function calculateStride(producerN, producerD, consumerN, consumerD)
     assert(d==math.floor(d))
     return 1,d
   end
+  print(producerN,producerD,consumerN,consumerD)
   assert(false)
 end
 
@@ -760,6 +762,28 @@ darkroom.terracompiler.boolBinops={
   ["or"]=function(lhs,rhs) return `lhs or rhs end
 }
 
+function eliminateIterate(typedAST)
+  assert(darkroom.typedAST.isTypedAST(typedAST))
+
+  return typedAST:S(function(n) return n.kind=="iterate" or n.kind=="gatherColumn" end):process(
+    function(n)
+      if n.kind=="iterate" then
+        local nn = n:shallowcopy()
+        nn.kind="mapreduce"
+        nn.varname1 = nil
+        nn.__varid1 = {}
+        local mapreducevar = {kind="mapreducevar", type=darkroom.type.int(32), id=1, mapreduceNode = nn.__varid1, mapreduceNodeKey = nn.__key}
+        mapreducevar = darkroom.typedAST.new(mapreducevar):copyMetadataFrom(n)
+
+        nn.expr = nn.expr:S("iterationvar"):process(
+          function(iv) return mapreducevar end)
+
+        return darkroom.typedAST.new(nn):copyMetadataFrom(n)
+      elseif n.kind=="gatherColumn" then
+      end
+    end)
+end
+
 mapreducevarSymbols = {}
 function darkroom.terracompiler.codegen(
   inkernel, V, xsymb, ysymb, loopid, stripCount, kernelNode, inputImages, outputs, taps, TapStruct, validLeft, validRight, debug)
@@ -769,6 +793,7 @@ function darkroom.terracompiler.codegen(
   assert(type(TapStruct)=="table")
   assert(type(debug)=="boolean")
 
+  inkernel = eliminateIterate(inkernel)
   local stat = {}
   local statSeen = {} -- for debugging
 

@@ -1473,7 +1473,9 @@ function modules.axi(inputBytes, outputBytes, stripWidth, outputShift, metadata)
   local totalData = metadata.stripWidth*metadata.stripHeight
   -- zach's interface requires that we write in 128 byte chunks. Just expand out the totaldata to this amount.
   -- it will contain garbage but whatever
-  totalData = totalData + (8*16-(totalData % (8*16)))
+  local totalDataDown = totalData/(metadata.downsampleX*metadata.downsampleY)
+  totalDataDown = totalDataDown + (8*16-(totalDataDown % (8*16)))
+  totalData = totalDataDown * (metadata.downsampleX*metadata.downsampleY)
   assert(totalData % (8*16) == 0)
 
   return [=[module PipelineInterface(input CLK,input validIn, output validOut, input []=]..(inputBytes*8-1)..[=[:0] pipelineInput, output []=]..(outputBytes*8-1)..[=[:0] pipelineOutput);
