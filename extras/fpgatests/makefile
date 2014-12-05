@@ -8,10 +8,12 @@ SIM = $(patsubst %.lua,out/%.sim.bmp,$(SRCS))
 SIM += $(patsubst %.lua,out/%.sim.correct.txt,$(SRCS))
 SIM += $(patsubst %.lua,out/%.sim.v,$(SRCS))
 
+AXIBITS = $(patsubst %.lua,out/%.axi.bit,$(SRCS))
+AXIBITS += $(patsubst %.lua,out/%.axi.v,$(SRCS))
+
 AXI = $(patsubst %.lua,out/%.axi.bmp,$(SRCS))
 AXI += $(patsubst %.lua,out/%.axi.correct.txt,$(SRCS))
-AXI += $(patsubst %.lua,out/%.axi.bit,$(SRCS))
-AXI += $(patsubst %.lua,out/%.axi.v,$(SRCS))
+AXI += $(AXIBITS)
 RES += $(AXI)
 
 UART = $(patsubst %.lua,out/%.uart.bit,$(SRCS))
@@ -19,9 +21,6 @@ UART += $(patsubst %.lua,out/%.uart.bmp,$(SRCS))
 UART += $(patsubst %.lua,out/%.uart.v,$(SRCS))
 UART += $(patsubst %.lua,out/%.uart.correct.txt,$(SRCS))
 RES += $(UART)
-
-IMAGES = $(patsubst %.lua,out/%.fpga.bmp,$(SRCS))
-RES += $(IMAGES)
 
 BITS += $(patsubst %.lua,out/%.lua.bmp,$(SRCS))
 BITS += $(patsubst %.lua,out/%.lua.est.lua,$(SRCS))
@@ -36,9 +35,11 @@ all: $(RES)
 
 bits: $(BITS)
 
-images: $(IMAGES)
-
 sim: $(SIM)
+
+axibits: $(AXIBITS)
+
+axi: $(AXI)
 
 lua: $(LUA)
 

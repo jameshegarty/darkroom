@@ -205,7 +205,7 @@ module stage
         // wait until there is 1k of slack in the buffer, then start processing
         pipelineStarted <= 1'b1;
         processedPixels <= 0;
-        pipelineReadAddr <= 12'b0;
+        pipelineReadAddr <= 12'b1; // preload the value for next clock
      end else if (pipelineStarted) begin
         processedPixels <= processedPixels + 1;
         pipelineReadAddr <= pipelineReadAddr + 1;
