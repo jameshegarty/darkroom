@@ -1488,16 +1488,16 @@ wire pipelineValidOut;
 
 Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInputD),.out(pipelineOutput),.inValid(validInD),.outValid(pipelineValidOut));
 
-assign validOut = pipelineValidOut && (cycleCnt >= PIPE_DELAY+]=]..outputShift..[=[) && (cycleCnt < PIPE_DELAY+]=]..(outputShift+totalData)..[=[);
+assign validOut = pipelineValidOut && (cycleCnt >= PIPE_DELAY+]=]..(outputShift+1)..[=[) && (cycleCnt < PIPE_DELAY+]=]..(outputShift+totalData+1)..[=[);
 
 always @ (posedge CLK) begin
   if (validIn && !validInD) begin
     // this runs the cycle before we start
-    posX <= ]=]..valueToVerilogLL(metadata.padMinX,true,13)..[=[;
+    posX <= ]=]..valueToVerilogLL(metadata.padMinX-1,true,13)..[=[;
     posY <= ]=]..valueToVerilogLL(metadata.padMinY,true,13)..[=[;
   end else if(validInD) begin
     if (posX == ]=]..(stripWidth+metadata.padMaxX-1)..[=[) begin
-      posX <= 0;
+      posX <= ]=]..valueToVerilogLL(metadata.padMinX,true,13)..[=[;
       posY <= posY + 1;
     end else begin
       posX <= posX + 1;
