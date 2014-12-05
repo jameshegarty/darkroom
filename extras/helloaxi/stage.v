@@ -144,8 +144,9 @@ module stage
   reg [11:0] pipelineReadAddr = 12'b0;
   reg [11:0] pipelineWriteAddr=12'd4095;
    reg       pipelineStarted = 1'b0;
-   
-  PipelineInterface pipelineInterface(.CLK(FCLK0),.validIn(pipelineStarted),.pipelineInput(PipelineInput),.pipelineOutput(PipelineOutput));
+   wire      pipelineValidOut;
+ 
+  PipelineInterface pipelineInterface(.CLK(FCLK0),.validIn(pipelineStarted),.pipelineInput(PipelineInput),.pipelineOutput(PipelineOutput),.validOut(pipelineValidOut));
             
   wire [63:0] DO;
   wire [63:0] DI;
@@ -197,19 +198,25 @@ module stage
         pipelineStarted <= 1'b0;
         processedPixels <= 0;
         pipelineReadAddr <= 12'b0;
-        pipelineWriteAddr <= 12'd4095;
      end else if (pipelineStarted && processedPixels == CONFIG_LEN) begin
+        // we're done
         pipelineStarted <= 1'b0;
      end else if (BYTES_FREE_READ < 13'd3072 && (!pipelineStarted)) begin
+        // wait until there is 1k of slack in the buffer, then start processing
         pipelineStarted <= 1'b1;
         processedPixels <= 0;
         pipelineReadAddr <= 12'b0;
-        pipelineWriteAddr <= 12'd4095;
      end else if (pipelineStarted) begin
         processedPixels <= processedPixels + 1;
         pipelineReadAddr <= pipelineReadAddr + 1;
+     end
+
+     if (CONFIG_VALID && CONFIG_READY) begin
+        pipelineWriteAddr <= 12'd0;
+     end else if (pipelineValidOut) begin
         pipelineWriteAddr <= pipelineWriteAddr + 1;
      end
+
   end
 
   always @(posedge FCLK0) begin
@@ -230,11 +237,11 @@ module stage
      if (CONFIG_VALID && CONFIG_READY) begin
         BYTES_FREE_WRITE <= 13'd4096;
      end else begin
-        if (READ_BYTES && pipelineStarted) begin
+        if (READ_BYTES && pipelineValidOut) begin
            BYTES_FREE_WRITE <= BYTES_FREE_WRITE + 13'd7;
         end else if (READ_BYTES) begin
             BYTES_FREE_WRITE <= BYTES_FREE_WRITE + 13'd8;
-        end else if (pipelineStarted) begin
+        end else if (pipelineValidOut) begin
             BYTES_FREE_WRITE <= (BYTES_FREE_WRITE==13'd0)?(13'd0):(BYTES_FREE_WRITE - 13'd1);
         end
      end

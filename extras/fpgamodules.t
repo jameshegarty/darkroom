@@ -1477,7 +1477,8 @@ reg [12:0] posY = ]=]..valueToVerilogLL(metadata.padMinY,true,13)..[=[;
 
 reg validInD;
 reg []=]..(inputBytes*8-1)..[=[:0] pipelineInputD;
-reg [15:0] cycleCnt;
+reg [15:0] cycleCnt = 0;
+reg processStarted = 0;
 wire pipelineValidOut;
 
 Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInputD),.out(pipelineOutput),.inValid(validInD),.outValid(pipelineValidOut));
@@ -1504,10 +1505,11 @@ always @ (posedge CLK) begin
 
   if (validIn && !validInD) begin
     cycleCnt <= 0;
+    processStarted <= 1;
   end else if (cycleCnt > PIPE_DELAY+]=]..(outputShift+totalData+10)..[=[) begin
     // prevent wraparound causing it to start sending again
-    cycleCnt <= cycleCnt;
-  end else begin 
+    processStarted <= 0;
+  end else if (processStarted) begin 
     cycleCnt <= cycleCnt+1;
   end
 

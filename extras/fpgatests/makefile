@@ -94,7 +94,7 @@ out/%.axi.bit : out/%.axi.v
 	cp build_$*_axi/OUT_map.txt out/$*.axi.map.txt
 	cp build_$*_axi/OUT_par.txt out/$*.axi.par.txt
 	cp build_$*_axi/OUT_ngd.txt out/$*.axi.ngd.txt
-	cp build_$*_axi/OUT_trce.txt out/$*.axi.ngd.txt
+	cp build_$*_axi/OUT_trce.txt out/$*.axi.trce.txt
 	cp build_$*_axi/OUT_bitgen.txt out/$*.axi.bitgen.txt
 	cp build_$*_axi/stage.bit $@
 
