@@ -1471,6 +1471,11 @@ function modules.axi(inputBytes, outputBytes, stripWidth, outputShift, metadata)
   assert(type(metadata)=="table")
 
   local totalData = metadata.stripWidth*metadata.stripHeight
+  -- zach's interface requires that we write in 128 byte chunks. Just expand out the totaldata to this amount.
+  -- it will contain garbage but whatever
+  totalData = totalData + (8*16-(totalData % (8*16)))
+  assert(totalData % (8*16) == 0)
+
   return [=[module PipelineInterface(input CLK,input validIn, output validOut, input []=]..(inputBytes*8-1)..[=[:0] pipelineInput, output []=]..(outputBytes*8-1)..[=[:0] pipelineOutput);
 reg [12:0] posX = ]=]..valueToVerilogLL(metadata.padMinX,true,13)..[=[;
 reg [12:0] posY = ]=]..valueToVerilogLL(metadata.padMinY,true,13)..[=[;

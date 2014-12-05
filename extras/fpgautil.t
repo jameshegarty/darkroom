@@ -118,7 +118,7 @@ void closeuart(){
   close(uart0_filestream);
 }
                                       ]]
-local terra pad(infile : &int8, outfile : &int8, left:int, right:int, bottom:int, top:int)
+terra fpgaUtil.pad(infile : &int8, outfile : &int8, left:int, right:int, bottom:int, top:int)
 
   var imgIn : Image
   imgIn:load(infile)
@@ -146,7 +146,7 @@ local terra pad(infile : &int8, outfile : &int8, left:int, right:int, bottom:int
 
 end
 
-local terra padImg(imgIn : &Image, left:int, right:int, bottom:int, top:int)
+terra fpgaUtil.padImg(imgIn : &Image, left:int, right:int, bottom:int, top:int)
   if imgIn.bits~=8 then c.printf("padImg unsupported bits\n");c.exit(1); end
   if imgIn.SOA==true then c.printf("padImg unsupported SOA\n");c.exit(1); end
   
@@ -219,7 +219,7 @@ terra fpgaUtil.test(
   var paddedImgs = [&Image](c.malloc(terralib.sizeof(Image)*inputImageCnt))
 
   for i=0,inputImageCnt do
-    paddedImgs[i] = padImg(&inputImages[i], stencilMinX, stencilMaxX, stencilMinY, stencilMaxY)
+    paddedImgs[i] = fpgaUtil.padImg(&inputImages[i], stencilMinX, stencilMaxX, stencilMinY, stencilMaxY)
   end
 
   var imgOut : Image

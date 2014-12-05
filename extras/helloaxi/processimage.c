@@ -81,15 +81,18 @@ int main(int argc, char *argv[]) {
 		return -1;
   }
 
-  unsigned len;
-  FILE* imfile = openImage(argv[2], &len);
-  printf("file LEN %d\n",len);
+  unsigned lenRaw;
+  FILE* imfile = openImage(argv[2], &lenRaw);
+  printf("file LEN %d\n",lenRaw);
+
+  // we pad out the length to 128 bytes as required, but just leave it filled with garbage
+  unsigned int len = lenRaw + (8*16-(lenRaw % (8*16)));
   assert(len % (8*16) == 0);
 
   printf("mapping %08x\n",copy_addr);
   void * ptr = mmap(NULL, 2*len, PROT_READ|PROT_WRITE, MAP_SHARED, fd, copy_addr);
 
-  loadImage( imfile, ptr, len );
+  loadImage( imfile, ptr, lenRaw );
   //saveImage("before.raw",ptr,len);
 
   // mmap the device into memory 
@@ -104,7 +107,7 @@ int main(int argc, char *argv[]) {
 
   usleep(10000);
 
-  saveImage(argv[3],ptr+len,len);
+  saveImage(argv[3],ptr+len,lenRaw);
 
   return 0;
 }
