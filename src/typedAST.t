@@ -235,10 +235,10 @@ function darkroom.typedAST._toTypedAST(inast)
             assert(false)
           end
         elseif ast.op=="not" then
-          if ast.expr.type:baseType():isBool() then
+          if ast.expr.type:baseType():isBool() or ast.expr.type:baseType():isInt() or ast.expr.type:baseType():isUint() then
             ast.type = ast.expr.type
           else
-            darkroom.error("not only works on bools",origast:linenumber(), origast:offset())
+            darkroom.error("not only works on bools and integers",origast:linenumber(), origast:offset())
             assert(false)
           end
         elseif ast.op=="sin" or ast.op=="cos" or ast.op=="exp" then
