@@ -308,12 +308,13 @@ function typedASTFunctions:stencil(input, typedASTRoot)
     --if input~=nil then assert(false) end
     assert(self.input.kind=="load")
 
+    local s = self.x:stencil(input, typedASTRoot):unionWith(self.y:stencil(input, typedASTRoot))
     if input~=nil and self.input.from~=input then
-      return self.x:stencil(input, typedASTRoot):unionWith(self.y:stencil(input, typedASTRoot)) -- not the input we're interested in
+      return s -- not the input we're interested in
     else
       -- note the kind of nasty hack we're doing here: gathers read from loads, and loads can be shifted.
       -- so we need to shift this the same as the load
-      return darkroom.typedAST.transformArea(self.input.relX, self.input.relY, typedASTRoot):sum( Stencil.new():add(-self.maxX,-self.maxY,0):add(self.maxX,self.maxY,0)):unionWith(self.x:stencil(input, typedASTRoot)):unionWith(self.y:stencil(input, typedASTRoot))
+      return darkroom.typedAST.transformArea(self.input.relX, self.input.relY, typedASTRoot):sum( Stencil.new():add(self.minX,self.minY,0):add(self.maxX,self.maxY,0)):unionWith(s)
     end
   elseif self.kind=="array" then
     local exprsize = self:arraySize("expr")
@@ -773,6 +774,14 @@ function darkroom.typedAST._toTypedAST(inast)
         ast.input = inputs.input[1]
         ast.x = inputs.x[1]
         ast.y = inputs.y[1]
+
+        for _,v in pairs({"minX","maxX","minY","maxY"}) do
+          local res = ast[v]:eval(1,darkroom.typedAST.new({}):copyMetadataFrom(origast))
+          if res:area()~=1 then
+            darkroom.error("Argument "..v.." to gather must be a constant",ast:linenumber(),ast:offset(),ast:filename())
+          end
+          ast[v] = res:min(1)
+        end
 
         if darkroom.type.isInt(ast.x.type)==false then
           darkroom.error("Error, x argument to gather must be int but is "..ast.x.type:str(), origast:linenumber(), origast:offset())

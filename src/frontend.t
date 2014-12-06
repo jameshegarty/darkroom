@@ -146,26 +146,15 @@ end
 -- clamp: what to do when we go outside of maxX, maxY? clamp to that
 --        window, or raise an assert?
 function darkroom.gather( thisast, input,x,y,maxXV,maxYV)
-  assert(darkroom.ast.isAST(input))
-  assert(darkroom.ast.isAST(x))
-  assert(darkroom.ast.isAST(y))
-
-  if darkroom.ast.isAST(maxXV)==false or maxXV.kind~="value" or type(maxXV.value)~="number" then
-    darkroom.error("Gather expects maxX to be an integer constant, not an expression",thisast:linenumber(), thisast:offset(), thisast:filename())
-  end
-  local maxX = maxXV.value
-
-  if darkroom.ast.isAST(maxYV)==false or maxYV.kind~="value" or type(maxYV.value)~="number" then
-    darkroom.error("Gather expects maxY to be an integer constant, not an expression",thisast:linenumber(), thisast:offset(), thisast:filename())
-  end
-  local maxY = maxYV.value
+  local minX = darkroom.ast.new({kind="unary",op="-",expr=maxXV}):copyMetadataFrom(thisast)
+  local minY = darkroom.ast.new({kind="unary",op="-",expr=maxYV}):copyMetadataFrom(thisast)
 
   return darkroom.ast.new({kind="gather",
                         input=input, 
                         x=x,
                         y=y,
-                        maxX=maxX,
-                        maxY=maxY}):copyMetadataFrom(thisast)
+                        maxX=maxXV, minX = minX,
+                        maxY=maxYV, minY = minY}):copyMetadataFrom(thisast)
 end
 
 function darkroom.gatherColumn( thisast, input, x, rowWidth, columnStartX, columnEndX, columnStartY, columnEndY)

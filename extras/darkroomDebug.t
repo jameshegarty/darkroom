@@ -302,7 +302,7 @@ function astPrintPrettys(root)
   elseif self.kind=="mapreduce" then
     local vars,i = "",1
     while self["varname"..i] do
-      vars = vars.."_mr_"..self["varname"..i]..tostring(self["varid"..i]).."="..inputs["varlow"..i]..","..inputs["varhigh"..i].." "
+      vars = vars.."_mr_"..self["varname"..i]..tostring(self["__varid"..i]).."="..inputs["varlow"..i]..","..inputs["varhigh"..i].." "
       i=i+1
     end
     out="map "..vars.." reduce("..self.reduceop..") "..inputs.expr.." end"
@@ -387,7 +387,7 @@ function astPrintPrettys(root)
     out = "gather(\n"..inputs.input..",\n"
     out = out..inputs.x..",\n"
     out = out..inputs.y..",\n"
-    out = out..tostring(self.maxX)..", "..tostring(self.maxY)..", "..tostring(self.clamp)..")"
+    out = out.."maxX = "..tostring(self.maxX)..",minX = "..tostring(self.minX)..", maxY = "..tostring(self.maxY)..", minY = "..tostring(self.minY)..", clamp = "..tostring(self.clamp)..")"
   elseif self.kind=="gatherColumn" then
     out = "gatherColumn("..inputs.input..","..inputs.x..")"
   elseif self.kind=="index" then
@@ -631,10 +631,10 @@ function typedASTPrintPrettys(root)
   elseif self.kind=="index" then
     out = out.."("..inputs.expr..")["..astPrintPrettys(self.index).."]"
   elseif self.kind=="gather" then
-    out = "gather(\n"..inputs.input..",\n"
-    out = out..inputs.x..",\n"
-    out = out..inputs.y..",\n"
-    out = out..tostring(self.maxX)..", "..tostring(self.maxY)..", "..tostring(self.clamp)..")"
+    out = "gather(\ninput = "..inputs.input..",\n"
+    out = out.."x = "..inputs.x..",\n"
+    out = out.."y = "..inputs.y..",\n"
+    out = out.."maxX = "..tostring(self.maxX)..",minX = "..tostring(self.minX)..", maxY = "..tostring(self.maxY)..", minY = "..tostring(self.minY)..", clamp = "..tostring(self.clamp)..")"
   elseif self.kind=="load" then
     local n = self.from
     if type(self.from)=="table" then n=self.from:name() end
@@ -642,7 +642,7 @@ function typedASTPrintPrettys(root)
   elseif self.kind=="mapreduce" then
     local vars,i = "",1
     while self["varname"..i] do
-      vars = vars.."_mr_"..self["varname"..i]..tostring(self["varid"..i]).."="..self["varlow"..i]..","..self["varhigh"..i].." "
+      vars = vars.."_mr_"..self["varname"..i]..tostring(self["__varid"..i]).."="..self["varlow"..i]..","..self["varhigh"..i].." "
       i=i+1
     end
     out = "map "..vars.." reduce("..self.reduceop..") "..inputs.expr.." end"
