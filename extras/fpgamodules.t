@@ -621,7 +621,15 @@ res = res..[=[       end else begin
        end
      end
      addr = addr + 1;
+
+     if(realX==]=]..(stripWidth+metadata.padMaxX-1)..[=[) begin
+      realX = ]=]..(metadata.padMinX)..[=[;
+      realY = realY+1;
+     end else begin
      realX = realX + 1;
+     end
+
+
    end	   
 
    $display("DONE");
@@ -1506,7 +1514,7 @@ always @ (posedge CLK) begin
     end
   end else begin
     // prime the pipe
-    posX <= ]=]..valueToVerilogLL(stripWidth+metadata.padMinX-1,true,13)..[=[;
+    posX <= ]=]..valueToVerilogLL(stripWidth+metadata.padMaxX-1,true,13)..[=[;
     posY <= ]=]..valueToVerilogLL(metadata.padMinY-1,true,13)..[=[;
   end
 
