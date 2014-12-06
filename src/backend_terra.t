@@ -765,12 +765,14 @@ darkroom.terracompiler.boolBinops={
 function eliminateIterate(typedAST)
   assert(darkroom.typedAST.isTypedAST(typedAST))
 
-  return typedAST:S(function(n) return n.kind=="iterate" or n.kind=="gatherColumn" end):process(
+  local res = typedAST:S(function(n) return n.kind=="iterate" or n.kind=="gatherColumn" or n.kind=="iterateload" end):process(
     function(n)
       if n.kind=="iterate" then
         local nn = n:shallowcopy()
         nn.kind="mapreduce"
-        nn.varname1 = nil
+        nn.varname1 = n.iteratorName
+        nn.varlow1 = n.iterationSpaceLow
+        nn.varhigh1 = n.iterationSpaceHigh
         nn.__varid1 = {}
         local mapreducevar = {kind="mapreducevar", type=darkroom.type.int(32), id=1, mapreduceNode = nn.__varid1, mapreduceNodeKey = nn.__key}
         mapreducevar = darkroom.typedAST.new(mapreducevar):copyMetadataFrom(n)
@@ -780,8 +782,34 @@ function eliminateIterate(typedAST)
 
         return darkroom.typedAST.new(nn):copyMetadataFrom(n)
       elseif n.kind=="gatherColumn" then
+        local array = {kind="array", type = n.type}
+        local c = 1
+        -- row major
+        for y=n.columnStartY, n.columnEndY do
+          for x=0,n.rowWidth-1 do
+            local xast = {kind="value", value=x, type=darkroom.type.int(32)}
+            xast = darkroom.typedAST.new(xast):copyMetadataFrom(n)
+            local xb = {kind="binop",lhs=n.x,rhs=xast,op="+",type=darkroom.type.int(32)}
+            xb = darkroom.typedAST.new(xb):copyMetadataFrom(n)
+            local yast = {kind="value", value=y, type=darkroom.type.int(32)}
+            yast = darkroom.typedAST.new(yast):copyMetadataFrom(n)
+            local mx = math.max(n.columnStartX,-n.columnStartX,n.columnEndX,-n.columnEndX)
+            local my = math.max(n.columnStartY,-n.columnStartY,n.columnEndY,-n.columnEndY)
+            local g = {kind="gather",x=xb,y=yast,input=n.input,type=n.type:baseType(),maxX=mx,maxY=my}
+            g = darkroom.typedAST.new(g):copyMetadataFrom(n)
+
+            array["expr"..c] = g
+            c = c + 1
+          end
+        end
+        return darkroom.typedAST.new(array):copyMetadataFrom(n)
+      elseif n.kind=="iterateload" then
+        return n._expr
       end
     end)
+
+  typedASTPrintPretty(res)
+  return res
 end
 
 mapreducevarSymbols = {}
