@@ -1022,7 +1022,7 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, options)
     end
   end
 
-  local kernelGraph, _, smallestScaleX, smallestScaleY = darkroom.frontEnd( ast, {} )
+  local kernelGraph, _, smallestScaleX, smallestScaleY, largestEffectiveCycles = darkroom.frontEnd( ast, {} )
 
   local padMinX, padMaxX, padMinY, padMaxY
   options.stripWidth, options.stripHeight, padMinX, padMaxX, padMinY, padMaxY = chooseStrip(options,inputs,kernelGraph,imageWidth,imageHeight, smallestScaleX, smallestScaleY)
@@ -1150,7 +1150,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
 --  totalDelay = pipelineRetiming[kernelGraph.child1] + shifts[kernelGraph.child1]
   totalDelay = pipelineRetiming[kernelGraph.child1]
 
-  local metadata = {minX = maxStencil:min(1), maxX=maxStencil:max(1), minY=maxStencil:min(2), maxY = maxStencil:max(2), outputShift = shifts[kernelGraph.child1], outputChannels = outputChannels, outputBytes = outputBytes, stripWidth = options.stripWidth, stripHeight=options.stripHeight, uartClock=options.uartClock, downsampleX=looprate(kernelGraph.child1.kernel.scaleN1,kernelGraph.child1.kernel.scaleD1,1), downsampleY=looprate(kernelGraph.child1.kernel.scaleN2,kernelGraph.child1.kernel.scaleD2,1), padMinX=padMinX, padMaxX=padMaxX, padMinY=padMinY, padMaxY=padMaxY}
+  local metadata = {minX = maxStencil:min(1), maxX=maxStencil:max(1), minY=maxStencil:min(2), maxY = maxStencil:max(2), outputShift = shifts[kernelGraph.child1], outputChannels = outputChannels, outputBytes = outputBytes, stripWidth = options.stripWidth, stripHeight=options.stripHeight, uartClock=options.uartClock, downsampleX=looprate(kernelGraph.child1.kernel.scaleN1,kernelGraph.child1.kernel.scaleD1,1), downsampleY=looprate(kernelGraph.child1.kernel.scaleN2,kernelGraph.child1.kernel.scaleD2,1), padMinX=padMinX, padMaxX=padMaxX, padMinY=padMinY, padMaxY=padMaxY, cycles = largestEffectiveCycles}
 
   for k,v in ipairs(inputs) do
     metadata["inputFile"..k] = v[3]
