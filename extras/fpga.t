@@ -523,7 +523,13 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
                            end
                            for i=1,n["countLifted"] do
                              local v = "lifted"..i..term
-                             liftedInputs = liftedInputs..",.lifted"..i.."("..args[v][1][1]..")"
+                             liftedInputs = liftedInputs..",.lifted"..i.."({"
+                             -- pack the channels
+                             for c=1,n[v].type:channels() do
+                               liftedInputs = liftedInputs..args[v][1][c]
+                               if c~=n[v].type:channels() then liftedInputs = liftedInputs.."," end
+                             end
+                             liftedInputs = liftedInputs.."})"
                            end
 
                            return {declareWire(n.expr.type,n:name().."_partial"..partials).."Map_"..n:name().." map_"..n:name().."_"..partials.."(.CLK(CLK),.out("..n:name().."_partial"..partials.."),.inX(inX),.inY(inY)"..inputList..liftedInputs..table.concat(getInterface(exprbb,false),"")..");\n"} end}
@@ -537,7 +543,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         
         adddecl(bb, funroll[#funroll]("",{}))
 
-        local rtype = n.expr.type
+        local rtype = n.expr.type:baseType()
         if n.reduceop=="argmin" then rtype=n.expr.type:baseType() end
         local rname, rmod = fpga.modules.reduce(compilerState, n.reduceop, partials+1, rtype, n)
 
@@ -553,9 +559,11 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           for c=1,n.type:channels() do table.insert(finalOut, n:cname(c)) end
         else
           for c=1,n.type:channels() do
-            adddecl(bb, {declareWire(n.type, n:cname(c))})
+            adddecl(bb, {declareWire(n.type:baseType(), n:cname(c))})
             adddecl(bb, {rname.." reduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(c)..")"})
-            for i=0,partials do adddecl(bb,{",.partial_"..i.."("..n:name().."_partial"..i..")"}) end
+            local bits = n.type:baseType():sizeof()*8
+            local cinv = n.type:channels()-c+1
+            for i=0,partials do adddecl(bb,{",.partial_"..i.."("..n:name().."_partial"..i.."["..(bits*cinv-1)..":"..(bits*(cinv-1)).."])"}) end
             adddecl(bb,{");\n"})
             table.insert(finalOut, n:cname(c))
           end
