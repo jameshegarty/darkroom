@@ -80,6 +80,15 @@ function astFunctions:eval(dim, irRoot)
     assert(type(l)=="number")
     assert(type(h)=="number")
     return Stencil.new():addDim(dim, l):addDim(dim, h)
+  elseif self.kind=="iterationvar" then
+    local n = irRoot:lookup(self.iterateNode)
+    local l = n.iterationSpaceLow
+    local h = n.iterationSpaceHigh
+    if darkroom.ast.isAST(l) then l=l:eval(dim, irRoot); assert(l:area()==1); l = l:min(dim) end
+    if darkroom.ast.isAST(h) then h=h:eval(dim, irRoot); assert(h:area()==1); h = h:min(dim) end
+    assert(type(l)=="number")
+    assert(type(h)=="number")
+    return Stencil.new():addDim(dim, l):addDim(dim, h)
   elseif self.kind=="binop" and self.op=="+" then
     return self.lhs:eval(dim, irRoot):sum(self.rhs:eval(dim, irRoot))
   elseif self.kind=="binop" and self.op=="-" then

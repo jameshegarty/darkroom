@@ -777,8 +777,25 @@ function eliminateIterate(typedAST)
         local mapreducevar = {kind="mapreducevar", type=darkroom.type.int(32), id=1, mapreduceNode = nn.__varid1, mapreduceNodeKey = nn.__key}
         mapreducevar = darkroom.typedAST.new(mapreducevar):copyMetadataFrom(n)
 
-        nn.expr = nn.expr:S("iterationvar"):process(
-          function(iv) return mapreducevar end)
+        local mapreducevarAST = {kind="mapreducevar", id = 1, mapreduceNode = nn.__varid1}
+        mapreducevarAST = darkroom.ast.new(mapreducevarAST):copyMetadataFrom(n)
+
+        nn.expr = nn.expr:S("*"):process(
+          function(iv) 
+            if iv.kind=="iterationvar" then
+              return mapreducevar 
+            else
+              local n = iv:shallowcopy()
+              local changed = false
+              for k,v in pairs(iv) do
+                if darkroom.ast.isAST(v) then
+                  changed = true
+                  n[k] = v:S("iterationvar"):process(function(iiv) return mapreducevarAST end)
+                end
+              end
+              if changed then return darkroom.typedAST.new(n):copyMetadataFrom(iv) end
+            end
+          end)
 
         return darkroom.typedAST.new(nn):copyMetadataFrom(n)
       elseif n.kind=="gatherColumn" then
@@ -793,9 +810,8 @@ function eliminateIterate(typedAST)
             xb = darkroom.typedAST.new(xb):copyMetadataFrom(n)
             local yast = {kind="value", value=y, type=darkroom.type.int(32)}
             yast = darkroom.typedAST.new(yast):copyMetadataFrom(n)
-            local mx = math.max(n.columnStartX,-n.columnStartX,n.columnEndX,-n.columnEndX)
-            local my = math.max(n.columnStartY,-n.columnStartY,n.columnEndY,-n.columnEndY)
-            local g = {kind="gather",x=xb,y=yast,input=n.input,type=n.type:baseType(),maxX=mx,maxY=my}
+
+            local g = {kind="gather",x=xb,y=yast,input=n.input,type=n.type:baseType(),minX=n.columnStartX,maxX=n.columnEndX,minY=n.columnStartY,maxY=n.columnEndY}
             g = darkroom.typedAST.new(g):copyMetadataFrom(n)
 
             array["expr"..c] = g
@@ -808,7 +824,6 @@ function eliminateIterate(typedAST)
       end
     end)
 
-  typedASTPrintPretty(res)
   return res
 end
 
@@ -1190,13 +1205,13 @@ function darkroom.terracompiler.codegen(
           if debug then
             out = quote
               for i = 0,V do
-                if inpX[i] > node.maxX or inpX[i] < -node.maxX then
-                  cstdio.printf("error, gathered outside of stencil X %d (max %d)\n",inpX[i], node.maxX)
+                if inpX[i] > node.maxX or inpX[i] < node.minX then
+                  cstdio.printf("error, gathered outside of stencil X %d (min %d max %d)\n",inpX[i], node.minX, node.maxX)
                   orionAssert(false,"gathered outside of stencil")
                 end
                 
-                if inpY[i] > node.maxY or inpY[i] < -node.maxY then
-                  cstdio.printf("error, gathered outside of stencil Y %d (max %d)\n",inpY[i], node.maxY)
+                if inpY[i] > node.maxY or inpY[i] < node.minY then
+                  cstdio.printf("error, gathered outside of stencil Y %d (min %d max %d)\n",inpY[i], node.minY, node.maxY)
                   orionAssert(false,"gathered outside of stencil")
                 end
               end

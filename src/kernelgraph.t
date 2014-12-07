@@ -88,6 +88,8 @@ function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
     return transformCount > 1
   end
 
+  local largestEffectiveCycles = 1
+
   -- We do this with a traverse instead of a process b/c we're converting
   -- from one type of AST to another
   local kernelGraph = typedAST:S(
@@ -123,7 +125,29 @@ function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
           local res = darkroom.typedAST.new({kind="load",from=child,type=n.type,relX=0,relY=0,scaleN1=child.kernel.scaleN1,scaleD1=child.kernel.scaleD1,scaleN2=child.kernel.scaleN2,scaleD2=child.kernel.scaleD2}):copyMetadataFrom(n)
           return res
         end)
-      
+
+      -- we do this typechecking here, b/c cycle delay depends on how we split up the kernels
+      kernel = kernel:visitEach(
+        function(n, inputs)
+          local nn = n:shallowcopy()
+
+          if nn.kind=="iterate" then
+            nn.cycles = inputs.expr.cycles + (n.iterationSpaceHigh-n.iterationSpaceLow)
+          elseif keycount(inputs)==0 then -- leaf
+            nn.cycles = 1
+          else
+            for k,v in pairs(inputs) do
+              if nn.cycles==nil or nn.cycles < v.cycles then nn.cycles = v.cycles end
+            end
+          end
+
+          if type(nn.cycles)~="number" then print("missing cycles",nn.kind); assert(false) end
+          return darkroom.typedAST.new(nn):copyMetadataFrom(n)
+        end)
+
+      local effCycles = math.ceil((kernel.cycles*kernel.scaleN1*kernel.scaleN2)/(kernel.scaleD1*kernel.scaleD2))
+      largestEffectiveCycles = math.max(effCycles, largestEffectiveCycles)
+
       if kernel.kind=="outputs" then
         if kernel:arraySize("expr")~=childCount-1 then
           darkroom.error("Duplicate outputs are not allowed! each output must be a unique image function. This may have been caused by common subexpression elimination")
@@ -148,7 +172,7 @@ function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
     print("Kernel Graph Done --------------------------------------")
   end
 
-  return kernelGraph
+  return kernelGraph, largestEffectiveCycles
 end
 
 function darkroom.kernelGraph.isKernelGraph(ast) return getmetatable(ast)==kernelGraphMT end
