@@ -7,4 +7,5 @@ else
    color = darkroom.input(uint8[3])
 end
 
-test(im(x,y) color+[uint8](10) end,{{color,"color"}})
+im color(x,y) {color[0],color[1],color[2],[uint8](0)} end
+test(im(x,y) map i=-1,1 j=-1,1 reduce(sum) color(x+i,y+j) end  end,{{color,"color"}})
