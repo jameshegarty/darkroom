@@ -26,12 +26,12 @@ function typedASTFunctions:bbDependencies(root)
       assert(self:parentCount(root)>0)
       local wasMR = false
       for parentNode, key in self:parents(root) do
-        if parentNode.kind=="mapreduce" or parentNode.kind=="filter" then
+        if parentNode.kind=="mapreduce" or parentNode.kind=="filter" or parentNode.kind=="iterate" then
           assert(self:parentCount(root)==1) -- theoretically possible this is false?
           -- generate a new block for this MR
           wasMR = true
           local newbb = {level=0,parents={},controlDep={}}
-          if parentNode.kind=="filter" then newbb.controlDep[newbb]=1 end -- filter ifelse has control dep on itself
+          if parentNode.kind=="filter" or parentNode.kind=="iterate"  then newbb.controlDep[newbb]=1 end -- filter ifelse has control dep on itself
           for bb,_ in pairs(parentNode:bbDependencies(root)) do
             newbb.level = math.max(bb.level+1, newbb.level)
             newbb.parents[bb] = 1
