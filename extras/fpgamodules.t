@@ -138,7 +138,7 @@ function modules.reduce(compilerState, op, cnt, datatype, argminVars)
 end
 
 lbCnt = 0
-function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampledInput, upsampledYConsumer)
+function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampledInput, upsampledYConsumer, gatherAddr)
   assert(type(maxdelay)=="number")
   assert(type(downsampledInput)=="boolean")
   assert(type(upsampledYConsumer)=="boolean")
@@ -514,11 +514,13 @@ module sim;
   wire []=]..(outputBytes*8-1)..[=[:0] pipelineOutput;
   reg [12:0] posX = 0;
   reg [12:0] posY = 0;
+  reg [7:0] cycle = 0;
   reg inValid = 0;
   wire outValid;
   integer realX = ]=]..(stripWidth+metadata.padMaxX-1)..[=[;
   integer realY = ]=]..(metadata.padMinY-1)..[=[;
-  integer addr = -PIPE_DELAY+1-]=]..outputShift..[=[;]=]
+  integer addr = -PIPE_DELAY+1-]=]..outputShift..[=[;
+]=]
 
   local i=1
   while metadata["inputFile"..i] do
@@ -530,7 +532,7 @@ module sim;
 res = res..[=[  reg [10000:0] outputFilename; 
   reg [7:0] i = 0;
 
-  Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInput),.out(pipelineOutput),.inValid(inValid),.outValid(outValid));
+  Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInput),.out(pipelineOutput),.inValid(inValid),.outValid(outValid),.cycle(cycle));
 
   initial begin
    $display("HELLO");]=]
@@ -551,6 +553,7 @@ res = res..[=[
    // prime the pipe
    posX = realX;
    posY = realY;
+   cycle = 0;
    inValid = 0;
    CLK = 0;
    #10
@@ -561,7 +564,9 @@ res = res..[=[
    while (realY < ]=]..(imageHeight+metadata.padMaxY)..[=[) begin
      realX = ]=]..(metadata.padMinX)..[=[;
      while (realX < ]=]..(stripWidth+metadata.padMaxX)..[=[) begin
-       if ( realX>=0 && realX<]=]..stripWidth..[=[ && realY>=0 && realY <]=]..imageHeight..[=[ ) begin
+       cycle = 0;
+       while (cycle < ]=]..metadata.cycles..[=[) begin
+         if ( realX>=0 && realX<]=]..stripWidth..[=[ && realY>=0 && realY <]=]..imageHeight..[=[ ) begin
 ]=]
 
 local i=1
@@ -585,6 +590,8 @@ res = res..[=[       end else begin
        CLK = 1;
        #10
 //     $display(modOutput);
+         cycle = cycle + 1;
+       end
 
        if(addr>=0 && outValid) begin 
          i = 0;
@@ -605,14 +612,19 @@ res = res..[=[       end else begin
 
    realX = ]=]..(metadata.padMinX)..[=[;
    while (addr<0) begin
-     pipelineInput = 0;
-     posX = realX;
-     posY = realY;
-     inValid = 1;
-     CLK = 0;
-     #10
-     CLK = 1;
-     #10
+     cycle = 0;
+     while (cycle < ]=]..metadata.cycles..[=[) begin
+       pipelineInput = 0;
+       posX = realX;
+       posY = realY;
+       inValid = 1;
+       CLK = 0;
+       #10
+       CLK = 1;
+       #10
+       cycle = cycle + 1;
+     end
+
      if (outValid) begin 
        i=0;
        while( i<]=]..outputBytes..[=[) begin
