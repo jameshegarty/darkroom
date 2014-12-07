@@ -1008,14 +1008,22 @@ function fpga.collectLinebuffers(kernelGraph, options, pipelineRetiming)
       if n.kernel~=nil then
         n.kernel:S("load"):process(
           function(v)
-            for vv,_ in v:parents(n.kernel) do
-              if vv.kind=="gatherColumn" then
-                assert(false)
-              else
-                -- regular load
-                inputLinebuffers[n]["regular"] = 1
-                if darkroom.kernelGraph.isKernelGraph(v.from) then
-                  outputLinebuffers[v.from]["regular"] = 1
+            if v:parentCount(n.kernel)==0 then
+              -- regular load
+              inputLinebuffers[n]["regular"] = 1
+              if darkroom.kernelGraph.isKernelGraph(v.from) then
+                outputLinebuffers[v.from]["regular"] = 1
+              end
+            else
+              for vv,_ in v:parents(n.kernel) do
+                if vv.kind=="gatherColumn" then
+                  assert(false)
+                else
+                  -- regular load
+                  inputLinebuffers[n]["regular"] = 1
+                  if darkroom.kernelGraph.isKernelGraph(v.from) then
+                    outputLinebuffers[v.from]["regular"] = 1
+                  end
                 end
               end
             end
