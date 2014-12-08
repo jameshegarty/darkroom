@@ -571,7 +571,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         end
         return {finalOut}
       elseif n.kind=="iterate" then
-        local moduledef = {"module Iterate_"..n:name().."(input CLK, input[12:0] inX, input[12:0] inY, \n"}
+        local moduledef = {"module Iterate_"..n:name().."(input CLK, input[12:0] inX_internal, input[12:0] inY_internal, \n"}
         table.insert(moduledef,"input [31:0] iterationvar_"..n.iteratorName..",")
 
         local exprbb = n.expr:calculateMinBB(kernel)
@@ -594,7 +594,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         result = concat(moduledef,result)
 
         adddecl(bb,{declareWire(n.expr.type,"iterate_"..n:name().."_out")})
-        adddecl(bb,{"Iterate_"..n:name().." iterate_"..n:name().."(.CLK(CLK),.inX(inX),.inY(inY),.iterationvar_"..n.iteratorName.."(cycle),.out(iterate_"..n:name().."_out));\n"})
+        adddecl(bb,{"Iterate_"..n:name().." iterate_"..n:name().."(.CLK(CLK),.inX_internal(inX_internal),.inY_internal(inY_internal),.iterationvar_"..n.iteratorName.."({24'd0,cycle}),.out(iterate_"..n:name().."_out));\n"})
 
         local finalOut = {}
         if n.reduceop=="sum" then
