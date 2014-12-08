@@ -1,8 +1,11 @@
 SRCS = $(wildcard *.t)
 RES = $(patsubst %.t,out/%.v,$(SRCS))
-RES += $(patsubst %.t,out/%.sim.v,$(SRCS))
-RES += $(patsubst %.t,out/%.sim.bmp,$(SRCS))
-RES += $(patsubst %.t,out/%.sim.correct.txt,$(SRCS))
+
+SIM = $(patsubst %.t,out/%.sim.v,$(SRCS))
+SIM += $(patsubst %.t,out/%.sim.bmp,$(SRCS))
+SIM += $(patsubst %.t,out/%.sim.correct.txt,$(SRCS))
+
+RES += $(SIM)
 RES += $(patsubst %.t,out/%.bit,$(SRCS))
 RES += $(patsubst %.t,out/%.fpga.bmp,$(SRCS))
 
@@ -10,6 +13,8 @@ TERRA = $(TERRADIR)/terra
 DARKROOM_CHIP?=xc6slx9
 
 all: $(RES)
+
+sim: $(SIM)
 
 clean: 
 	rm -f out/*

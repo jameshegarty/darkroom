@@ -242,7 +242,7 @@ function fpga.trivialRetime(AST)
   return retiming
 end
 
-local binopToVerilog={["+"]="+",["*"]="*",["<<"]="<<",[">>"]=">>",["pow"]="**",["=="]="==",["and"]="&",["-"]="-",["<"]="<",[">"]=">",["<="]="<=",[">="]=">="}
+local binopToVerilog={["+"]="+",["*"]="*",["<<"]="<<<",[">>"]=">>>",["pow"]="**",["=="]="==",["and"]="&",["-"]="-",["<"]="<",[">"]=">",["<="]="<=",[">="]=">="}
 local binopToVerilogBoolean={["=="]="==",["and"]="&&",["~="]="!="}
 
 function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth, imageHeight, kernelGraphRoot, pipelineRetiming, shift, options)
@@ -635,7 +635,6 @@ end
               print( n.type:baseType():isBool() , n.lhs.type:baseType():isInt() , n.rhs.type:baseType():isInt(),n.type:baseType():isBool() , n.lhs.type:baseType():isUint() , n.rhs.type:baseType():isUint())
               assert(false)
             end
-
           elseif n.type:isBool() then
             local op = binopToVerilogBoolean[n.op]
             if type(op)~="string" then print("OP_BOOLEAN",n.op); assert(false) end
@@ -643,7 +642,11 @@ end
           else
             local op = binopToVerilog[n.op]
             if type(op)~="string" then print("OP",n.op); assert(false) end
-            table.insert(resClockedLogic, n:name().."_c"..c.." <= "..inputs.lhs[c]..op..inputs.rhs[c]..";\n")
+            local lhs = inputs.lhs[c]
+            if n.lhs.type:baseType():isInt() then lhs = "$signed("..lhs..")" end
+            local rhs = inputs.rhs[c]
+            if n.rhs.type:baseType():isInt() then rhs = "$signed("..rhs..")" end
+            table.insert(resClockedLogic, n:name().."_c"..c.." <= "..lhs..op..rhs..";\n")
           end
 
           res = n:name().."_c"..c
