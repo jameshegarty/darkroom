@@ -525,9 +525,11 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
                              local v = "lifted"..i..term
                              liftedInputs = liftedInputs..",.lifted"..i.."({"
                              -- pack the channels
-                             for c=1,n[v].type:channels() do
+                             local c = n[v].type:channels()
+                             while c>=1 do
                                liftedInputs = liftedInputs..args[v][1][c]
-                               if c~=n[v].type:channels() then liftedInputs = liftedInputs.."," end
+                               if c~=1 then liftedInputs = liftedInputs.."," end
+                               c = c - 1
                              end
                              liftedInputs = liftedInputs.."})"
                            end
@@ -562,8 +564,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
             adddecl(bb, {declareWire(n.type:baseType(), n:cname(c))})
             adddecl(bb, {rname.." reduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(c)..")"})
             local bits = n.type:baseType():sizeof()*8
-            local cinv = n.type:channels()-c+1
-            for i=0,partials do adddecl(bb,{",.partial_"..i.."("..n:name().."_partial"..i.."["..(bits*cinv-1)..":"..(bits*(cinv-1)).."])"}) end
+            for i=0,partials do adddecl(bb,{",.partial_"..i.."("..n:name().."_partial"..i.."["..(bits*c-1)..":"..(bits*(c-1)).."])"}) end
             adddecl(bb,{");\n"})
             table.insert(finalOut, n:cname(c))
           end
@@ -790,7 +791,10 @@ end
           table.insert(resDeclarations,str..");\n")
           res = n:cname(c)
         elseif n.kind=="lifted" then
-          res = "lifted"..n.id
+          local src = "lifted"..n.id
+          local tys = n.type:baseType():sizeof()*8
+          table.insert(resDeclarations,declareWire( n.type:baseType(), n:cname(c), src.."["..(c*tys-1)..":"..((c-1)*tys).."]"," // channelselect lifted" ))
+          res = n:cname(c)
         else
           print(n.kind)
           assert(false)
