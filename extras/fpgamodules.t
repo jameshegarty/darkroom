@@ -138,14 +138,17 @@ function modules.reduce(compilerState, op, cnt, datatype, argminVars)
 end
 
 lbCnt = 0
-function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampledInput, upsampledYConsumer, gatherAddr)
-  assert(type(maxdelay)=="number")
+-- notice that we take in a maxdelay in X and in Y. This is because a 1d maxdelay doesn't capture all possible options.
+-- eg one 1d maxdelay may turn into a large 2d maxdelay in X, another a small one - we want the max in both dimensions
+function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumers, downsampledInput, upsampledYConsumer, gatherAddr)
+  assert(type(maxdelayX)=="number")
+  assert(type(maxdelayY)=="number")
   assert(type(downsampledInput)=="boolean")
   assert(type(upsampledYConsumer)=="boolean")
 
   assert(darkroom.type.isType(datatype))
   local bytesPerPixel = datatype:sizeof()
-  local name = "Linebuffer_"..numToVarname(maxdelay).."delay_"..bytesPerPixel.."bpp_"..stripWidth.."w_"..lbCnt
+  local name = "Linebuffer_"..numToVarname(maxdelayX).."delayX_"..numToVarname(maxdelayY).."delayY_"..bytesPerPixel.."bpp_"..stripWidth.."w_"..lbCnt
   lbCnt = lbCnt + 1
 
   local outputs = ""
@@ -176,7 +179,7 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampl
   table.insert(t,"always @ (posedge CLK) begin validInThisCycleX <= validInNextCycleX; end\n")
   table.insert(t,"always @ (posedge CLK) begin validInThisCycleY <= validInNextCycleY; end\n")
 
-  local xpixels, lines = delayToXY(maxdelay, stripWidth)
+  local xpixels, lines = maxdelayX, maxdelayY
   if upsampledYConsumer then lines = lines + 1 end -- if we're usampling in Y, we have to store at least 1 line, b/c we need to be able to repeat that line
   print("linebuffer lines",lines,"xpixels",xpixels)
 

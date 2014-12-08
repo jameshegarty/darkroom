@@ -1048,8 +1048,9 @@ function fpga.collectLinebuffers(kernelGraph, options, pipelineRetiming)
                   -- we want to have the extra BRAM so that we can gather from it
                   t.wasUpsampledY = true 
 
-                  t.linebufferSize = -s:min(1)-s:min(2)*t.effStripWidth+1
-                  print("t.linebufferSize",t.linebufferSize)
+                  t.linebufferSizeX = -s:min(1)
+                  t.linebufferSizeY = -s:min(2)
+                  print("t.linebufferSize",t.linebufferSizeX,t.linebufferSizeY)
                   t.declarations={}
                   t.lboutputs =""
 
@@ -1082,7 +1083,8 @@ function fpga.collectLinebuffers(kernelGraph, options, pipelineRetiming)
         
         res.consumers = {}
         res.declarations = {}
-        res.linebufferSize = 0 -- note: this code duplicates kernelGraph:bufferSize()
+        res.linebufferSizeX = 0 -- note: this code duplicates kernelGraph:bufferSize()
+        res.linebufferSizeY = 0 -- note: this code duplicates kernelGraph:bufferSize()
         res.scale = looprate(node.kernel.scaleN1,node.kernel.scaleD1,1)
         res.effStripWidth = options.stripWidth/res.scale
         print("EFFSW", res.effStripWidth, options.stripWidth,node.kernel.scaleD1)
@@ -1102,11 +1104,15 @@ function fpga.collectLinebuffers(kernelGraph, options, pipelineRetiming)
             -- that it's less confusing.
             local extraPipeDelay = pipelineRetiming[v]-pipelineRetiming[node]-v:internalDelay()
             local stencil = v.kernel:stencil(node,v.kernel):translate(-extraPipeDelay,0,0)
+local RS = v.kernel:stencil(node,v.kernel)
+print("RS",RS:max(1),-extraPipeDelay,stencil:max(1))
+            assert(stencil:max(1)<=0) -- needed for our stupid linebuffer design
             table.insert(res.consumers, stencil)
             
             -- note: this code duplicates kernelGraph:bufferSize()
             local b = -stencil:min(1)-stencil:min(2)*res.effStripWidth
-            res.linebufferSize = math.max(res.linebufferSize,b)
+            res.linebufferSizeX = math.max(res.linebufferSizeX,-stencil:min(1))
+            res.linebufferSizeY = math.max(res.linebufferSizeY,-stencil:min(2))
             
             for x=stencil:min(1),stencil:max(1) do
               for y=stencil:min(2), stencil:max(2) do
@@ -1136,12 +1142,12 @@ function fpga.allocateLinebuffers(node, kernelGraph, outputLinebuffers)
 
   for k,v in pairs(outputLinebuffers) do
     if v.kind=="regular" then
-      local lbname, lbmod = fpga.modules.linebuffer(v.linebufferSize, node.kernel.type, v.effStripWidth, v.consumers, v.scale > 1, v.wasUpsampledY)
+      local lbname, lbmod = fpga.modules.linebuffer(v.linebufferSizeX, v.linebufferSizeY, node.kernel.type, v.effStripWidth, v.consumers, v.scale > 1, v.wasUpsampledY)
       result = concat(result, lbmod)
       pipeline = concat(pipeline,v.declarations)
       table.insert(pipeline,lbname.." kernelBuffer_"..node:name().."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.validInNextCycleX(kernelValidOutNextCycleX_"..node:name().."),.validInNextCycleY(kernelValidOutNextCycleY_"..node:name().."));\n")
     else
-      local lbname, lbmod = fpga.modules.linebuffer(v.linebufferSize, node.kernel.type, v.effStripWidth, v.consumers, v.scale > 1, v.wasUpsampledY, true)
+      local lbname, lbmod = fpga.modules.linebuffer(v.linebufferSizeX, v.linebufferSizeY, node.kernel.type, v.effStripWidth, v.consumers, v.scale > 1, v.wasUpsampledY, true)
       result = concat(result, lbmod)
       table.insert(pipeline,lbname.." kernelBufferGatherColumn_"..node:name().."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.validInNextCycleX(kernelValidOutNextCycleX_"..node:name().."),.validInNextCycleY(kernelValidOutNextCycleY_"..node:name().."),.gatherAddress());\n")
     end

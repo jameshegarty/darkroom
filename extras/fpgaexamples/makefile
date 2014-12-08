@@ -1,6 +1,8 @@
 SRCS = $(wildcard *.t)
 RES = $(patsubst %.t,out/%.v,$(SRCS))
 RES += $(patsubst %.t,out/%.sim.v,$(SRCS))
+RES += $(patsubst %.t,out/%.sim.bmp,$(SRCS))
+RES += $(patsubst %.t,out/%.sim.correct.txt,$(SRCS))
 RES += $(patsubst %.t,out/%.bit,$(SRCS))
 RES += $(patsubst %.t,out/%.fpga.bmp,$(SRCS))
 
@@ -12,6 +14,10 @@ all: $(RES)
 clean: 
 	rm -f out/*
 	rm -rf build_*
+
+out/%.sim.correct.txt : %.t out/%.sim.bmp
+	diff out/$*.bmp out/$*.sim.bmp > out/$*.sim.diff
+	test ! -s out/$*.sim.diff && touch $@
 
 out/%.vga.v out/%.sim.v out/%.v : %.t
 	$(TERRA) $< $(DARKROOM_CHIP)

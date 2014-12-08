@@ -33,6 +33,28 @@ function schedule(graph, largestScaleY, HWWidth)
 
           if s > shifts[node] then shifts[node] = s end
         end
+
+        -- fixup round: it's possible that in the process of calculating multiple shifts,
+        -- some of them pushed X before 0. Go through and fixup.
+        -- does this terminate? probably not
+        if type(HWWidth)=="number" then
+          for k,v in node:inputs() do
+            local s = shifts[node]-shifts[v]
+            local sy = -math.floor(s/HWWidth)
+            local sx = -(s+sy*HWWidth)
+            if node:maxUse(1,v)+sx>0 then
+               shifts[node] = shifts[node] + node:maxUse(1,v)+sx
+            end
+          end
+
+          -- verify
+          for k,v in node:inputs() do
+            local s = shifts[node]-shifts[v]
+            local sy = -math.floor(s/HWWidth)
+            local sx = -(s+sy*HWWidth)
+            assert(node:maxUse(1,v)+sx <= 0)
+          end
+        end
       end 
     end)
 
@@ -144,6 +166,7 @@ function shift(graph, shifts, largestScaleY, HWWidth)
 
                   r.relY = synthRel(r.relY, sy):optimize()
                   r.relX = synthRel(r.relX, sx):optimize()
+
                   r._relXTAST = darkroom.typedAST._toTypedAST(r.relX) -- used to track dependencies for loop invariant code motion
                   r._relYTAST = darkroom.typedAST._toTypedAST(r.relY) -- used to track dependencies for loop invariant code motion
                 else
