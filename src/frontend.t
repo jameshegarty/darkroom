@@ -621,11 +621,11 @@ function darkroom.compileTimeProcess(imfunc, envfn)
       while inp["loadname"..i] do 
         newNode["loadid"..i] = {}
 
-        local expr = inp["loadexpr"..i]:S("var"):process(
+        newNode["loadexpr"..i] = inp["loadexpr"..i]:S("var"):process(
           function(fin) if fin.name==inp.iteratorName then return newNode.iterationvar end end)
 
-        newNode["loadnode"..i] = darkroom.ast.new({kind="iterateload", id = i, iterateNode = newNode["__loadid"..i], mapreduceNodeKey = newNode.__key, varname=inp["loadname"..i], _expr = expr}):copyMetadataFrom(inp)
-        newNode["loadexpr"..i] = nil
+        -- we include the expr here for typechecking purposes, but have it not be codegened
+        newNode["loadnode"..i] = darkroom.ast.new({kind="iterateload", id = i, iterateNode = newNode["__loadid"..i], mapreduceNodeKey = newNode.__key, varname=inp["loadname"..i], _expr=newNode["loadexpr"..i]}):copyMetadataFrom(inp)
         vars[inp["loadname"..i]] = 1
         varnode[inp["loadname"..i]] = newNode["loadnode"..i]
         i=i+1 

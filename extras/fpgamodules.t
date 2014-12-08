@@ -148,6 +148,7 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
 
   assert(darkroom.type.isType(datatype))
   local bytesPerPixel = datatype:sizeof()
+  local extraBits = math.log(bytesPerPixel)/math.log(2)
   local name = "Linebuffer_"..numToVarname(maxdelayX).."delayX_"..numToVarname(maxdelayY).."delayY_"..bytesPerPixel.."bpp_"..stripWidth.."w_"..lbCnt
   lbCnt = lbCnt + 1
 
@@ -160,7 +161,9 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
     end
   end
 
-  local t = {"module "..name.."(input CLK,\n"..outputs.."input ["..(bytesPerPixel*8-1)..":0] in, input validInNextCycleX, input validInNextCycleY);\n"}
+  local gatherAddrStr = ""
+  if gatherAddr then gatherAddrStr = ", input ["..(10-extraBits)..":0] gatherAddress" end
+  local t = {"module "..name.."(input CLK,\n"..outputs.."input ["..(bytesPerPixel*8-1)..":0] in, input validInNextCycleX, input validInNextCycleY"..gatherAddrStr..");\n"}
 
   table.insert(t,"wire validInNextCycle;\n")
   table.insert(t,"assign validInNextCycle = validInNextCycleX & validInNextCycleY;\n")
@@ -245,8 +248,6 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
     assert(stripWidth*bytesPerPixel < BRAM_SIZE_BYTES)
     assert(bytesPerPixel==1 or bytesPerPixel==2 or bytesPerPixel==4)
 
-    local extraBits = math.log(bytesPerPixel)/math.log(2)
-
     local smallestX = 0
     for k,v in ipairs(consumers) do
       -- HACK: we restrict the entire stencil X to always be <=0 to simplify the linebuffer design
@@ -308,6 +309,8 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
       end
 
       local DIPA = "1'b0"
+      local lbReadAddrStr = "lbReadAddr"
+      if gatherAddr then lbReadAddrStr = lbReadAddrStr.."+gatherAddress" end
       if bytesPerPixel==4 then DIPA = "4'b0" end -- needs to be correct for the simulator
       table.insert(t, [=[RAMB16_S]=]..(bytesPerPixel*9)..[=[_S]=]..(bytesPerPixel*9)..[=[ #(]=]..configParams..[=[) ram_line]=]..numToVarname(i)..[=[(
 .DIPA(]=]..DIPA..[=[), // needed for the spartan 6 chips for some reason
@@ -320,7 +323,7 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
 
 .WEB(1'b0),
 .ENB(1'b1),
-.ADDRB(lbReadAddr),
+.ADDRB(]=]..lbReadAddrStr..[=[),
 .DOB(readout_]=]..numToVarname(i)..[=[),
 
 .CLKA(CLK),

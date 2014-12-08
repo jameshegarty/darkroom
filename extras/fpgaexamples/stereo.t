@@ -53,7 +53,7 @@ else
 end
 
 local vectors = makeOF(SEARCH_RADIUS,WINDOW_RADIUS,right,left)
-vectors:save("out/stereo"..SEARCH_RADIUS..".bmp")
+vectors:save("out/stereo.bmp")
 
 --------------
 fpgaEstimate = terralib.require("fpgaEstimate")
@@ -85,9 +85,8 @@ opt.stripWidth=256
 opt.stripHeight=20
 local v, metadata = fpga.compile({{leftI,"sim","left0224_sm.raw"},{rightI,"sim","right0224_sm.raw"}},{{vectors,"sim"}}, opt.stripWidth, opt.stripHeight, opt)
 
-local s = string.sub(arg[0],1,#arg[0]-2)
-io.output("out/"..s..".sim.v")
+io.output("out/stereo.sim.v")
 io.write(v)
 io.close()
 
-fpga.util.writeMetadata("out/"..s..".sim.metadata.lua", metadata)
+fpga.util.writeMetadata("out/stereo.sim.metadata.lua", metadata)

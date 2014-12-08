@@ -245,26 +245,18 @@ end
 local binopToVerilog={["+"]="+",["*"]="*",["<<"]="<<<",[">>"]=">>>",["pow"]="**",["=="]="==",["and"]="&",["-"]="-",["<"]="<",[">"]=">",["<="]="<=",[">="]=">="}
 local binopToVerilogBoolean={["=="]="==",["and"]="&&",["~="]="!="}
 
-function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth, imageHeight, kernelGraphRoot, pipelineRetiming, shift, options)
+function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth, imageHeight, kernelGraphRoot, pipelineRetiming, shift, inputLinebuffers, options)
   assert(type(imageWidth)=="number")
   assert(type(imageHeight)=="number")
   assert(darkroom.kernelGraph.isKernelGraph(kernelGraphRoot))
   assert(type(pipelineRetiming)=="table")
   assert(type(shift)=="number")
+  assert(type(inputLinebuffers)=="table")
   assert(type(options)=="table")
 
   local kernel = kernelGraphNode.kernel
 
   local inputs = ""
-
-  for k,v in kernelGraphNode:inputs() do
-    local s = kernel:stencil(v,kernel)
-    for x=s:min(1),s:max(1) do
-      for y=s:min(2), s:max(2) do
-        inputs = inputs.."input ["..(v.kernel.type:sizeof()*8-1)..":0] in_"..v:name().."_x"..numToVarname(x).."_y"..numToVarname(y)..",\n"
-      end
-    end
-  end
 
   if kernelGraphNode:inputCount()==0 then
     assert(kernel:S("load"):count()<=1)
@@ -272,6 +264,26 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
       function(n)
         inputs = "input ["..(n.type:sizeof()*8-1)..":0] in_"..n.from.."_x0_y0,\n"
       end)
+  else
+    for _, inputLinebuffer in pairs(inputLinebuffers) do
+      if inputLinebuffer.kind=="regular" then
+        for k,v in kernelGraphNode:inputs() do
+          local s = kernel:stencil(v,kernel)
+          for x=s:min(1),s:max(1) do
+            for y=s:min(2), s:max(2) do
+              inputs = inputs.."input ["..(v.kernel.type:sizeof()*8-1)..":0] in_"..v:name().."_x"..numToVarname(x).."_y"..numToVarname(y)..",\n"
+            end
+          end
+        end
+        
+      elseif inputLinebuffer.kind=="gatherColumn" then
+        local bytesPerPixel = inputLinebuffer.from.kernel.type:sizeof()
+        local extraBits = math.log(bytesPerPixel)/math.log(2)
+        inputs = inputs.."output ["..(10-extraBits)..":0] gatherAddress,"
+      else
+        assert(false)
+      end
+    end
   end
 
   local result = {"module Kernel_"..kernelGraphNode:name().."(input CLK, input[12:0] inX, input[12:0] inY, output[12:0] outX, output[12:0] outY, input [7:0] cycle, output [7:0] cycleOut, \n"..inputs.."output ["..(kernel.type:sizeof()*8-1)..":0] out, input validIn, output validOutNextCycleX, output validOutNextCycleY);\n"}
@@ -593,8 +605,15 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
 
         result = concat(moduledef,result)
 
+        local iterateInputs = ""
+        local i = 1
+        while n["loadname"..i] do
+          iterateInputs = iterateInputs..".iterateload_"..n["loadname"..i].."("..inputs["loadexpr"..i][1].."),"
+          i = i + 1
+        end
+
         adddecl(bb,{declareWire(n.expr.type,"iterate_"..n:name().."_out")})
-        adddecl(bb,{"Iterate_"..n:name().." iterate_"..n:name().."(.CLK(CLK),.inX_internal(inX_internal),.inY_internal(inY_internal),.iterationvar_"..n.iteratorName.."({24'd0,cycle}),.out(iterate_"..n:name().."_out));\n"})
+        adddecl(bb,{"Iterate_"..n:name().." iterate_"..n:name().."(.CLK(CLK),.inX_internal(inX_internal),.inY_internal(inY_internal),.iterationvar_"..n.iteratorName.."({24'd0,cycle}),"..iterateInputs..".out(iterate_"..n:name().."_out));\n"})
 
         local finalOut = {}
         if n.reduceop=="sum" then
@@ -792,6 +811,8 @@ end
           end
 
           table.insert(resDeclarations,str..");\n")
+          res = n:cname(c)
+        elseif n.kind=="gatherColumn" then
           res = n:cname(c)
         elseif n.kind=="lifted" then
           local src = "lifted"..n.id
@@ -1031,9 +1052,9 @@ function fpga.collectLinebuffers(kernelGraph, options, pipelineRetiming)
           function(v)
             if v:parentCount(n.kernel)==0 then
               -- regular load
-              inputLinebuffers[n]["regular"] = 1
+              inputLinebuffers[n]["regular"] = {kind="regular"}
               if darkroom.kernelGraph.isKernelGraph(v.from) then
-                outputLinebuffers[v.from]["regular"] = 1
+                outputLinebuffers[v.from]["regular"] = {kind="regular"}
               end
             else
               for vv,_ in v:parents(n.kernel) do
@@ -1046,7 +1067,7 @@ function fpga.collectLinebuffers(kernelGraph, options, pipelineRetiming)
                   assert(s:max(2)==0)
                   assert(s:min(2)==-(vv.columnEndY-vv.columnStartY))
 
-                  local t = {kind="gatherColumn",consumers={Stencil.new():add(0,0,0):add(0,s:min(2),0)},scale=looprate(n.kernel.scaleN1,n.kernel.scaleD1,1)}
+                  local t = {kind="gatherColumn",consumers={Stencil.new():add(0,0,0):add(0,s:min(2),0)},scale=looprate(n.kernel.scaleN1,n.kernel.scaleD1,1),to=n, from=v.from}
                   t.effStripWidth = options.stripWidth/t.scale
                   assert(t.effStripWidth==math.floor(t.effStripWidth))
 
@@ -1071,9 +1092,9 @@ function fpga.collectLinebuffers(kernelGraph, options, pipelineRetiming)
                   outputLinebuffers[v.from][vv] = t
                 else
                   -- regular load
-                  inputLinebuffers[n]["regular"] = 1
+                  inputLinebuffers[n]["regular"] = {kind="regular"}
                   if darkroom.kernelGraph.isKernelGraph(v.from) then
-                    outputLinebuffers[v.from]["regular"] = 1
+                    outputLinebuffers[v.from]["regular"] = {kind="regular"}
                   end
                 end
               end
@@ -1154,9 +1175,13 @@ function fpga.allocateLinebuffers(node, kernelGraph, outputLinebuffers)
       pipeline = concat(pipeline,v.declarations)
       table.insert(pipeline,lbname.." kernelBuffer_"..node:name().."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.validInNextCycleX(kernelValidOutNextCycleX_"..node:name().."),.validInNextCycleY(kernelValidOutNextCycleY_"..node:name().."));\n")
     else
+      local bytesPerPixel = node.kernel.type:sizeof()
+      local extraBits = math.log(bytesPerPixel)/math.log(2)
+      local varname = "gatherAddress_"..v.from:name().."_to_"..v.to:name()
+      table.insert(pipeline, "wire ["..(10-extraBits)..":0] "..varname..";\n")
       local lbname, lbmod = fpga.modules.linebuffer(v.linebufferSizeX, v.linebufferSizeY, node.kernel.type, v.effStripWidth, v.consumers, v.scale > 1, v.wasUpsampledY, true)
       result = concat(result, lbmod)
-      table.insert(pipeline,lbname.." kernelBufferGatherColumn_"..node:name().."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.validInNextCycleX(kernelValidOutNextCycleX_"..node:name().."),.validInNextCycleY(kernelValidOutNextCycleY_"..node:name().."),.gatherAddress());\n")
+      table.insert(pipeline,lbname.." kernelBufferGatherColumn_"..node:name().."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.validInNextCycleX(kernelValidOutNextCycleX_"..node:name().."),.validInNextCycleY(kernelValidOutNextCycleY_"..node:name().."),.gatherAddress("..varname.."));\n")
     end
   end
   return pipeline, result
@@ -1254,7 +1279,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
   local totalDelay = kernelGraph:visitEach(
     function(node, inputArgs)
       if node.kernel~=nil then
-        local verilogKernel = fpga.codegenKernel(compilerState, node, kernelRetiming[node], imageWidth, imageHeight, kernelGraph, pipelineRetiming, shifts[node],options)
+        local verilogKernel = fpga.codegenKernel(compilerState, node, kernelRetiming[node], imageWidth, imageHeight, kernelGraph, pipelineRetiming, shifts[node], inputLinebuffers[node], options)
         result = concat(result, verilogKernel)
         
         local inputs = ""
@@ -1267,12 +1292,25 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
             end)
           inputXY = ".inX(inX),.inY(inY),.validIn(inValid),.cycle(cycle)"
         else
-          for _,v in node:inputs() do
-            local s = node.kernel:stencil(v,node.kernel)
-            for x=s:min(1),s:max(1) do
-              for y=s:min(2), s:max(2) do
-                inputs = inputs..".in_"..v:name().."_x"..numToVarname(x).."_y"..numToVarname(y).."("..v:name().."_to_"..node:name().."_x"..numToVarname(x).."_y"..numToVarname(y).."),"
+          for _,inputBuffer in pairs(inputLinebuffers[node]) do
+            if inputBuffer.kind=="regular" then
+              for _,v in node:inputs() do
+                local s = node.kernel:stencil(v,node.kernel)
+                for x=s:min(1),s:max(1) do
+                  for y=s:min(2), s:max(2) do
+                    inputs = inputs..".in_"..v:name().."_x"..numToVarname(x).."_y"..numToVarname(y).."("..v:name().."_to_"..node:name().."_x"..numToVarname(x).."_y"..numToVarname(y).."),"
+                  end
+                end
               end
+            elseif inputBuffer.kind=="gatherColumn" then
+              -- actually, this is an output
+              inputs = inputs..".gatherAddress(gatherAddress_"..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."),"
+
+              for y=-inputBuffer.linebufferSizeY,0 do
+                inputs = inputs..".in_gatherColumn_x0_y"..numToVarname(y).."("..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."_gatherColumn_x0_y"..numToVarname(y)..")"
+              end
+            else
+              assert(false)
             end
           end
           local xySource = node:xySource(kernelGraph,pipelineRetiming)
