@@ -37,7 +37,7 @@ function darkroom.type.array(_type,size)
   return darkroom.type._array[_type][size]
 end
 
-function darkroom.type.fromTerraType(ty)
+function darkroom.type.fromTerraType(ty, linenumber, offset, filename)
   if darkroom.type.isType(ty) then return ty end
 
   assert(terralib.types.istype(ty))
@@ -61,6 +61,9 @@ function darkroom.type.fromTerraType(ty)
   elseif ty==bool then
     return darkroom.type.bool()
   elseif ty:isarray() then
+    if ty.N <=0 then
+      darkroom.error("Array can not have size 0",linenumber,offset,filename)
+    end
     return darkroom.type.array(darkroom.type.fromTerraType(ty.type),ty.N)
   end
 

@@ -200,7 +200,7 @@ function darkroom.evalEscape(luavalue, ast)
 
     return darkroom.ast.new({kind="value",value=luavalue}):copyMetadataFrom(ast)
   elseif type(luavalue)=="table" and terralib.types.istype(luavalue) then
-    return darkroom.ast.new({kind="type",type=darkroom.type.fromTerraType(luavalue)}):copyMetadataFrom(ast)
+    return darkroom.ast.new({kind="type",type=darkroom.type.fromTerraType(luavalue,ast:linenumber(), ast:offset(), ast:filename())}):copyMetadataFrom(ast)
   elseif type(luavalue)=="table" then
     for k,v in pairs(luavalue) do
       if type(k)~="number" then 
