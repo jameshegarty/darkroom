@@ -26,12 +26,15 @@ function typedASTFunctions:bbDependencies(root)
       assert(self:parentCount(root)>0)
       local wasMR = false
       for parentNode, key in self:parents(root) do
-        if parentNode.kind=="mapreduce" or parentNode.kind=="filter" or parentNode.kind=="iterate" then
+        if parentNode.kind=="iterate" and key~="expr" then
+          -- this might potentially infinite loop?
+          darkroom.typedAST._bbDependenciesCache[root][self] = parentNode.expr:bbDependencies(root)
+        elseif parentNode.kind=="mapreduce" or parentNode.kind=="filter" or parentNode.kind=="iterate" then
           assert(self:parentCount(root)==1) -- theoretically possible this is false?
           -- generate a new block for this MR
           wasMR = true
           local newbb = {level=0,parents={},controlDep={}}
-          if parentNode.kind=="filter" or parentNode.kind=="iterate"  then newbb.controlDep[newbb]=1 end -- filter ifelse has control dep on itself
+          if parentNode.kind=="filter" or parentNode.kind=="iterate" then newbb.controlDep[newbb]=1 end -- filter ifelse has control dep on itself
           for bb,_ in pairs(parentNode:bbDependencies(root)) do
             newbb.level = math.max(bb.level+1, newbb.level)
             newbb.parents[bb] = 1
@@ -135,12 +138,19 @@ function typedASTFunctions:calculateMinBB(root)
   end
 
   ------------------
+  -- consider map i=-1,1 reduce(sum) map j=-1,1 reduce(sum) i+j end end
+  -- we must place (i+j) at the deepest level (inside the second MR), or else
+  -- we will not have all the data we need. This is why we place stuff in the deepest level.
   local cb = self:calculateBB(root)
   local deepest = darkroom.typedAST._topbb
   for k,v in pairs(cb) do
     if k.level > deepest.level then deepest = k end
   end
 
+  -- consider map i=-1,1 reduce(sum) map j=-1,1 reduce(sum) (i+j)+(iterate w=-1-1 reduce(sum) (i+j) end) end end
+  -- We want to put the (i+j) above the control dependency, b/c we only pass data down into deeper scopes.
+  -- OTOH, with map i=-1,1 reduce(sum) map j=-1,1 reduce(sum) (iterate w=-1-1 reduce(sum) (i+j) end) end end
+  -- it's ok to put it in the control dependency
   if shallowest~=nil and shallowest.level>deepest.level then
     return shallowest
   else
@@ -352,7 +362,7 @@ function typedASTFunctions:stencil(input, typedASTRoot)
 
     local i=1
     while self["loadname"..i] do
-      s = s:unionWith(self["loadexpr"..i]:stencil(input, typedASTRoot))
+      s = s:unionWith(self["_loadexpr"..i]:stencil(input, typedASTRoot))
       i = i + 1
     end
 
@@ -365,16 +375,16 @@ function typedASTFunctions:stencil(input, typedASTRoot)
     return Stencil.new()
 --    return self._expr:stencil(input, typedASTRoot)
   elseif self.kind=="gatherColumn" then
-    assert(self.input.kind=="load")
+    assert(self._input.kind=="load")
 
     local s = self.x:stencil(input, typedASTRoot)
 
-    if input~=nil and self.input.from~=input then
+    if input~=nil and self._input.from~=input then
       return s -- not the input we're interested in
     else
       -- note the kind of nasty hack we're doing here: gathers read from loads, and loads can be shifted.
       -- so we need to shift this the same as the load
-      return darkroom.typedAST.transformArea(self.input.relX, self.input.relY, typedASTRoot):sum( Stencil.new():add(self.columnStartX,self.columnStartY,0):add(self.columnEndX,self.columnEndY,0)):unionWith(s)
+      return darkroom.typedAST.transformArea(self._input.relX, self._input.relY, typedASTRoot):sum( Stencil.new():add(self.columnStartX,self.columnStartY,0):add(self.columnEndX,self.columnEndY,0)):unionWith(s)
     end
 
   elseif self.kind=="filter" then
@@ -801,8 +811,8 @@ function darkroom.typedAST._toTypedAST(inast)
           darkroom.error("Error, y argument to gather must be int but is "..ast.y.type:str(), origast:linenumber(), origast:offset())
         end
       elseif ast.kind=="gatherColumn" then
-        ast.type = inputs.input[1].type
-        ast.input = inputs.input[1]
+        ast.type = inputs._input[1].type
+        ast._input = inputs._input[1]
         ast.x = inputs.x[1]
 
         for _,v in pairs({"rowWidth","columnStartX","columnEndX","columnStartY","columnEndY"}) do
@@ -895,7 +905,7 @@ function darkroom.typedAST._toTypedAST(inast)
 
         local i = 1
         while ast["loadname"..i] do
-          ast["loadexpr"..i] = inputs["loadexpr"..i][1]
+          ast["_loadexpr"..i] = inputs["_loadexpr"..i][1]
           i = i + 1
         end
 

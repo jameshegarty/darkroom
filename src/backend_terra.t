@@ -811,7 +811,7 @@ function eliminateIterate(typedAST)
             local yast = {kind="value", value=y, type=darkroom.type.int(32)}
             yast = darkroom.typedAST.new(yast):copyMetadataFrom(n)
 
-            local g = {kind="gather",x=xb,y=yast,input=n.input,type=n.type:baseType(),minX=n.columnStartX,maxX=n.columnEndX,minY=n.columnStartY,maxY=n.columnEndY}
+            local g = {kind="gather",x=xb,y=yast,input=n._input,type=n.type:baseType(),minX=n.columnStartX,maxX=n.columnEndX,minY=n.columnStartY,maxY=n.columnEndY}
             g = darkroom.typedAST.new(g):copyMetadataFrom(n)
 
             array["expr"..c] = g

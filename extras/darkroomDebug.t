@@ -389,7 +389,7 @@ function astPrintPrettys(root)
     out = out..inputs.y..",\n"
     out = out.."maxX = "..tostring(self.maxX)..",minX = "..tostring(self.minX)..", maxY = "..tostring(self.maxY)..", minY = "..tostring(self.minY)..", clamp = "..tostring(self.clamp)..")"
   elseif self.kind=="gatherColumn" then
-    out = "gatherColumn("..inputs.input..","..inputs.x..")"
+    out = "gatherColumn("..inputs._input..","..inputs.x..")"
   elseif self.kind=="index" then
     out = inputs.expr.."["..inputs.index.."]"
   elseif self.kind=="var" then
@@ -645,19 +645,28 @@ function typedASTPrintPrettys(root)
       vars = vars.."_mr_"..self["varname"..i]..tostring(self["__varid"..i]).."="..self["varlow"..i]..","..self["varhigh"..i].." "
       i=i+1
     end
+
+    for k,v in pairs(self) do 
+      if k:sub(1,6)=="lifted" then
+        vars = vars..k.." = "..inputs[k].." "
+      end
+    end
+
     out = "map "..vars.." reduce("..self.reduceop..") "..inputs.expr.." end"
   elseif self.kind=="mapreducevar" then
     out = "_mr_"..tostring(self.mapreduceNode).."_"..self.id
   elseif self.kind=="iterationvar" then
     out = "_itervar_"..self.varname
   elseif self.kind=="gatherColumn" then
-    out = "gatherColumn("..inputs.input..","..inputs.x..")"
+    out = "gatherColumn("..inputs._input..","..inputs.x..")"
   elseif self.kind=="iterateload" then
     out="_iterload_"..self.varname
   elseif self.kind=="iterate" then
     out="iterate "..self.iteratorName.."="..self.iterationSpaceLow..","..self.iterationSpaceHigh.." reduce("..self.reduceop..") "..inputs.expr.." end"
   elseif self.kind=="filter" then
     out = "filter( "..inputs.cond..", "..inputs.expr.." )"
+  elseif self.kind=="lifted" then
+    out = "lifted"..self.id
   else
     print(self.kind)  
     assert(false)

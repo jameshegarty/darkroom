@@ -158,7 +158,7 @@ function darkroom.gather( thisast, input,x,y,maxXV,maxYV)
 end
 
 function darkroom.gatherColumn( thisast, input, x, rowWidth, columnStartX, columnEndX, columnStartY, columnEndY)
-  return darkroom.ast.new({kind="gatherColumn",input=input, x=x, rowWidth=rowWidth, columnStartX=columnStartX, columnEndX=columnEndX, columnStartY=columnStartY, columnEndY=columnEndY}):copyMetadataFrom(thisast)
+  return darkroom.ast.new({kind="gatherColumn",_input=input, x=x, rowWidth=rowWidth, columnStartX=columnStartX, columnEndX=columnEndX, columnStartY=columnStartY, columnEndY=columnEndY}):copyMetadataFrom(thisast)
 end
 
 function darkroom.filter( thisast, cond, expr )
@@ -468,7 +468,7 @@ darkroom.lang.expr = darkroom.Parser.Pratt()
     p:expect("end")
 
     local newnode = {kind="iterate",expr=expr,reduceop=reduceop, iteratorName=iterationSpaceName, iterationSpaceLow=iterationSpaceLow, iterationSpaceHigh=iterationSpaceHigh}
-    for k,v in ipairs(loads) do newnode["loadname"..k]=v[1];newnode["loadexpr"..k]=v[2]; end
+    for k,v in ipairs(loads) do newnode["loadname"..k]=v[1];newnode["_loadexpr"..k]=v[2]; end
     return darkroom.ast.new(newnode):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
   end)
 
@@ -621,13 +621,15 @@ function darkroom.compileTimeProcess(imfunc, envfn)
       while inp["loadname"..i] do 
         newNode["loadid"..i] = {}
 
-        newNode["loadexpr"..i] = inp["loadexpr"..i]:S("var"):process(
+        newNode["_loadexpr"..i] = inp["_loadexpr"..i]:S("var"):process(
           function(fin) if fin.name==inp.iteratorName then return newNode.iterationvar end end)
 
         -- we include the expr here for typechecking purposes, but have it not be codegened
-        newNode["loadnode"..i] = darkroom.ast.new({kind="iterateload", id = i, iterateNode = newNode["__loadid"..i], mapreduceNodeKey = newNode.__key, varname=inp["loadname"..i], _expr=newNode["loadexpr"..i]}):copyMetadataFrom(inp)
+--        newNode["loadnode"..i] = darkroom.ast.new({kind="iterateload", id = i, iterateNode = newNode["__loadid"..i], mapreduceNodeKey = newNode.__key, varname=inp["loadname"..i], _expr=newNode["loadexpr"..i]}):copyMetadataFrom(inp)
+--        local loadnode = darkroom.ast.new({kind="iterateload", id = i, iterateNode = newNode["__loadid"..i], mapreduceNodeKey = newNode.__key, varname=inp["loadname"..i], _expr=newNode["loadexpr"..i]}):copyMetadataFrom(inp)
         vars[inp["loadname"..i]] = 1
-        varnode[inp["loadname"..i]] = newNode["loadnode"..i]
+--        varnode[inp["loadname"..i]] = newNode["loadnode"..i]
+        varnode[inp["loadname"..i]] = newNode["_loadexpr"..i]
         i=i+1 
       end
       

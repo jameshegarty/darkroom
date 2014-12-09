@@ -277,9 +277,12 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         end
         
       elseif inputLinebuffer.kind=="gatherColumn" then
-        local bytesPerPixel = inputLinebuffer.from.kernel.type:sizeof()
+        local bytesPerPixel = inputLinebuffer.from.kernel.type:baseType():sizeof()
         local extraBits = math.log(bytesPerPixel)/math.log(2)
         inputs = inputs.."output ["..(10-extraBits)..":0] gatherAddress,"
+        for y=-inputLinebuffer.linebufferSizeY,0 do
+          inputs = inputs.."input ["..(bytesPerPixel*8-1)..":0] in_gatherColumn_x0_y"..numToVarname(y)..","
+        end
       else
         assert(false)
       end
@@ -453,7 +456,8 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
       -- insert pipeline delays
       local retimeSeen = {} -- it's possible for a node to use another node multiple times.  Don't double add its retiming delays.
       for k,v in n:inputs() do
-        if v:codegened(kernel) and (n.kind=="mapreduce" and k:sub(0,6)=="lifted")==false then -- only retime nodes we actually use
+--        if v:codegened(kernel) and (n.kind=="mapreduce" and k:sub(0,6)=="lifted")==false then -- only retime nodes we actually use
+        if v:codegened(kernel) and k:sub(1,1)~="_" and (n.kind=="mapreduce" and k:sub(0,6)=="lifted")==false then -- only retime nodes we actually use
           local delays = retiming[n] - retiming[v] - n:internalDelay()
           assert(delays>=0)
           
@@ -583,8 +587,25 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         end
         return {finalOut}
       elseif n.kind=="iterate" then
-        local moduledef = {"module Iterate_"..n:name().."(input CLK, input[12:0] inX_internal, input[12:0] inY_internal, \n"}
-        table.insert(moduledef,"input [31:0] iterationvar_"..n.iteratorName..",")
+        local moduledef = {"module Iterate_"..n:name().."(input CLK, input[12:0] inX_internal, input[12:0] inY_internal, input [7:0] cycle,\n"}
+
+        local gatherInputs = ""
+        local i=1
+        while n["loadname"..i] do
+          local le = n["_loadexpr"..i]
+          if le.kind=="gatherColumn" then
+            local bytesPerPixel = le._input.from.kernel.type:baseType():sizeof()
+            local extraBits = math.log(bytesPerPixel)/math.log(2)
+            for y=-(le.columnEndY-le.columnStartY),0 do
+              table.insert(moduledef,"input ["..(bytesPerPixel*8-1)..":0] in_gatherColumn_x0_y"..numToVarname(y)..",")
+              gatherInputs = gatherInputs..",.in_gatherColumn_x0_y"..numToVarname(y).."(in_gatherColumn_x0_y"..numToVarname(y)..")"
+            end
+          else
+            assert(false)
+          end
+
+          i = i + 1
+        end
 
         local exprbb = n.expr:calculateMinBB(kernel)
         local declexprbb = mdeclarations[exprbb]
@@ -605,15 +626,8 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
 
         result = concat(moduledef,result)
 
-        local iterateInputs = ""
-        local i = 1
-        while n["loadname"..i] do
-          iterateInputs = iterateInputs..".iterateload_"..n["loadname"..i].."("..inputs["loadexpr"..i][1].."),"
-          i = i + 1
-        end
-
         adddecl(bb,{declareWire(n.expr.type,"iterate_"..n:name().."_out")})
-        adddecl(bb,{"Iterate_"..n:name().." iterate_"..n:name().."(.CLK(CLK),.inX_internal(inX_internal),.inY_internal(inY_internal),.iterationvar_"..n.iteratorName.."({24'd0,cycle}),"..iterateInputs..".out(iterate_"..n:name().."_out));\n"})
+        adddecl(bb,{"Iterate_"..n:name().." iterate_"..n:name().."(.CLK(CLK),.inX_internal(inX_internal),.inY_internal(inY_internal),.cycle(cycle)"..table.concat(getInterface(exprbb,false))..gatherInputs..",.out(iterate_"..n:name().."_out));\n"})
 
         local finalOut = {}
         if n.reduceop=="sum" then
@@ -743,9 +757,13 @@ end
           local MR = kernel:lookup(n.mapreduceNode)
           res = "mrvar_"..MR["varname"..n.id]
         elseif n.kind=="iterationvar" then
-          res = "iterationvar_"..n.varname
+          --res = "iterationvar_"..n.varname
+          local I = kernel:lookup(n.iterateNode)
+          table.insert(resDeclarations, declareWire(n.type:baseType(), n:name(), ""," // iteration var"))
+          table.insert(resDeclarations, "assign "..n:name().." = cycle+("..valueToVerilogLL(I.iterationSpaceLow,true,32).."); // iteration var\n")
+          res = n:name()
         elseif n.kind=="iterateload" then
-          res = "iterateload_"..n.varname
+          res = "iterateload_"..n.varname.."_c"..c
         elseif n.kind=="array" then
           res = inputs["expr"..c][1]
         elseif n.kind=="index" then
@@ -813,6 +831,13 @@ end
           table.insert(resDeclarations,str..");\n")
           res = n:cname(c)
         elseif n.kind=="gatherColumn" then
+          if c==1 then
+            table.insert(resDeclarations,"assign gatherAddress = "..inputs.x[1]..";\n")
+          end
+          local tys = n.type:baseType():sizeof()*8
+          local ypos = c-(n.columnEndY-n.columnStartY+1)
+          local subc = 1
+          table.insert(resDeclarations,declareWire( n.type:baseType(), n:cname(c), "in_gatherColumn_x0_y"..numToVarname(ypos).."["..(subc*tys-1)..":"..((subc-1)*tys).."]"," // gatherColumn" ))
           res = n:cname(c)
         elseif n.kind=="lifted" then
           local src = "lifted"..n.id
@@ -1179,6 +1204,11 @@ function fpga.allocateLinebuffers(node, kernelGraph, outputLinebuffers)
       local extraBits = math.log(bytesPerPixel)/math.log(2)
       local varname = "gatherAddress_"..v.from:name().."_to_"..v.to:name()
       table.insert(pipeline, "wire ["..(10-extraBits)..":0] "..varname..";\n")
+
+      for y=-v.linebufferSizeY,0 do
+        table.insert(pipeline, "wire ["..(bytesPerPixel*8-1)..":0] "..v.from:name().."_to_"..v.to:name().."_gatherColumn_x0_y"..numToVarname(y)..";\n")
+      end
+
       local lbname, lbmod = fpga.modules.linebuffer(v.linebufferSizeX, v.linebufferSizeY, node.kernel.type, v.effStripWidth, v.consumers, v.scale > 1, v.wasUpsampledY, true)
       result = concat(result, lbmod)
       table.insert(pipeline,lbname.." kernelBufferGatherColumn_"..node:name().."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.validInNextCycleX(kernelValidOutNextCycleX_"..node:name().."),.validInNextCycleY(kernelValidOutNextCycleY_"..node:name().."),.gatherAddress("..varname.."));\n")
@@ -1307,7 +1337,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
               inputs = inputs..".gatherAddress(gatherAddress_"..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."),"
 
               for y=-inputBuffer.linebufferSizeY,0 do
-                inputs = inputs..".in_gatherColumn_x0_y"..numToVarname(y).."("..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."_gatherColumn_x0_y"..numToVarname(y)..")"
+                inputs = inputs..".in_gatherColumn_x0_y"..numToVarname(y).."("..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."_gatherColumn_x0_y"..numToVarname(y).."),"
               end
             else
               assert(false)
