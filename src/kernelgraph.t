@@ -145,7 +145,7 @@ function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
           return darkroom.typedAST.new(nn):copyMetadataFrom(n)
         end)
 
-      local effCycles = math.ceil((kernel.cycles*kernel.scaleN1*kernel.scaleN2)/(kernel.scaleD1*kernel.scaleD2))
+      local effCycles = math.ceil(kernel.cycles*ratioToScale(kernel.scaleN1,kernel.scaleD1)*ratioToScale(kernel.scaleN2,kernel.scaleD2))
       largestEffectiveCycles = math.max(effCycles, largestEffectiveCycles)
 
       if kernel.kind=="outputs" then

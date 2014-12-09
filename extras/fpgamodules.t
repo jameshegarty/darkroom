@@ -138,14 +138,18 @@ function modules.reduce(compilerState, op, cnt, datatype, argminVars)
 end
 
 lbCnt = 0
-function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampledInput, upsampledYConsumer)
-  assert(type(maxdelay)=="number")
+-- notice that we take in a maxdelay in X and in Y. This is because a 1d maxdelay doesn't capture all possible options.
+-- eg one 1d maxdelay may turn into a large 2d maxdelay in X, another a small one - we want the max in both dimensions
+function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumers, downsampledInput, upsampledYConsumer, gatherAddr)
+  assert(type(maxdelayX)=="number")
+  assert(type(maxdelayY)=="number")
   assert(type(downsampledInput)=="boolean")
   assert(type(upsampledYConsumer)=="boolean")
 
   assert(darkroom.type.isType(datatype))
   local bytesPerPixel = datatype:sizeof()
-  local name = "Linebuffer_"..numToVarname(maxdelay).."delay_"..bytesPerPixel.."bpp_"..stripWidth.."w_"..lbCnt
+  local extraBits = math.log(bytesPerPixel)/math.log(2)
+  local name = "Linebuffer_"..numToVarname(maxdelayX).."delayX_"..numToVarname(maxdelayY).."delayY_"..bytesPerPixel.."bpp_"..stripWidth.."w_"..lbCnt
   lbCnt = lbCnt + 1
 
   local outputs = ""
@@ -157,7 +161,9 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampl
     end
   end
 
-  local t = {"module "..name.."(input CLK,\n"..outputs.."input ["..(bytesPerPixel*8-1)..":0] in, input validInNextCycleX, input validInNextCycleY);\n"}
+  local gatherAddrStr = ""
+  if gatherAddr then gatherAddrStr = ", input ["..(10-extraBits)..":0] gatherAddress" end
+  local t = {"module "..name.."(input CLK,\n"..outputs.."input ["..(bytesPerPixel*8-1)..":0] in, input validInNextCycleX, input validInNextCycleY"..gatherAddrStr..");\n"}
 
   table.insert(t,"wire validInNextCycle;\n")
   table.insert(t,"assign validInNextCycle = validInNextCycleX & validInNextCycleY;\n")
@@ -176,7 +182,7 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampl
   table.insert(t,"always @ (posedge CLK) begin validInThisCycleX <= validInNextCycleX; end\n")
   table.insert(t,"always @ (posedge CLK) begin validInThisCycleY <= validInNextCycleY; end\n")
 
-  local xpixels, lines = delayToXY(maxdelay, stripWidth)
+  local xpixels, lines = maxdelayX, maxdelayY
   if upsampledYConsumer then lines = lines + 1 end -- if we're usampling in Y, we have to store at least 1 line, b/c we need to be able to repeat that line
   print("linebuffer lines",lines,"xpixels",xpixels)
 
@@ -242,8 +248,6 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampl
     assert(stripWidth*bytesPerPixel < BRAM_SIZE_BYTES)
     assert(bytesPerPixel==1 or bytesPerPixel==2 or bytesPerPixel==4)
 
-    local extraBits = math.log(bytesPerPixel)/math.log(2)
-
     local smallestX = 0
     for k,v in ipairs(consumers) do
       -- HACK: we restrict the entire stencil X to always be <=0 to simplify the linebuffer design
@@ -305,6 +309,8 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampl
       end
 
       local DIPA = "1'b0"
+      local lbReadAddrStr = "lbReadAddr"
+      if gatherAddr then lbReadAddrStr = lbReadAddrStr.."+gatherAddress" end
       if bytesPerPixel==4 then DIPA = "4'b0" end -- needs to be correct for the simulator
       table.insert(t, [=[RAMB16_S]=]..(bytesPerPixel*9)..[=[_S]=]..(bytesPerPixel*9)..[=[ #(]=]..configParams..[=[) ram_line]=]..numToVarname(i)..[=[(
 .DIPA(]=]..DIPA..[=[), // needed for the spartan 6 chips for some reason
@@ -317,7 +323,7 @@ function modules.linebuffer(maxdelay, datatype, stripWidth, consumers, downsampl
 
 .WEB(1'b0),
 .ENB(1'b1),
-.ADDRB(lbReadAddr),
+.ADDRB(]=]..lbReadAddrStr..[=[),
 .DOB(readout_]=]..numToVarname(i)..[=[),
 
 .CLKA(CLK),
@@ -514,11 +520,13 @@ module sim;
   wire []=]..(outputBytes*8-1)..[=[:0] pipelineOutput;
   reg [12:0] posX = 0;
   reg [12:0] posY = 0;
+  reg [7:0] cycle = 0;
   reg inValid = 0;
   wire outValid;
   integer realX = ]=]..(stripWidth+metadata.padMaxX-1)..[=[;
   integer realY = ]=]..(metadata.padMinY-1)..[=[;
-  integer addr = -PIPE_DELAY+1-]=]..outputShift..[=[;]=]
+  integer addr = -PIPE_DELAY+1-]=]..outputShift..[=[;
+]=]
 
   local i=1
   while metadata["inputFile"..i] do
@@ -530,7 +538,7 @@ module sim;
 res = res..[=[  reg [10000:0] outputFilename; 
   reg [7:0] i = 0;
 
-  Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInput),.out(pipelineOutput),.inValid(inValid),.outValid(outValid));
+  Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInput),.out(pipelineOutput),.inValid(inValid),.outValid(outValid),.cycle(cycle));
 
   initial begin
    $display("HELLO");]=]
@@ -551,6 +559,7 @@ res = res..[=[
    // prime the pipe
    posX = realX;
    posY = realY;
+   cycle = 0;
    inValid = 0;
    CLK = 0;
    #10
@@ -561,7 +570,9 @@ res = res..[=[
    while (realY < ]=]..(imageHeight+metadata.padMaxY)..[=[) begin
      realX = ]=]..(metadata.padMinX)..[=[;
      while (realX < ]=]..(stripWidth+metadata.padMaxX)..[=[) begin
-       if ( realX>=0 && realX<]=]..stripWidth..[=[ && realY>=0 && realY <]=]..imageHeight..[=[ ) begin
+       cycle = 0;
+       while (cycle < ]=]..metadata.cycles..[=[) begin
+         if ( realX>=0 && realX<]=]..stripWidth..[=[ && realY>=0 && realY <]=]..imageHeight..[=[ ) begin
 ]=]
 
 local i=1
@@ -585,6 +596,8 @@ res = res..[=[       end else begin
        CLK = 1;
        #10
 //     $display(modOutput);
+         cycle = cycle + 1;
+       end
 
        if(addr>=0 && outValid) begin 
          i = 0;
@@ -605,14 +618,19 @@ res = res..[=[       end else begin
 
    realX = ]=]..(metadata.padMinX)..[=[;
    while (addr<0) begin
-     pipelineInput = 0;
-     posX = realX;
-     posY = realY;
-     inValid = 1;
-     CLK = 0;
-     #10
-     CLK = 1;
-     #10
+     cycle = 0;
+     while (cycle < ]=]..metadata.cycles..[=[) begin
+       pipelineInput = 0;
+       posX = realX;
+       posY = realY;
+       inValid = 1;
+       CLK = 0;
+       #10
+       CLK = 1;
+       #10
+       cycle = cycle + 1;
+     end
+
      if (outValid) begin 
        i=0;
        while( i<]=]..outputBytes..[=[) begin

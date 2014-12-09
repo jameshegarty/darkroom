@@ -347,14 +347,23 @@ function typedASTFunctions:stencil(input, typedASTRoot)
     return s:unionWith(self.expr:stencil(input, typedASTRoot))
   elseif self.kind=="iterate" then
     local s = Stencil.new()
+
+    s = s:unionWith(self.expr:stencil(input, typedASTRoot))
+
     local i=1
-    return s:unionWith(self.expr:stencil(input, typedASTRoot))
+    while self["loadname"..i] do
+      s = s:unionWith(self["loadexpr"..i]:stencil(input, typedASTRoot))
+      i = i + 1
+    end
+
+    return s
   elseif self.kind=="mapreducevar" then
     return Stencil.new()
   elseif self.kind=="iterationvar" then
     return Stencil.new()
   elseif self.kind=="iterateload" then
-    return self._expr:stencil(input, typedASTRoot)
+    return Stencil.new()
+--    return self._expr:stencil(input, typedASTRoot)
   elseif self.kind=="gatherColumn" then
     assert(self.input.kind=="load")
 
@@ -721,7 +730,8 @@ function darkroom.typedAST._toTypedAST(inast)
         ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
       elseif ast.kind=="iterateload" then
         ast.type = inputs._expr[1].type
-        ast._expr = inputs._expr[1]
+--        ast._expr = inputs._expr[1] -- we keep this around to make the stencil, kernelGraph, and code motion stuff work correctly
+        ast._expr = nil
       elseif ast.kind=="tap" then
         -- taps should be tagged with type already
         ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
@@ -882,6 +892,13 @@ function darkroom.typedAST._toTypedAST(inast)
         end
 
         ast.expr = inputs.expr[1]
+
+        local i = 1
+        while ast["loadname"..i] do
+          ast["loadexpr"..i] = inputs["loadexpr"..i][1]
+          i = i + 1
+        end
+
       elseif ast.kind=="filter" then
         ast.cond = inputs.cond[1]
         ast.expr = inputs.expr[1]

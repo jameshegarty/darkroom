@@ -43,14 +43,14 @@ function darkroom.frontEnd(ast, options)
 
   if options.callbackAST~=nil then options.callbackAST(ast) end
 
-  local typedAST, largestScaleX, largestScaleY, smallestScaleX, smallestScaleY, largestEffectiveCycles = darkroom.typedAST.astToTypedAST( ast, options )
+  local typedAST, largestScaleX, largestScaleY, smallestScaleX, smallestScaleY = darkroom.typedAST.astToTypedAST( ast, options )
   if options.callbackTypedAST~=nil then options.callbackTypedAST(typedAST) end
 
   -- optimize
   local optimizedTypedAST = darkroom.optimize.optimize(typedAST, options)
 
   -- determine the set of nodes to make scheduling decisions on
-  local kernelGraph = darkroom.kernelGraph.typedASTToKernelGraph(optimizedTypedAST, options)
+  local kernelGraph, largestEffectiveCycles = darkroom.kernelGraph.typedASTToKernelGraph(optimizedTypedAST, options)
   if options.callbackKernelGraph~=nil then options.callbackKernelGraph(kernelGraph) end
 
   return kernelGraph, largestScaleY, smallestScaleX, smallestScaleY, largestEffectiveCycles
