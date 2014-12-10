@@ -292,7 +292,11 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
 
       if i==0 then
         table.insert(t,declareWire(datatype,leadingVar))
-        table.insert(t,"assign "..leadingVar.." = (validInThisCycle)?(in):(lastIn);\n")
+        if gatherAddr==nil then
+          table.insert(t,"assign "..leadingVar.." = (validInThisCycle)?(in):(lastIn);\n")
+        else
+          table.insert(t,"assign "..leadingVar.." = lastIn;\n")
+        end
       else
         table.insert(t,declareReg(datatype,leadingVar))
 
@@ -379,10 +383,17 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
 
     table.insert(t,"always @ (posedge CLK) begin\n")
     t = concat(t,clockedLogic)
-    table.insert(t,"if (validInThisCycle) begin lastIn <= in; end else if (validInNextCycleX) begin lastIn <= readout_0; end\n")
+    if gatherAddr==nil then
+      table.insert(t,"if (validInThisCycle) begin lastIn <= in; end else if (validInNextCycleX) begin lastIn <= readout_0; end\n")
+    else
+      table.insert(t,"if (validInNextCycleX) begin lastIn <= readout_0; end\n")
+    end
     table.insert(t,"end\n")
 
   end
+
+--  table.insert(t,[=[initial begin $monitor("linebuffer validInNextCycleX %d validInNextCycleY %d lbReadAddr %d gatherAddr %d lbWriteAddr %d\n",validInNextCycleX,validInNextCycleY,lbReadAddr,gatherAddress, lbWriteAddr0); end
+--]=])
 
   table.insert(t,"endmodule\n\n")
 
@@ -570,8 +581,7 @@ res = res..[=[
    while (realY < ]=]..(imageHeight+metadata.padMaxY)..[=[) begin
      realX = ]=]..(metadata.padMinX)..[=[;
      while (realX < ]=]..(stripWidth+metadata.padMaxX)..[=[) begin
-       cycle = 0;
-       while (cycle < ]=]..metadata.cycles..[=[) begin
+
          if ( realX>=0 && realX<]=]..stripWidth..[=[ && realY>=0 && realY <]=]..imageHeight..[=[ ) begin
 ]=]
 
@@ -587,7 +597,10 @@ end
          
 res = res..[=[       end else begin
          pipelineInput = 0;
-       end
+         end
+
+       cycle = 0;
+       while (cycle < ]=]..metadata.cycles..[=[) begin
        posX = realX;
        posY = realY;
        inValid = 1;
@@ -596,9 +609,6 @@ res = res..[=[       end else begin
        CLK = 1;
        #10
 //     $display(modOutput);
-         cycle = cycle + 1;
-       end
-
        if(addr>=0 && outValid) begin 
          i = 0;
          while( i<]=]..outputBytes..[=[) begin
@@ -606,6 +616,10 @@ res = res..[=[       end else begin
            i = i + 1;
          end
        end
+
+         cycle = cycle + 1;
+       end
+
 
        addr = addr + 1;
        realX = realX + 1;
@@ -628,8 +642,6 @@ res = res..[=[       end else begin
        #10
        CLK = 1;
        #10
-       cycle = cycle + 1;
-     end
 
      if (outValid) begin 
        i=0;
@@ -638,6 +650,10 @@ res = res..[=[       end else begin
          i = i + 1;
        end
      end
+
+       cycle = cycle + 1;
+     end
+
      addr = addr + 1;
 
      if(realX==]=]..(stripWidth+metadata.padMaxX-1)..[=[) begin

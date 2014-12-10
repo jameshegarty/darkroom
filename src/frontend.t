@@ -150,11 +150,20 @@ function darkroom.gather( thisast, input,x,y,maxXV,maxYV)
   local minY = darkroom.ast.new({kind="unary",op="-",expr=maxYV}):copyMetadataFrom(thisast)
 
   return darkroom.ast.new({kind="gather",
-                        input=input, 
+                        _input=input, 
                         x=x,
                         y=y,
                         maxX=maxXV, minX = minX,
                         maxY=maxYV, minY = minY}):copyMetadataFrom(thisast)
+end
+
+function darkroom.gatherAdvanced( thisast, input,x,y,minXV,maxXV,minYV,maxYV)
+  return darkroom.ast.new({kind="gather",
+                        _input=input, 
+                        x=x,
+                        y=y,
+                        maxX=maxXV, minX = minXV,
+                        maxY=maxYV, minY = minYV}):copyMetadataFrom(thisast)
 end
 
 function darkroom.gatherColumn( thisast, input, x, rowWidth, columnStartX, columnEndX, columnStartY, columnEndY)

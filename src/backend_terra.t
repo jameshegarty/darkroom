@@ -813,7 +813,7 @@ function eliminateIterate(typedAST)
             local yast = {kind="value", value=y, type=darkroom.type.int(32)}
             yast = darkroom.typedAST.new(yast):copyMetadataFrom(n)
 
-            local g = {kind="gather",x=xb,y=yast,input=n._input,type=n.type:baseType(),minX=n.columnStartX,maxX=n.columnEndX,minY=n.columnStartY,maxY=n.columnEndY}
+            local g = {kind="gather",x=xb,y=yast,_input=n._input,type=n.type:baseType(),minX=n.columnStartX,maxX=n.columnEndX,minY=n.columnStartY,maxY=n.columnEndY}
             g = darkroom.typedAST.new(g):copyMetadataFrom(n)
 
             array["expr"..c] = g
@@ -864,6 +864,10 @@ function darkroom.terracompiler.codegen(
 
   local res = inkernel:visitEach(
     function(node,args)
+
+      if node:codegened(inkernel)==false then
+        return {1,2,3} -- garbage
+      end
 
       local inputs = {}
       local packedSymbol = {}
@@ -1189,23 +1193,23 @@ function darkroom.terracompiler.codegen(
           local inpX = inputs["x"][1] -- should be scalar
           local inpY = inputs["y"][1] -- should be scalar
 
-          assert(node.input.kind=="load")
-          assert(darkroom.kernelGraph.isKernelGraph(node.input.from) or type(node.input.from)=="number")
+          assert(node._input.kind=="load")
+          assert(darkroom.kernelGraph.isKernelGraph(node._input.from) or type(node._input.from)=="number")
 
           local relX, relY
-          if type(node.input.relX)=="number" then 
-            relX = node.input.relX 
+          if type(node._input.relX)=="number" then 
+            relX = node._input.relX 
           else
-            relX = node.input.relX:codegen()
+            relX = node._input.relX:codegen()
           end
           
-          if type(node.input.relY)=="number" then 
-            relY = node.input.relY 
+          if type(node._input.relY)=="number" then 
+            relY = node._input.relY 
           else
-            relY = node.input.relY:codegen()
+            relY = node._input.relY:codegen()
           end
 
-          out = `[inputImages[kernelNode][node.input.from][c]:get(loopid, true, `inpX+relX, `inpY+relY,  V, validLeft, validRight)]
+          out = `[inputImages[kernelNode][node._input.from][c]:get(loopid, true, `inpX+relX, `inpY+relY,  V, validLeft, validRight)]
 
           if debug then
             out = quote

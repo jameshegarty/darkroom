@@ -384,7 +384,7 @@ function astPrintPrettys(root)
     out = out.."default => "..inputs.default.."\n"
     out = out.."end"
   elseif self.kind=="gather" then
-    out = "gather(\n"..inputs.input..",\n"
+    out = "gather(\n"..inputs._input..",\n"
     out = out..inputs.x..",\n"
     out = out..inputs.y..",\n"
     out = out.."maxX = "..tostring(self.maxX)..",minX = "..tostring(self.minX)..", maxY = "..tostring(self.maxY)..", minY = "..tostring(self.minY)..", clamp = "..tostring(self.clamp)..")"
@@ -631,7 +631,7 @@ function typedASTPrintPrettys(root)
   elseif self.kind=="index" then
     out = out.."("..inputs.expr..")["..astPrintPrettys(self.index).."]"
   elseif self.kind=="gather" then
-    out = "gather(\ninput = "..inputs.input..",\n"
+    out = "gather(\ninput = "..inputs._input..",\n"
     out = out.."x = "..inputs.x..",\n"
     out = out.."y = "..inputs.y..",\n"
     out = out.."maxX = "..tostring(self.maxX)..",minX = "..tostring(self.minX)..", maxY = "..tostring(self.maxY)..", minY = "..tostring(self.minY)..", clamp = "..tostring(self.clamp)..")"

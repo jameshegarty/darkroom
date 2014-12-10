@@ -245,7 +245,7 @@ end
 local binopToVerilog={["+"]="+",["*"]="*",["<<"]="<<<",[">>"]=">>>",["pow"]="**",["=="]="==",["and"]="&",["-"]="-",["<"]="<",[">"]=">",["<="]="<=",[">="]=">="}
 local binopToVerilogBoolean={["=="]="==",["and"]="&&",["~="]="!="}
 
-function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth, imageHeight, kernelGraphRoot, pipelineRetiming, shift, inputLinebuffers, options)
+function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth, imageHeight, kernelGraphRoot, pipelineRetiming, shift, inputLinebuffers, options,largestEffectiveCycles)
   assert(type(imageWidth)=="number")
   assert(type(imageHeight)=="number")
   assert(darkroom.kernelGraph.isKernelGraph(kernelGraphRoot))
@@ -316,7 +316,11 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
 --      if i==1 then table.insert(result,"reg validOutThisCycle_0 = 1'b1;\n") end
 
       table.insert(result,"assign in"..coord.."_internal = in"..coord..";\n")        
-      table.insert(result,"assign validOutNextCycle"..coord.."_0 = 1;\n")
+      if largestEffectiveCycles>1 then
+        table.insert(result,"assign validOutNextCycle"..coord.."_0 = (cycle=="..valueToVerilogLL(1,false,8)..");\n")
+      else
+        table.insert(result,"assign validOutNextCycle"..coord.."_0 = 1;\n")
+      end
     else
 --      if i==1 then table.insert(result,"reg validOutThisCycle_0 = 1'b0;\n") end
 
@@ -600,6 +604,8 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           if le.kind=="gatherColumn" then
             local bytesPerPixel = le._input.from.kernel.type:baseType():sizeof()
             local extraBits = math.log(bytesPerPixel)/math.log(2)
+            table.insert(moduledef,"output ["..(10-extraBits)..":0] gatherAddress,")
+            gatherInputs = gatherInputs..",.gatherAddress(gatherAddress)"
             for y=-(le.columnEndY-le.columnStartY),0 do
               table.insert(moduledef,"input ["..(bytesPerPixel*8-1)..":0] in_gatherColumn_x0_y"..numToVarname(y)..",")
               gatherInputs = gatherInputs..",.in_gatherColumn_x0_y"..numToVarname(y).."(in_gatherColumn_x0_y"..numToVarname(y)..")"
@@ -795,8 +801,8 @@ end
           local cnt = 0
           for gx=-n.maxX, n.maxX do
             for gy=-n.maxY, n.maxY do
-              local relX = n.input.relX
-              local relY = n.input.relY
+              local relX = n._input.relX
+              local relY = n._input.relY
               if type(relX)~="number" then
                 relX = relX:eval(1,kernel)
                 assert(relX:area()==1)
@@ -816,9 +822,9 @@ end
               -- plus, it takes one clock cycle to calculate the valid bits, so we also need to delay the input stencil 1 extra clock cycle
               local gatherRetimeDelay = retiming[n] - n:internalDelay() + 1
               for d=1,gatherRetimeDelay do
-                table.insert(resDeclarations, declareReg(n.input.type, n:cname(c).."_partial_"..cnt.."_"..d,"", "// gather input delay"))
+                table.insert(resDeclarations, declareReg(n._input.type, n:cname(c).."_partial_"..cnt.."_"..d,"", "// gather input delay"))
                 if d==1 then
-                  table.insert(resClockedLogic, n:cname(c).."_partial_"..cnt.."_"..d.." <= in"..kernelToVarname(n.input.from).."_x"..numToVarname(gx+relX).."_y"..numToVarname(gy+relY).."; // gather input delay\n")
+                  table.insert(resClockedLogic, n:cname(c).."_partial_"..cnt.."_"..d.." <= in"..kernelToVarname(n._input.from).."_x"..numToVarname(gx+relX).."_y"..numToVarname(gy+relY).."; // gather input delay\n")
                 else
                   table.insert(resClockedLogic, n:cname(c).."_partial_"..cnt.."_"..d.." <= "..n:cname(c).."_partial_"..cnt.."_"..(d-1).."; // gather input delay\n")
                 end
@@ -875,7 +881,7 @@ end
 
 --  table.insert(result,[=[initial begin 
 --$display("]=]..kernelGraphNode:name()..[=[");
---$monitor("]=]..kernelGraphNode:name()..[=[ nextX %d nextY %d x %d y %d\n",validOutNextCycleX_0,validOutNextCycleY_0,inX_0,inY_0); end
+--$monitor("]=]..kernelGraphNode:name()..[=[ nextX %d nextY %d x %d y %d clock %d\n",validOutNextCycleX_0,validOutNextCycleY_0,inX_0,inY_0,cycle); end
 --]=])
 
   table.insert(result,"endmodule\n\n")
@@ -1314,7 +1320,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
   local totalDelay = kernelGraph:visitEach(
     function(node, inputArgs)
       if node.kernel~=nil then
-        local verilogKernel = fpga.codegenKernel(compilerState, node, kernelRetiming[node], imageWidth, imageHeight, kernelGraph, pipelineRetiming, shifts[node], inputLinebuffers[node], options)
+        local verilogKernel = fpga.codegenKernel(compilerState, node, kernelRetiming[node], imageWidth, imageHeight, kernelGraph, pipelineRetiming, shifts[node], inputLinebuffers[node], options, largestEffectiveCycles)
         result = concat(result, verilogKernel)
         
         local inputs = ""

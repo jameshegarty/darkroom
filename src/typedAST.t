@@ -328,15 +328,15 @@ function typedASTFunctions:stencil(input, typedASTRoot)
     return s
   elseif self.kind=="gather" then
     --if input~=nil then assert(false) end
-    assert(self.input.kind=="load")
+    assert(self._input.kind=="load")
 
     local s = self.x:stencil(input, typedASTRoot):unionWith(self.y:stencil(input, typedASTRoot))
-    if input~=nil and self.input.from~=input then
+    if input~=nil and self._input.from~=input then
       return s -- not the input we're interested in
     else
       -- note the kind of nasty hack we're doing here: gathers read from loads, and loads can be shifted.
       -- so we need to shift this the same as the load
-      return darkroom.typedAST.transformArea(self.input.relX, self.input.relY, typedASTRoot):sum( Stencil.new():add(self.minX,self.minY,0):add(self.maxX,self.maxY,0)):unionWith(s)
+      return darkroom.typedAST.transformArea(self._input.relX, self._input.relY, typedASTRoot):sum( Stencil.new():add(self.minX,self.minY,0):add(self.maxX,self.maxY,0)):unionWith(s)
     end
   elseif self.kind=="array" then
     local exprsize = self:arraySize("expr")
@@ -802,8 +802,8 @@ function darkroom.typedAST._toTypedAST(inast)
         -- ast.type is already a type, so don't have to do anything
         -- shouldn't matter, but need to return something
       elseif ast.kind=="gather" then
-        ast.type = inputs.input[1].type
-        ast.input = inputs.input[1]
+        ast.type = inputs._input[1].type
+        ast._input = inputs._input[1]
         ast.x = inputs.x[1]
         ast.y = inputs.y[1]
 
