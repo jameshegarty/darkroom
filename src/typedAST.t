@@ -24,17 +24,12 @@ function typedASTFunctions:bbDependencies(root)
       darkroom.typedAST._bbDependenciesCache[root][self][darkroom.typedAST._topbb] = 1
     else
       assert(self:parentCount(root)>0)
-      local wasMR = false
       for parentNode, key in self:parents(root) do
-        if parentNode.kind=="iterate" and key~="expr" then
-          -- this might potentially infinite loop?
-          darkroom.typedAST._bbDependenciesCache[root][self] = parentNode.expr:bbDependencies(root)
-        elseif parentNode.kind=="mapreduce" or parentNode.kind=="filter" or parentNode.kind=="iterate" then
+        if (parentNode.kind=="mapreduce" and key=="expr") or parentNode.kind=="filter" or (parentNode.kind=="iterate" and key=="expr") then
           assert(self:parentCount(root)==1) -- theoretically possible this is false?
           -- generate a new block for this MR
-          wasMR = true
           local newbb = {level=0,parents={},controlDep={}}
-          if parentNode.kind=="filter" or parentNode.kind=="iterate" then newbb.controlDep[newbb]=1 end -- filter ifelse has control dep on itself
+          if parentNode.kind=="filter" then newbb.controlDep[newbb]=1 end -- filter ifelse has control dep on itself
           for bb,_ in pairs(parentNode:bbDependencies(root)) do
             newbb.level = math.max(bb.level+1, newbb.level)
             newbb.parents[bb] = 1
@@ -77,6 +72,14 @@ function typedASTFunctions:calculateBB(root)
       for k,v in pairs(dep) do
         darkroom.typedAST._calculateBBCache[root][self][k] = 1
       end
+    elseif self.kind=="iterationvar" then
+      local I = root:lookup(self.iterateNode)
+
+      local dep = I.expr:bbDependencies(root)
+      assert(keycount(dep)==1)
+      for k,v in pairs(dep) do
+        darkroom.typedAST._calculateBBCache[root][self][k] = 1
+      end
     elseif self.kind=="lifted" then
       local mrcnt = 1
       while self["mapreduceNode"..mrcnt]~=nil do
@@ -89,17 +92,26 @@ function typedASTFunctions:calculateBB(root)
         end
         mrcnt = mrcnt + 1
       end
-    elseif self.kind=="mapreduce" then
+    elseif self.kind=="mapreduce" or self.kind=="iterate" then
       -- mapreduce itself should belong to a bb one level above
       -- where its input is
-      local cb = self.expr:calculateBB(root)
       local dep = self.expr:bbDependencies(root)
       assert(keycount(dep)==1)
       local thisbb
       for k,v in pairs(dep) do thisbb=k end
 
-      for k,v in pairs(cb) do
-        if k~=thisbb then darkroom.typedAST._calculateBBCache[root][self][k]=1 end
+      local t = {"expr"}
+      if self.kind=="mapreduce" then 
+        for k,v in pairs(self) do 
+          if k:sub(0,6)=="lifted" then table.insert(t,k) end 
+        end 
+      end
+
+      for _,key in pairs(t) do
+        local cb = self[key]:calculateBB(root)
+        for k,v in pairs(cb) do
+          if k~=thisbb then darkroom.typedAST._calculateBBCache[root][self][k]=1 end
+        end
       end
     else
       darkroom.typedAST._calculateBBCache[root][self][darkroom.typedAST._topbb] = 1

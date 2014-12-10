@@ -456,17 +456,21 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
       -- insert pipeline delays
       local retimeSeen = {} -- it's possible for a node to use another node multiple times.  Don't double add its retiming delays.
       for k,v in n:inputs() do
---        if v:codegened(kernel) and (n.kind=="mapreduce" and k:sub(0,6)=="lifted")==false then -- only retime nodes we actually use
-        if v:codegened(kernel) and k:sub(1,1)~="_" and (n.kind=="mapreduce" and k:sub(0,6)=="lifted")==false then -- only retime nodes we actually use
+        if v:codegened(kernel) and k:sub(1,1)~="_" and (n.kind=="mapreduce" and k=="expr")==false and (n.kind=="iterate" and k=="expr")==false then -- only retime nodes we actually use
           local delays = retiming[n] - retiming[v] - n:internalDelay()
           assert(delays>=0)
           
+          local inputbb = v:calculateMinBB(kernel)
+          -- we should only be retiming stuff from shallower scopes to deeper scopes
+          -- we place the retiming delays in the deeper scope, b/c this is where they will be consumed
+          assert(inputbb.level<=bb.level)
+
           for c=1,v.type:channels() do
             local prev = inputs[k][c]
             for i=1, delays do
               local sn = inputs[k][c].."_to_"..n:cname(c).."_retime"..i
               -- type is determined by producer, b/c consumer op can change type
-              local d = declareReg( v.type:baseType(), sn, "", " // retiming" )
+              local d = declareReg( v.type:baseType(), sn, "", " // retiming "..retiming[v].." to "..retiming[n].."-"..n:internalDelay() )
               local cl = sn.." <= "..prev.."; // retiming\n"
               if retimeSeen[d]==nil then adddecl(bb, {d}); retimeSeen[d]=1 end
               if retimeSeen[cl]==nil then addclocked(bb, {cl}); retimeSeen[cl]=1 end
@@ -482,7 +486,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
       -- mapreduce mixes channels is weird ways, so codegen this separately
       if n.kind=="mapreduce" then
 
-        local moduledef = {"module Map_"..n:name().."(input CLK, input[12:0] inX, input[12:0] inY, \n"}
+        local moduledef = {"module Map_"..n:name().."(input CLK, input[12:0] inX_internal, input[12:0] inY_internal, \n"}
 
         local exprbb = n.expr:calculateMinBB(kernel)
         local declexprbb = mdeclarations[exprbb]
@@ -550,7 +554,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
                              liftedInputs = liftedInputs.."})"
                            end
 
-                           return {declareWire(n.expr.type,n:name().."_partial"..partials).."Map_"..n:name().." map_"..n:name().."_"..partials.."(.CLK(CLK),.out("..n:name().."_partial"..partials.."),.inX(inX),.inY(inY)"..inputList..liftedInputs..table.concat(getInterface(exprbb,false),"")..");\n"} end}
+                           return {declareWire(n.expr.type,n:name().."_partial"..partials).."Map_"..n:name().." map_"..n:name().."_"..partials.."(.CLK(CLK),.out("..n:name().."_partial"..partials.."),.inX_internal(inX_internal),.inY_internal(inY_internal)"..inputList..liftedInputs..table.concat(getInterface(exprbb,false),"")..");\n"} end}
 
         local i = 1
         while n["varname"..i] do
@@ -984,7 +988,7 @@ local function liftMapreduce(kernelGraph, shifts)
             newMR.expr = mapreduceNode.expr:S(
               function(n)
                 -- heuristic for what we lift
-                return (n.kind=="index" or n.kind=="load") and pointsTo(n,mapreduceNode.__key)
+                return (n.kind=="index" and pointsTo(n.index,mapreduceNode.__key)) or (n.kind=="load" and pointsTo(n,mapreduceNode.__key))
               end):process(
               function(n)
                 liftedCnt = liftedCnt + 1
@@ -1030,6 +1034,7 @@ local function liftMapreduce(kernelGraph, shifts)
               i = i + 1
             end
             for k,v in pairs(liftedList) do
+              v:S("lifted"):process(function(n) print("Lifted things can't themselves contain lifted things!\n");assert(false) end)
               newMR[k] = v
             end
 

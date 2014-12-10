@@ -768,8 +768,10 @@ function eliminateIterate(typedAST)
   local res = typedAST:S(function(n) return n.kind=="iterate" or n.kind=="gatherColumn" or n.kind=="iterateload" end):process(
     function(n)
       if n.kind=="iterate" then
-        local nn = n:shallowcopy()
+        local nn = {}
         nn.kind="mapreduce"
+        nn.reduceop = n.reduceop
+        nn.type = n.type
         nn.varname1 = n.iteratorName
         nn.varlow1 = n.iterationSpaceLow
         nn.varhigh1 = n.iterationSpaceHigh
@@ -780,7 +782,7 @@ function eliminateIterate(typedAST)
         local mapreducevarAST = {kind="mapreducevar", id = 1, mapreduceNode = nn.__varid1}
         mapreducevarAST = darkroom.ast.new(mapreducevarAST):copyMetadataFrom(n)
 
-        nn.expr = nn.expr:S("*"):process(
+        nn.expr = n.expr:S("*"):process(
           function(iv) 
             if iv.kind=="iterationvar" then
               return mapreducevar 
@@ -823,6 +825,8 @@ function eliminateIterate(typedAST)
         return n._expr
       end
     end)
+  
+  res:S(function(n) return n.kind=="iterate" or n.kind=="gatherColumn" or n.kind=="iterationvar" end):process(function(n) assert(false) end)
 
   return res
 end
@@ -837,6 +841,7 @@ function darkroom.terracompiler.codegen(
   assert(type(debug)=="boolean")
 
   inkernel = eliminateIterate(inkernel)
+
   local stat = {}
   local statSeen = {} -- for debugging
 

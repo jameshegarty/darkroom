@@ -1,9 +1,10 @@
 SRCS = $(wildcard *.t)
 RES = $(patsubst %.t,out/%.v,$(SRCS))
 
-SIM = $(patsubst %.t,out/%.sim.v,$(SRCS))
-SIM += $(patsubst %.t,out/%.sim.bmp,$(SRCS))
-SIM += $(patsubst %.t,out/%.sim.correct.txt,$(SRCS))
+SIMSRCS = stereo.t lucaskanade.t demosaic.t
+SIM = $(patsubst %.t,out/%.sim.v,$(SIMSRCS))
+SIM += $(patsubst %.t,out/%.sim.bmp,$(SIMSRCS))
+SIM += $(patsubst %.t,out/%.sim.correct.txt,$(SIMSRCS))
 
 RES += $(SIM)
 RES += $(patsubst %.t,out/%.bit,$(SRCS))
