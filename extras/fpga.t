@@ -852,6 +852,20 @@ end
           -- to complete its write. Ie, it writes in cycles 0, if we put the address in on cycle 0, we will 
           -- get the old value. So instead we wait until cycle 1.
 
+          local relX = n._input.relX
+          local relY = n._input.relY
+          if type(relX)~="number" then
+            relX = relX:eval(1,kernel)
+            assert(relX:area()==1)
+            relX = relX:min(1,kernel)
+          end
+          
+          if type(relY)~="number" then
+            relY = relY:eval(1,kernel)
+            assert(relY:area()==1)
+            relY = relY:min(1,kernel)
+          end
+          
           if c==1 then
             adddecl(darkroom.typedAST._topbb,{"assign gatherReadValidInNextCycleX = validOutNextCycleX_"..(retiming[n.x]+1)..";\n"})
             adddecl(darkroom.typedAST._topbb,{"assign gatherReadValidInNextCycleY = validOutNextCycleY_"..(retiming[n.x]+1)..";\n"})
@@ -860,7 +874,7 @@ end
             local extraBits = math.log(bytesPerPixel)/math.log(2)
                                           
             table.insert(resDeclarations,"reg ["..(10-extraBits)..":0] gatherAddress_"..n:name()..";\n")
-            table.insert(resClockedLogic,"gatherAddress_"..n:name().." <= "..inputs.x[1]..";\n")
+            table.insert(resClockedLogic,"gatherAddress_"..n:name().." <= "..inputs.x[1].."+"..valueToVerilogLL(relX,true,(10-extraBits))..";\n")
             table.insert(resDeclarations,"assign gatherAddress = gatherAddress_"..n:name()..";\n")
           end
           local tys = n.type:baseType():sizeof()*8

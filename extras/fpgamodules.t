@@ -574,7 +574,7 @@ module sim;
   wire outValid;
   integer realX = ]=]..(stripWidth+metadata.padMaxX-1)..[=[;
   integer realY = ]=]..(metadata.padMinY-1)..[=[;
-  integer addr = -PIPE_DELAY+1-]=]..outputShift..[=[;
+  integer addr = -PIPE_DELAY+1-]=]..outputShift*metadata.cycles..[=[;
   integer addrT;
 ]=]
 
@@ -671,7 +671,7 @@ res = res..[=[       end else begin
    end // while (c != `EOF)
 
    // drain pipe
-   addr = -PIPE_DELAY-]=]..outputShift..[=[;
+   addr = -PIPE_DELAY-]=]..(outputShift*metadata.cycles)..[=[;
 
    realX = ]=]..(metadata.padMinX)..[=[;
    while (addr<0) begin
