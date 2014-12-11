@@ -266,6 +266,16 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
 
     table.insert(t,declareReg(datatype,"lastIn"))
 
+    local lbReadAddrStr = "lbReadAddr"
+    if gatherAddr then 
+      table.insert(t,"wire ["..(10-extraBits)..":0] lbReadAddrGatherT;\n")
+      table.insert(t,"assign lbReadAddrGatherT = "..lbReadAddrStr.."+gatherAddress-11'd3;\n" )
+      table.insert(t,"wire ["..(10-extraBits)..":0] lbReadAddrGather;\n")
+      -- remember, in 2's negative numbers are larger than positive. This is actually checking for negative numbers
+      table.insert(t,"assign lbReadAddrGather = (lbReadAddrGatherT>"..valueToVerilogLL(stripWidth-1,false,10-extraBits)..")?(lbReadAddrGatherT+"..valueToVerilogLL(stripWidth,false,10-extraBits).."):(lbReadAddrGatherT);\n" )
+      lbReadAddrStr="lbReadAddrGather"
+    end
+
     local i=0
     while i>-lines do
       local startAddr = 1
@@ -287,7 +297,7 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
       local configParams = [=[.WRITE_MODE_A("READ_FIRST"),.WRITE_MODE_B("READ_FIRST")]=]
 
       local leadingVar = "lb_x1_y"..numToVarname(i)
-      if i==0 then leadingVar = "lb_x0_y"..numToVarname(i) end
+      if i==0 or gatherAddr~=nil then leadingVar = "lb_x0_y"..numToVarname(i) end
 
 
       if i==0 then
@@ -295,9 +305,13 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
         if gatherAddr==nil then
           table.insert(t,"assign "..leadingVar.." = (validInThisCycle)?(in):(lastIn);\n")
         else
-          table.insert(t,"assign "..leadingVar.." = lastIn;\n")
+          table.insert(t,"assign "..leadingVar.." = readout_"..numToVarname(i)..";\n")
         end
       else
+        if gatherAddr~=nil then
+          table.insert(t,declareWire(datatype,leadingVar))
+          table.insert(t,"assign "..leadingVar.." = readout_"..numToVarname(i)..";\n")
+        else
         table.insert(t,declareReg(datatype,leadingVar))
 
         if upsampledYConsumer then
@@ -309,12 +323,12 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
         else
           table.insert(clockedLogic,"if (validInLastCycle) begin "..leadingVar.." <= readout_"..numToVarname(i+1).."; end\n")
         end
+        end
         indata = "evicted_"..numToVarname(i+1)
       end
 
       local DIPA = "1'b0"
-      local lbReadAddrStr = "lbReadAddr"
-      if gatherAddr then lbReadAddrStr = lbReadAddrStr.."+gatherAddress" end
+
       if bytesPerPixel==4 then DIPA = "4'b0" end -- needs to be correct for the simulator
       table.insert(t, [=[RAMB16_S]=]..(bytesPerPixel*9)..[=[_S]=]..(bytesPerPixel*9)..[=[ #(]=]..configParams..[=[) ram_line]=]..numToVarname(i)..[=[(
 .DIPA(]=]..DIPA..[=[), // needed for the spartan 6 chips for some reason
@@ -338,7 +352,7 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
       i = i - 1
     end
 
-    if upsampledYConsumer==false then
+    if upsampledYConsumer==false and gatherAddr==nil then
       local leadingVar = "lb_x1_y"..numToVarname(-lines)
       table.insert(t,declareReg(datatype,leadingVar))
       table.insert(clockedLogic,"if (validInLastCycle) begin "..leadingVar.." <= readout_"..numToVarname(-lines+1).."; end\n")
@@ -346,6 +360,7 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
 
     -- stencil shift register
     -- note that this also codegens for the dangles in the last (oldest) row
+    if gatherAddr==nil then
     local startY = -lines
     if upsampledYConsumer then startY = startY+1 end
     for y=startY,0 do
@@ -371,6 +386,7 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
         prev = n
         x = x - 1
       end
+    end
     end
 
     for k,v in ipairs(consumers) do

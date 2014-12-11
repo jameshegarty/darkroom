@@ -185,10 +185,14 @@ function typedASTFunctions:cname(c)
 end
 
 function typedASTFunctions:internalDelay()
-  if self.kind=="binop" or self.kind=="unary" or self.kind=="select" or self.kind=="crop" or self.kind=="vectorSelect" or self.kind=="gatherColumn" then
+  if self.kind=="gatherColumn" then
+    return 2
+  elseif self.kind=="binop" or self.kind=="unary" or self.kind=="select" or self.kind=="crop" or self.kind=="vectorSelect" then
     return 1
-  elseif self.kind=="load" or self.kind=="value" or self.kind=="cast" or self.kind=="position" or self.kind=="mapreducevar" or self.kind=="array" or self.kind=="index" or self.kind=="lifted" or self.kind=="iterationvar" or self.kind=="iterateload" or self.kind=="iterate" then
+  elseif self.kind=="load" or self.kind=="value" or self.kind=="cast" or self.kind=="position" or self.kind=="mapreducevar" or self.kind=="array" or self.kind=="index" or self.kind=="lifted" or self.kind=="iterationvar" or self.kind=="iterateload" then
     return 0
+  elseif self.kind=="iterate" then
+    return self.iterationSpaceHigh-self.iterationSpaceLow+1
   elseif self.kind=="mapreduce" then
     -- the reason we don't have to account for the math within the loop is
     -- that this node points to that math, so its delay on the input will include the delay of the inside of the loop
@@ -317,7 +321,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
 
       table.insert(result,"assign in"..coord.."_internal = in"..coord..";\n")        
       if largestEffectiveCycles>1 then
-        table.insert(result,"assign validOutNextCycle"..coord.."_0 = (cycle=="..valueToVerilogLL(1,false,8)..");\n")
+        table.insert(result,"assign validOutNextCycle"..coord.."_0 = (cycle=="..valueToVerilogLL(largestEffectiveCycles-1,false,8)..");\n")
       else
         table.insert(result,"assign validOutNextCycle"..coord.."_0 = 1;\n")
       end
