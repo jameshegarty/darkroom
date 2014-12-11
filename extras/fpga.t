@@ -186,7 +186,7 @@ end
 
 function typedASTFunctions:internalDelay()
   if self.kind=="gatherColumn" then
-    return 1
+    return 2
   elseif self.kind=="binop" or self.kind=="unary" or self.kind=="select" or self.kind=="crop" or self.kind=="vectorSelect" then
     return 1
   elseif self.kind=="load" or self.kind=="value" or self.kind=="cast" or self.kind=="position" or self.kind=="mapreducevar" or self.kind=="array" or self.kind=="index" or self.kind=="lifted" or self.kind=="iterationvar" or self.kind=="iterateload" then
@@ -424,9 +424,9 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
   for i=1,retiming[kernel] do
     adddecl(darkroom.typedAST._topbb,{"reg [12:0] inX_"..i..";\n"})
     adddecl(darkroom.typedAST._topbb,{"reg [12:0] inY_"..i..";\n"})
-    adddecl(darkroom.typedAST._topbb,{"reg [7:0] cycle_"..i..";\n"})
-    adddecl(darkroom.typedAST._topbb,{"reg validOutNextCycleX_"..i..";\n"})
-    adddecl(darkroom.typedAST._topbb,{"reg validOutNextCycleY_"..i..";\n"})
+    adddecl(darkroom.typedAST._topbb,{"reg [7:0] cycle_"..i.." = "..valueToVerilogLL(largestEffectiveCycles-1,false,8)..";\n"})
+    adddecl(darkroom.typedAST._topbb,{"reg validOutNextCycleX_"..i.." = 1'b0;\n"})
+    adddecl(darkroom.typedAST._topbb,{"reg validOutNextCycleY_"..i.." = 1'b0;\n"})
     addclocked(darkroom.typedAST._topbb, {"inX_"..i.." <= inX_"..(i-1)..";\n"})
     addclocked(darkroom.typedAST._topbb, {"inY_"..i.." <= inY_"..(i-1)..";\n"})
     addclocked(darkroom.typedAST._topbb, {"cycle_"..i.." <= cycle_"..(i-1)..";\n"})
@@ -848,11 +848,20 @@ end
           table.insert(resDeclarations,str..");\n")
           res = n:cname(c)
         elseif n.kind=="gatherColumn" then
+          -- we delay the input address 1 cycle: this is so that the kernel that we're consuming from has time
+          -- to complete its write. Ie, it writes in cycles 0, if we put the address in on cycle 0, we will 
+          -- get the old value. So instead we wait until cycle 1.
+
           if c==1 then
-            adddecl(darkroom.typedAST._topbb,{"assign gatherReadValidInNextCycleX = validOutNextCycleX_"..retiming[n.x]..";\n"})
-            adddecl(darkroom.typedAST._topbb,{"assign gatherReadValidInNextCycleY = validOutNextCycleY_"..retiming[n.x]..";\n"})
-                                                                                         
-            table.insert(resDeclarations,"assign gatherAddress = "..inputs.x[1]..";\n")
+            adddecl(darkroom.typedAST._topbb,{"assign gatherReadValidInNextCycleX = validOutNextCycleX_"..(retiming[n.x]+1)..";\n"})
+            adddecl(darkroom.typedAST._topbb,{"assign gatherReadValidInNextCycleY = validOutNextCycleY_"..(retiming[n.x]+1)..";\n"})
+                                               
+            local bytesPerPixel = n._input.from.kernel.type:baseType():sizeof()
+            local extraBits = math.log(bytesPerPixel)/math.log(2)
+                                          
+            table.insert(resDeclarations,"reg ["..(10-extraBits)..":0] gatherAddress_"..n:name()..";\n")
+            table.insert(resClockedLogic,"gatherAddress_"..n:name().." <= "..inputs.x[1]..";\n")
+            table.insert(resDeclarations,"assign gatherAddress = gatherAddress_"..n:name()..";\n")
           end
           local tys = n.type:baseType():sizeof()*8
           local ypos = c-(n.columnEndY-n.columnStartY+1)

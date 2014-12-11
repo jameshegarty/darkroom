@@ -575,6 +575,7 @@ module sim;
   integer realX = ]=]..(stripWidth+metadata.padMaxX-1)..[=[;
   integer realY = ]=]..(metadata.padMinY-1)..[=[;
   integer addr = -PIPE_DELAY+1-]=]..outputShift..[=[;
+  integer addrT;
 ]=]
 
   local i=1
@@ -606,6 +607,9 @@ res = res..[=[
    fileout = $fopen(outputFilename,"w");
 
    // prime the pipe
+   // we run this for a large number of cycles to simulate what will happen in the actual hardware
+   addrT = 1000+PIPE_DELAY+]=]..outputShift..[=[;
+   while(addrT>0) begin
    posX = realX;
    posY = realY;
    cycle = ]=]..(metadata.cycles-1)..[=[;
@@ -614,6 +618,8 @@ res = res..[=[
    #10
    CLK = 1;
    #10
+     addrT = addrT-1;
+   end
 
    realY = ]=]..(metadata.padMinY)..[=[;
    while (realY < ]=]..(imageHeight+metadata.padMaxY)..[=[) begin
