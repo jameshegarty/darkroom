@@ -186,7 +186,7 @@ end
 
 function typedASTFunctions:internalDelay()
   if self.kind=="gatherColumn" then
-    return 2
+    return 1
   elseif self.kind=="binop" or self.kind=="unary" or self.kind=="select" or self.kind=="crop" or self.kind=="vectorSelect" then
     return 1
   elseif self.kind=="load" or self.kind=="value" or self.kind=="cast" or self.kind=="position" or self.kind=="mapreducevar" or self.kind=="array" or self.kind=="index" or self.kind=="lifted" or self.kind=="iterationvar" or self.kind=="iterateload" then
@@ -284,6 +284,9 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         local bytesPerPixel = inputLinebuffer.from.kernel.type:baseType():sizeof()
         local extraBits = math.log(bytesPerPixel)/math.log(2)
         inputs = inputs.."output ["..(10-extraBits)..":0] gatherAddress,"
+        inputs = inputs.."output gatherReadValidInNextCycleX,"
+        inputs = inputs.."output gatherReadValidInNextCycleY,"
+
         for y=-inputLinebuffer.linebufferSizeY,0 do
           inputs = inputs.."input ["..(bytesPerPixel*8-1)..":0] in_gatherColumn_x0_y"..numToVarname(y)..","
         end
@@ -649,9 +652,9 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
             adddecl(bb,{declareReg(n.expr.type,n:cname(c))})
 
             -- implement the serial reduction
-            addclocked(bb,{[=[if (cycle==0) begin
+            addclocked(bb,{[=[if (cycle_]=]..(retiming[n]-n:internalDelay())..[=[==0) begin
   ]=]..n:cname(c)..[=[ <= iterate_]=]..n:name()..[=[_out;
-end else if (cycle < ]=]..n.cycles..[=[) begin
+  end else if (cycle_]=]..(retiming[n]-n:internalDelay())..[=[ < ]=]..n.cycles..[=[) begin
   ]=]..n:cname(c)..[=[ <= ]=]..n:cname(c)..[=[ + iterate_]=]..n:name()..[=[_out;
 end
 ]=]})
@@ -846,6 +849,9 @@ end
           res = n:cname(c)
         elseif n.kind=="gatherColumn" then
           if c==1 then
+            adddecl(darkroom.typedAST._topbb,{"assign gatherReadValidInNextCycleX = validOutNextCycleX_"..retiming[n.x]..";\n"})
+            adddecl(darkroom.typedAST._topbb,{"assign gatherReadValidInNextCycleY = validOutNextCycleY_"..retiming[n.x]..";\n"})
+                                                                                         
             table.insert(resDeclarations,"assign gatherAddress = "..inputs.x[1]..";\n")
           end
           local tys = n.type:baseType():sizeof()*8
@@ -1213,12 +1219,18 @@ function fpga.allocateLinebuffers(node, kernelGraph, outputLinebuffers)
       local lbname, lbmod = fpga.modules.linebuffer(v.linebufferSizeX, v.linebufferSizeY, node.kernel.type, v.effStripWidth, v.consumers, v.scale > 1, v.wasUpsampledY)
       result = concat(result, lbmod)
       pipeline = concat(pipeline,v.declarations)
-      table.insert(pipeline,lbname.." kernelBuffer_"..node:name().."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.validInNextCycleX(kernelValidOutNextCycleX_"..node:name().."),.validInNextCycleY(kernelValidOutNextCycleY_"..node:name().."));\n")
+      table.insert(pipeline,lbname.." kernelBuffer_"..node:name().."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.readValidInNextCycleX(kernelValidOutNextCycleX_"..node:name().."),.readValidInNextCycleY(kernelValidOutNextCycleY_"..node:name().."),.writeValidInNextCycleX(kernelValidOutNextCycleX_"..node:name().."),.writeValidInNextCycleY(kernelValidOutNextCycleY_"..node:name().."));\n")
     else
       local bytesPerPixel = node.kernel.type:sizeof()
       local extraBits = math.log(bytesPerPixel)/math.log(2)
       local varname = "gatherAddress_"..v.from:name().."_to_"..v.to:name()
       table.insert(pipeline, "wire ["..(10-extraBits)..":0] "..varname..";\n")
+
+      local varname_readx = "gatherReadValidInNextCycleX_"..v.from:name().."_to_"..v.to:name()
+      table.insert(pipeline, "wire "..varname_readx..";\n")
+
+      local varname_ready = "gatherReadValidInNextCycleY_"..v.from:name().."_to_"..v.to:name()
+      table.insert(pipeline, "wire "..varname_ready..";\n")
 
       for y=-v.linebufferSizeY,0 do
         table.insert(pipeline, "wire ["..(bytesPerPixel*8-1)..":0] "..v.from:name().."_to_"..v.to:name().."_gatherColumn_x0_y"..numToVarname(y)..";\n")
@@ -1226,7 +1238,7 @@ function fpga.allocateLinebuffers(node, kernelGraph, outputLinebuffers)
 
       local lbname, lbmod = fpga.modules.linebuffer(v.linebufferSizeX, v.linebufferSizeY, node.kernel.type, v.effStripWidth, v.consumers, v.scale > 1, v.wasUpsampledY, true)
       result = concat(result, lbmod)
-      table.insert(pipeline,lbname.." kernelBufferGatherColumn_"..node:name().."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.validInNextCycleX(kernelValidOutNextCycleX_"..node:name().."),.validInNextCycleY(kernelValidOutNextCycleY_"..node:name().."),.gatherAddress("..varname.."));\n")
+      table.insert(pipeline,lbname.." kernelBufferGatherColumn_"..node:name().."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.writeValidInNextCycleX(kernelValidOutNextCycleX_"..node:name().."),.writeValidInNextCycleY(kernelValidOutNextCycleY_"..node:name().."),.readValidInNextCycleX("..varname_readx.."),.readValidInNextCycleY("..varname_ready.."),.gatherAddress("..varname.."));\n")
     end
   end
   return pipeline, result
@@ -1350,6 +1362,8 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
             elseif inputBuffer.kind=="gatherColumn" then
               -- actually, this is an output
               inputs = inputs..".gatherAddress(gatherAddress_"..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."),"
+              inputs = inputs..".gatherReadValidInNextCycleX(gatherReadValidInNextCycleX_"..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."),"
+              inputs = inputs..".gatherReadValidInNextCycleY(gatherReadValidInNextCycleY_"..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."),"
 
               for y=-inputBuffer.linebufferSizeY,0 do
                 inputs = inputs..".in_gatherColumn_x0_y"..numToVarname(y).."("..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."_gatherColumn_x0_y"..numToVarname(y).."),"
