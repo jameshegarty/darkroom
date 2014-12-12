@@ -79,6 +79,7 @@ function astFunctions:eval(dim, irRoot)
     if darkroom.ast.isAST(h) then h=h:eval(dim, irRoot); assert(h:area()==1); h = h:min(dim) end
     assert(type(l)=="number")
     assert(type(h)=="number")
+    print("MRV",l,h)
     return Stencil.new():addDim(dim, l):addDim(dim, h)
   elseif self.kind=="iterationvar" then
     local n = irRoot:lookup(self.iterateNode)

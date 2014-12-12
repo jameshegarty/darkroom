@@ -213,6 +213,7 @@ return false
         end
       elseif expr.kind=="cast" then
       elseif expr.kind=="mapreducevar" then
+      elseif expr.kind=="iterationvar" then
       else
         darkroom.error(expr.kind.." is not supported in constant expr")    
       end
@@ -913,6 +914,7 @@ function darkroom.typedAST._toTypedAST(inast)
           darkroom.error("Unknown reduce operator '"..ast.reduceop.."'")
         end
 
+        ast._iterationvar = inputs._iterationvar[1]
         ast.expr = inputs.expr[1]
 
         local i = 1

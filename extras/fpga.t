@@ -119,6 +119,28 @@ function valueToVerilog(value,ty)
   end
 end
 
+function astFunctions:codegenHW(kernel)
+  assert(darkroom.typedAST.isTypedAST(kernel))
+  if self.kind=="value" then
+    return self.value
+  elseif self.kind=="binop" and self.op=="+" then
+    return "("..self.lhs:codegenHW(kernel)..")+("..self.rhs:codegenHW(kernel)..")"
+  elseif self.kind=="binop" and self.op=="-" then
+    return "("..self.lhs:codegenHW(kernel)..")-("..self.rhs:codegenHW(kernel)..")"
+  elseif self.kind=="binop" and self.op=="*" then
+    return "("..self.lhs:codegenHW(kernel)..")*("..self.rhs:codegenHW(kernel)..")"
+  elseif self.kind=="unary" and self.op=="-" then
+    return "-("..self.expr:codegenHW(kernel)..")"
+  elseif self.kind=="iterationvar" then
+    local I = kernel:lookup(self.iterateNode)
+    return I._iterationvar:name()
+  else
+    print("internal error, couldn't codegen ast ", self.kind)
+    assert(false)
+  end
+
+end
+
 function astFunctions:evalFunrolled(dim, mrvValues)
   assert(type(dim)=="number")
   assert(type(mrvValues)=="table")
@@ -184,13 +206,38 @@ function typedASTFunctions:cname(c)
   return self:name().."_c"..c
 end
 
-function typedASTFunctions:internalDelay()
+function typedASTFunctions:internalDelay(root)
+  assert(darkroom.typedAST.isTypedAST(root))
+
   if self.kind=="gatherColumn" then
     return 2
   elseif self.kind=="binop" or self.kind=="unary" or self.kind=="select" or self.kind=="crop" or self.kind=="vectorSelect" then
     return 1
-  elseif self.kind=="load" or self.kind=="value" or self.kind=="cast" or self.kind=="position" or self.kind=="mapreducevar" or self.kind=="array" or self.kind=="index" or self.kind=="lifted" or self.kind=="iterationvar" or self.kind=="iterateload" then
+  elseif self.kind=="load" or self.kind=="value" or self.kind=="cast" or self.kind=="position" or self.kind=="mapreducevar" or self.kind=="array" or self.kind=="iterationvar" or self.kind=="iterateload" then
     return 0
+  elseif self.kind=="lifted"  then
+    -- nasty: lifted variables have to have their delay be correct, 
+    -- so we need to look up where the variable is actually calculated, and get its retiming delay
+    local MR = root:lookup(self.liftedTarget)
+    local R
+    for k,v in pairs(MR) do 
+      local tk = "lifted"..self.id
+      if k:sub(1,#tk)==tk then
+        local liftedNode = v
+        local RT = fpga.trivialRetime(liftedNode,root)
+        local res =  RT[liftedNode]
+        if R==nil then R=res
+        else assert(R==res) end
+      end
+    end
+    return R
+  elseif self.kind=="index" then
+    local area = self.index:eval(1,root):bbArea()
+    if area==1 then
+      return 0
+    else
+      return math.ceil(math.log(area)/math.log(2)) -- for the reduce
+    end
   elseif self.kind=="iterate" then
     return self.iterationSpaceHigh-self.iterationSpaceLow+1
   elseif self.kind=="mapreduce" then
@@ -228,8 +275,9 @@ end
 -- There is no side-band information needed to implement the pipeline the
 -- scheduler produces. So we can totally ignore the darkroom schedule here,
 -- and just rate match due to the extra retiming registers we introduced.
-function fpga.trivialRetime(AST)
+function fpga.trivialRetime(AST,root)
   assert(darkroom.typedAST.isTypedAST(AST) or darkroom.kernelGraph.isKernelGraph(AST))
+  assert(darkroom.typedAST.isTypedAST(root) or darkroom.kernelGraph.isKernelGraph(root))
   local retiming = {}
 
   AST:visitEach(
@@ -237,9 +285,9 @@ function fpga.trivialRetime(AST)
       local maxDelay = 0
       for k,v in n:inputs() do
         -- only retime nodes that are actually used
-        if (darkroom.typedAST.isTypedAST(v)==false or v:codegened(AST)) and inputs[k]>maxDelay then maxDelay = inputs[k] end
+        if (darkroom.typedAST.isTypedAST(v)==false or v:codegened(root)) and inputs[k]>maxDelay then maxDelay = inputs[k] end
       end
-      retiming[n] = maxDelay + n:internalDelay()
+      retiming[n] = maxDelay + n:internalDelay(root)
       return retiming[n]
     end)
 
@@ -468,7 +516,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
       local retimeSeen = {} -- it's possible for a node to use another node multiple times.  Don't double add its retiming delays.
       for k,v in n:inputs() do
         if v:codegened(kernel) and k:sub(1,1)~="_" and (n.kind=="mapreduce" and k=="expr")==false and (n.kind=="iterate" and k=="expr")==false then -- only retime nodes we actually use
-          local delays = retiming[n] - retiming[v] - n:internalDelay()
+          local delays = retiming[n] - retiming[v] - n:internalDelay(kernel)
           assert(delays>=0)
           
           local inputbb = v:calculateMinBB(kernel)
@@ -481,7 +529,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
             for i=1, delays do
               local sn = inputs[k][c].."_to_"..n:cname(c).."_retime"..i
               -- type is determined by producer, b/c consumer op can change type
-              local d = declareReg( v.type:baseType(), sn, "", " // retiming "..retiming[v].." to "..retiming[n].."-"..n:internalDelay() )
+              local d = declareReg( v.type:baseType(), sn, "", " // retiming "..retiming[v].." to "..retiming[n].."-"..n:internalDelay(kernel) )
               local cl = sn.." <= "..prev.."; // retiming\n"
               if retimeSeen[d]==nil then adddecl(bb, {d}); retimeSeen[d]=1 end
               if retimeSeen[cl]==nil then addclocked(bb, {cl}); retimeSeen[cl]=1 end
@@ -496,7 +544,6 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
 
       -- mapreduce mixes channels is weird ways, so codegen this separately
       if n.kind=="mapreduce" then
-
         local moduledef = {"module Map_"..n:name().."(input CLK, input[12:0] inX_internal, input[12:0] inY_internal, \n"}
 
         local exprbb = n.expr:calculateMinBB(kernel)
@@ -650,15 +697,13 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         if n.reduceop=="sum" then
           for c=1,n.type:channels() do
             adddecl(bb,{declareReg(n.expr.type,n:cname(c))})
-
             -- implement the serial reduction
-            addclocked(bb,{[=[if (cycle_]=]..(retiming[n]-n:internalDelay())..[=[==0) begin
+            addclocked(bb,{[=[if (cycle_]=]..(retiming[n]-n:internalDelay(kernel))..[=[==0) begin
   ]=]..n:cname(c)..[=[ <= iterate_]=]..n:name()..[=[_out;
-  end else if (cycle_]=]..(retiming[n]-n:internalDelay())..[=[ < ]=]..n.cycles..[=[) begin
+  end else if (cycle_]=]..(retiming[n]-n:internalDelay(kernel))..[=[ < ]=]..n.cycles..[=[) begin
   ]=]..n:cname(c)..[=[ <= ]=]..n:cname(c)..[=[ + iterate_]=]..n:name()..[=[_out;
 end
 ]=]})
-
             table.insert(finalOut, n:cname(c))
           end
         else
@@ -738,7 +783,7 @@ end
           table.insert(resDeclarations, declareWire(n.type, n:name(), str))
           res = n:name()
         elseif n.kind=="crop" then
-          local delay = retiming[n] - n:internalDelay()
+          local delay = retiming[n] - n:internalDelay(kernel)
           table.insert(resDeclarations, declareReg( n.type:baseType(), n:cname(c) ))
           -- hilariously, this also checks for values <0, b/c values <= in 2s complement are large, larger than image width...
           table.insert(resClockedLogic, n:cname(c).." <= ((inX_"..delay.."-"..n.shiftX..")>="..imageWidth.." || (inY_"..delay.."-"..n.shiftY..")>="..imageHeight..")?(0):("..inputs.expr[c].."); // crop\n")
@@ -775,7 +820,9 @@ end
           res = "mrvar_"..MR["varname"..n.id]
         elseif n.kind=="iterationvar" then
           --res = "iterationvar_"..n.varname
+
           local I = kernel:lookup(n.iterateNode)
+print("CGIV",n.iterateNode,n,I._iterationvar,I._iterationvar.kind)
           table.insert(resDeclarations, declareWire(n.type:baseType(), n:name(), ""," // iteration var"))
           table.insert(resDeclarations, "assign "..n:name().." = cycle+("..valueToVerilogLL(I.iterationSpaceLow,true,32).."); // iteration var\n")
           res = n:name()
@@ -784,10 +831,23 @@ end
         elseif n.kind=="array" then
           res = inputs["expr"..c][1]
         elseif n.kind=="index" then
-          if n.index:eval(1,kernel):area()==1 then
+          if n.index:eval(1,kernel):bbArea()==1 then
             res = inputs["expr"][n.index:eval(1,kernel):min(1)+1]
-          else
-            assert(false)
+        else
+        for k,v in pairs(n) do print(k,v) end
+            local range = n.index:eval(1,kernel)
+            -- synth a reduction tree to select the element we want
+            local rname, rmod = fpga.modules.reduce(compilerState, "valid", range:bbArea(), n.type)
+            result = concat(rmod, result)
+            table.insert(resDeclarations, declareWire(n.type, n:cname(c),"", "// index result"))
+            local str = rname.." indexreduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(c)..")"
+            for i=range:min(1), range:max(1) do
+              local idx = i-range:min(1)
+              str = str..",.partial_"..idx.."("..inputs["expr"][i+1]..")"
+              str = str..",.partial_valid_"..idx.."("..n.index:codegenHW(kernel).." == "..valueToVerilogLL(i,true,32)..")"
+            end
+            table.insert(resDeclarations,str..");\n")
+            res = n:cname(c)
           end
         elseif n.kind=="reduce" then
           local rname, rmod = fpga.modules.reduce(compilerState, n.op, n:arraySize("expr"), n.type)
@@ -827,7 +887,7 @@ end
               -- gather is weird b/c it reads the whole stencil, so instead of using the regular retiming infrastructure, we do the retiming here
               -- TODO: should probably modify this so that it uses the regular retiming infrasturcture.
               -- plus, it takes one clock cycle to calculate the valid bits, so we also need to delay the input stencil 1 extra clock cycle
-              local gatherRetimeDelay = retiming[n] - n:internalDelay() + 1
+              local gatherRetimeDelay = retiming[n] - n:internalDelay(kernel) + 1
               for d=1,gatherRetimeDelay do
                 table.insert(resDeclarations, declareReg(n._input.type, n:cname(c).."_partial_"..cnt.."_"..d,"", "// gather input delay"))
                 if d==1 then
@@ -1033,7 +1093,7 @@ local function liftMapreduce(kernelGraph, shifts)
                 liftedCnt = liftedCnt + 1
                 liftedList["lifted"..liftedCnt] = n
                 newMR["typeLifted"..liftedCnt] = n.type
-                local nn = {kind="lifted",id=liftedCnt,type=n.type}
+                local nn = {kind="lifted",id=liftedCnt,type=n.type,liftedTarget = mapreduceNode.__key}
                 local mrnCnt = 1
                 n:S("mapreducevar"):process(function(mrv) nn["mapreduceNode"..mrnCnt]=mrv.mapreduceNode; mrnCnt = mrnCnt+1 end)
                 return darkroom.typedAST.new(nn):copyMetadataFrom(n)
@@ -1129,7 +1189,7 @@ function fpga.collectLinebuffers(kernelGraph, options, pipelineRetiming)
               for vv,_ in v:parents(n.kernel) do
                 if vv.kind=="gatherColumn" then
                   assert(darkroom.kernelGraph.isKernelGraph(v.from))
-                  local extraPipeDelay = pipelineRetiming[n]-pipelineRetiming[v.from]-n:internalDelay()
+                  local extraPipeDelay = pipelineRetiming[n]-pipelineRetiming[v.from]-n:internalDelay(n.kernel)
                   assert(extraPipeDelay==0)
                   local s = n.kernel:stencil(v.from, n.kernel)
                   print("SMax",s:max(2),s:min(2),vv.columnEndY,vv.columnStartY)
@@ -1340,7 +1400,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
   kernelGraph:visitEach(
     function(node, inputArgs)
       if node.kernel~=nil then
-        kernelRetiming[node] = fpga.trivialRetime(node.kernel)
+        kernelRetiming[node] = fpga.trivialRetime(node.kernel, node.kernel)
         STUPIDGLOBALinternalDelays[node] = kernelRetiming[node][node.kernel]
         assert(type(STUPIDGLOBALinternalDelays[node])=="number")
         if parentIsOutput(node,kernelGraph)==false and node:bufferSize(kernelGraph,options.stripWidth)>0 then 
@@ -1352,7 +1412,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
     end)
 
   -- now we retime the whole pipeline, to account for the delays of each kernel
-  local pipelineRetiming = fpga.trivialRetime(kernelGraph)
+  local pipelineRetiming = fpga.trivialRetime(kernelGraph, kernelGraph)
 
   local inputLinebuffers, outputLinebuffers = fpga.collectLinebuffers(kernelGraph, options, pipelineRetiming)
 
