@@ -60,6 +60,7 @@ function numToVarname(x)
 end
 
 function pointerToVarname(x)
+  assert(type(x)=="table")
   return tostring(x):sub(10)
 end
 
@@ -331,12 +332,12 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
       elseif inputLinebuffer.kind=="gatherColumn" then
         local bytesPerPixel = inputLinebuffer.from.kernel.type:baseType():sizeof()
         local extraBits = math.log(bytesPerPixel)/math.log(2)
-        inputs = inputs.."output ["..(10-extraBits)..":0] gatherAddress,"
-        inputs = inputs.."output gatherReadValidInNextCycleX,"
-        inputs = inputs.."output gatherReadValidInNextCycleY,"
+        inputs = inputs.."output ["..(10-extraBits)..":0] gatherAddress_"..pointerToVarname(inputLinebuffer.key)..","
+        inputs = inputs.."output gatherReadValidInNextCycleX_"..pointerToVarname(inputLinebuffer.key)..","
+        inputs = inputs.."output gatherReadValidInNextCycleY_"..pointerToVarname(inputLinebuffer.key)..","
 
         for y=-inputLinebuffer.linebufferSizeY,0 do
-          inputs = inputs.."input ["..(bytesPerPixel*8-1)..":0] in_gatherColumn_x0_y"..numToVarname(y)..","
+          inputs = inputs.."input ["..(bytesPerPixel*8-1)..":0] in_gatherColumn_"..pointerToVarname(inputLinebuffer.key).."_x0_y"..numToVarname(y)..","
         end
       else
         assert(false)
@@ -658,11 +659,11 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
           if le.kind=="gatherColumn" then
             local bytesPerPixel = le._input.from.kernel.type:baseType():sizeof()
             local extraBits = math.log(bytesPerPixel)/math.log(2)
-            table.insert(moduledef,"output ["..(10-extraBits)..":0] gatherAddress,")
-            gatherInputs = gatherInputs..",.gatherAddress(gatherAddress)"
+            table.insert(moduledef,"output ["..(10-extraBits)..":0] gatherAddress_"..pointerToVarname(le.__key)..",")
+            gatherInputs = gatherInputs..",.gatherAddress_"..pointerToVarname(le.__key).."(gatherAddress_"..pointerToVarname(le.__key)..")"
             for y=-(le.columnEndY-le.columnStartY),0 do
-              table.insert(moduledef,"input ["..(bytesPerPixel*8-1)..":0] in_gatherColumn_x0_y"..numToVarname(y)..",")
-              gatherInputs = gatherInputs..",.in_gatherColumn_x0_y"..numToVarname(y).."(in_gatherColumn_x0_y"..numToVarname(y)..")"
+              table.insert(moduledef,"input ["..(bytesPerPixel*8-1)..":0] in_gatherColumn_"..pointerToVarname(le.__key).."_x0_y"..numToVarname(y)..",")
+              gatherInputs = gatherInputs..",.in_gatherColumn_"..pointerToVarname(le.__key).."_x0_y"..numToVarname(y).."(in_gatherColumn_"..pointerToVarname(le.__key).."_x0_y"..numToVarname(y)..")"
             end
           else
             assert(false)
@@ -927,20 +928,20 @@ print("CGIV",n.iterateNode,n,I._iterationvar,I._iterationvar.kind)
           end
           
           if c==1 then
-            adddecl(darkroom.typedAST._topbb,{"assign gatherReadValidInNextCycleX = validOutNextCycleX_"..(retiming[n.x]+1)..";\n"})
-            adddecl(darkroom.typedAST._topbb,{"assign gatherReadValidInNextCycleY = validOutNextCycleY_"..(retiming[n.x]+1)..";\n"})
+            adddecl(darkroom.typedAST._topbb,{"assign gatherReadValidInNextCycleX_"..pointerToVarname(n.__key).." = validOutNextCycleX_"..(retiming[n.x]+1)..";\n"})
+            adddecl(darkroom.typedAST._topbb,{"assign gatherReadValidInNextCycleY_"..pointerToVarname(n.__key).." = validOutNextCycleY_"..(retiming[n.x]+1)..";\n"})
                                                
             local bytesPerPixel = n._input.from.kernel.type:baseType():sizeof()
             local extraBits = math.log(bytesPerPixel)/math.log(2)
                                           
             table.insert(resDeclarations,"reg ["..(10-extraBits)..":0] gatherAddress_"..n:name()..";\n")
             table.insert(resClockedLogic,"gatherAddress_"..n:name().." <= "..inputs.x[1].."+"..valueToVerilogLL(relX,true,(10-extraBits))..";\n")
-            table.insert(resDeclarations,"assign gatherAddress = gatherAddress_"..n:name()..";\n")
+            table.insert(resDeclarations,"assign gatherAddress_"..pointerToVarname(n.__key).." = gatherAddress_"..n:name()..";\n")
           end
           local tys = n.type:baseType():sizeof()*8
           local ypos = c-(n.columnEndY-n.columnStartY+1)
           local subc = 1
-          table.insert(resDeclarations,declareWire( n.type:baseType(), n:cname(c), "in_gatherColumn_x0_y"..numToVarname(ypos).."["..(subc*tys-1)..":"..((subc-1)*tys).."]"," // gatherColumn" ))
+          table.insert(resDeclarations,declareWire( n.type:baseType(), n:cname(c), "in_gatherColumn_"..pointerToVarname(n.__key).."_x0_y"..numToVarname(ypos).."["..(subc*tys-1)..":"..((subc-1)*tys).."]"," // gatherColumn" ))
           res = n:cname(c)
         elseif n.kind=="lifted" then
           local src = "lifted"..n.id
@@ -1196,7 +1197,7 @@ function fpga.collectLinebuffers(kernelGraph, options, pipelineRetiming)
                   assert(s:max(2)==0)
                   assert(s:min(2)==-(vv.columnEndY-vv.columnStartY))
 
-                  local t = {kind="gatherColumn",consumers={Stencil.new():add(0,0,0):add(0,s:min(2),0)},scale=looprate(n.kernel.scaleN1,n.kernel.scaleD1,1),to=n, from=v.from}
+                  local t = {kind="gatherColumn",consumers={Stencil.new():add(0,0,0):add(0,s:min(2),0)},scale=looprate(n.kernel.scaleN1,n.kernel.scaleD1,1),to=n, from=v.from,key=vv.__key}
                   t.effStripWidth = options.stripWidth/t.scale
                   assert(t.effStripWidth==math.floor(t.effStripWidth))
 
@@ -1212,7 +1213,7 @@ function fpga.collectLinebuffers(kernelGraph, options, pipelineRetiming)
                   t.lboutputs =""
 
                   for y=s:min(2),s:max(2) do
-                    local wirename = v.from:name().."_to_"..n:name().."_gatherColumn_x0_y"..numToVarname(y)
+                    local wirename = v.from:name().."_to_"..n:name().."_gatherColumn_"..pointerToVarname(t.key).."_x0_y"..numToVarname(y)
                     table.insert(t.declarations,"wire ["..(v.from.kernel.type:sizeof()*8-1)..":0] "..wirename..";\n")
                     t.lboutputs = t.lboutputs..".out1_x0_y"..numToVarname(y).."("..wirename.."),"                    
                   end
@@ -1306,22 +1307,22 @@ function fpga.allocateLinebuffers(node, kernelGraph, outputLinebuffers)
     else
       local bytesPerPixel = node.kernel.type:sizeof()
       local extraBits = math.log(bytesPerPixel)/math.log(2)
-      local varname = "gatherAddress_"..v.from:name().."_to_"..v.to:name()
+      local varname = "gatherAddress_"..v.from:name().."_to_"..v.to:name().."_"..pointerToVarname(v.key)
       table.insert(pipeline, "wire ["..(10-extraBits)..":0] "..varname..";\n")
 
-      local varname_readx = "gatherReadValidInNextCycleX_"..v.from:name().."_to_"..v.to:name()
+      local varname_readx = "gatherReadValidInNextCycleX_"..v.from:name().."_to_"..v.to:name().."_"..pointerToVarname(v.key)
       table.insert(pipeline, "wire "..varname_readx..";\n")
 
-      local varname_ready = "gatherReadValidInNextCycleY_"..v.from:name().."_to_"..v.to:name()
+      local varname_ready = "gatherReadValidInNextCycleY_"..v.from:name().."_to_"..v.to:name().."_"..pointerToVarname(v.key)
       table.insert(pipeline, "wire "..varname_ready..";\n")
 
       for y=-v.linebufferSizeY,0 do
-        table.insert(pipeline, "wire ["..(bytesPerPixel*8-1)..":0] "..v.from:name().."_to_"..v.to:name().."_gatherColumn_x0_y"..numToVarname(y)..";\n")
+        table.insert(pipeline, "wire ["..(bytesPerPixel*8-1)..":0] "..v.from:name().."_to_"..v.to:name().."_gatherColumn_"..pointerToVarname(v.key).."_x0_y"..numToVarname(y)..";\n")
       end
 
       local lbname, lbmod = fpga.modules.linebuffer(v.linebufferSizeX, v.linebufferSizeY, node.kernel.type, v.effStripWidth, v.consumers, v.scale > 1, v.wasUpsampledY, true)
       result = concat(result, lbmod)
-      table.insert(pipeline,lbname.." kernelBufferGatherColumn_"..node:name().."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.writeValidInNextCycleX(kernelValidOutNextCycleX_"..node:name().."),.writeValidInNextCycleY(kernelValidOutNextCycleY_"..node:name().."),.readValidInNextCycleX("..varname_readx.."),.readValidInNextCycleY("..varname_ready.."),.gatherAddress("..varname.."));\n")
+      table.insert(pipeline,lbname.." kernelBufferGatherColumn_"..node:name().."_"..pointerToVarname(v.key).."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.writeValidInNextCycleX(kernelValidOutNextCycleX_"..node:name().."),.writeValidInNextCycleY(kernelValidOutNextCycleY_"..node:name().."),.readValidInNextCycleX("..varname_readx.."),.readValidInNextCycleY("..varname_ready.."),.gatherAddress("..varname.."));\n")
     end
   end
   return pipeline, result
@@ -1444,12 +1445,12 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
               end
             elseif inputBuffer.kind=="gatherColumn" then
               -- actually, this is an output
-              inputs = inputs..".gatherAddress(gatherAddress_"..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."),"
-              inputs = inputs..".gatherReadValidInNextCycleX(gatherReadValidInNextCycleX_"..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."),"
-              inputs = inputs..".gatherReadValidInNextCycleY(gatherReadValidInNextCycleY_"..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."),"
+              inputs = inputs..".gatherAddress_"..pointerToVarname(inputBuffer.key).."(gatherAddress_"..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."_"..pointerToVarname(inputBuffer.key).."),"
+              inputs = inputs..".gatherReadValidInNextCycleX_"..pointerToVarname(inputBuffer.key).."(gatherReadValidInNextCycleX_"..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."_"..pointerToVarname(inputBuffer.key).."),"
+              inputs = inputs..".gatherReadValidInNextCycleY_"..pointerToVarname(inputBuffer.key).."(gatherReadValidInNextCycleY_"..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."_"..pointerToVarname(inputBuffer.key).."),"
 
               for y=-inputBuffer.linebufferSizeY,0 do
-                inputs = inputs..".in_gatherColumn_x0_y"..numToVarname(y).."("..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."_gatherColumn_x0_y"..numToVarname(y).."),"
+                inputs = inputs..".in_gatherColumn_"..pointerToVarname(inputBuffer.key).."_x0_y"..numToVarname(y).."("..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."_gatherColumn_"..pointerToVarname(inputBuffer.key).."_x0_y"..numToVarname(y).."),"
               end
             else
               assert(false)

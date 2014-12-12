@@ -167,7 +167,7 @@ function darkroom.gatherAdvanced( thisast, input,x,y,minXV,maxXV,minYV,maxYV)
 end
 
 function darkroom.gatherColumn( thisast, input, x, rowWidth, columnStartX, columnEndX, columnStartY, columnEndY)
-  return darkroom.ast.new({kind="gatherColumn",_input=input, x=x, rowWidth=rowWidth, columnStartX=columnStartX, columnEndX=columnEndX, columnStartY=columnStartY, columnEndY=columnEndY}):copyMetadataFrom(thisast)
+  return darkroom.ast.new({kind="gatherColumn",_input=input, x=x, rowWidth=rowWidth, columnStartX=columnStartX, columnEndX=columnEndX, columnStartY=columnStartY, columnEndY=columnEndY,__key={}}):copyMetadataFrom(thisast)
 end
 
 function darkroom.filter( thisast, cond, expr )
