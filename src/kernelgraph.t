@@ -127,16 +127,16 @@ function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
         end)
 
       -- we do this typechecking here, b/c cycle delay depends on how we split up the kernels
-      kernel = kernel:visitEach(
-        function(n, inputs)
+      kernel = kernel:S("*"):process(
+        function(n)
           local nn = n:shallowcopy()
 
           if nn.kind=="iterate" then
-            nn.cycles = inputs.expr.cycles + (n.iterationSpaceHigh-n.iterationSpaceLow)
-          elseif keycount(inputs)==0 then -- leaf
-            nn.cycles = 1
+            nn.cycles = n.expr.cycles + (n.iterationSpaceHigh-n.iterationSpaceLow+1)
+          elseif n:inputCount()==0 then -- leaf
+            nn.cycles = 0
           else
-            for k,v in pairs(inputs) do
+            for k,v in n:inputs() do
               if nn.cycles==nil or nn.cycles < v.cycles then nn.cycles = v.cycles end
             end
           end
@@ -146,7 +146,7 @@ function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
         end)
 
       local effCycles = math.ceil(kernel.cycles*ratioToScale(kernel.scaleN1,kernel.scaleD1)*ratioToScale(kernel.scaleN2,kernel.scaleD2))
-      largestEffectiveCycles = math.max(effCycles, largestEffectiveCycles)
+      largestEffectiveCycles = math.max(effCycles, largestEffectiveCycles, 1) -- don't go below 1 cycle
 
       if kernel.kind=="outputs" then
         if kernel:arraySize("expr")~=childCount-1 then
