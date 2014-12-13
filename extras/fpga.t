@@ -335,6 +335,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         inputs = inputs.."output ["..(10-extraBits)..":0] gatherAddress_"..pointerToVarname(inputLinebuffer.key)..","
         inputs = inputs.."output gatherReadInNextCycleX_"..pointerToVarname(inputLinebuffer.key)..","
         inputs = inputs.."output gatherReadInNextCycleY_"..pointerToVarname(inputLinebuffer.key)..","
+        inputs = inputs.."output gatherValidInNextCycle_"..pointerToVarname(inputLinebuffer.key)..","
 
         for y=-inputLinebuffer.linebufferSizeY,0 do
           inputs = inputs.."input ["..(bytesPerPixel*8-1)..":0] in_gatherColumn_"..pointerToVarname(inputLinebuffer.key).."_x0_y"..numToVarname(y)..","
@@ -933,6 +934,7 @@ print("CGIV",n.iterateNode,n,I._iterationvar,I._iterationvar.kind)
           if c==1 then
             adddecl(darkroom.typedAST._topbb,{"assign gatherReadInNextCycleX_"..pointerToVarname(n.__key).." = rwValidOutNextCycleX_"..(retiming[n.x]+1)..";\n"})
             adddecl(darkroom.typedAST._topbb,{"assign gatherReadInNextCycleY_"..pointerToVarname(n.__key).." = rwValidOutNextCycleY_"..(retiming[n.x]+1)..";\n"})
+            adddecl(darkroom.typedAST._topbb,{"assign gatherValidInNextCycle_"..pointerToVarname(n.__key).." = validOutNextCycle_"..(retiming[n.x]+1)..";\n"})
                                                
             local bytesPerPixel = n._input.from.kernel.type:baseType():sizeof()
             local extraBits = math.log(bytesPerPixel)/math.log(2)
@@ -1306,7 +1308,7 @@ function fpga.allocateLinebuffers(node, kernelGraph, outputLinebuffers)
       local lbname, lbmod = fpga.modules.linebuffer(v.linebufferSizeX, v.linebufferSizeY, node.kernel.type, v.effStripWidth, v.consumers, v.scale > 1, v.wasUpsampledY)
       result = concat(result, lbmod)
       pipeline = concat(pipeline,v.declarations)
-      table.insert(pipeline,lbname.." kernelBuffer_"..node:name().."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.readInNextCycleX(kernelRWValidOutNextCycleX_"..node:name().."),.readInNextCycleY(kernelRWValidOutNextCycleY_"..node:name().."),.writeInNextCycleX(kernelRWValidOutNextCycleX_"..node:name().."),.writeInNextCycleY(kernelRWValidOutNextCycleY_"..node:name().."),.validInNextCycle(kernelValidOutNextCycle_"..node:name().."));\n")
+      table.insert(pipeline,lbname.." kernelBuffer_"..node:name().."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.readInNextCycleX(kernelRWValidOutNextCycleX_"..node:name().."),.readInNextCycleY(kernelRWValidOutNextCycleY_"..node:name().."),.writeInNextCycleX(kernelRWValidOutNextCycleX_"..node:name().."),.writeInNextCycleY(kernelRWValidOutNextCycleY_"..node:name().."),.readValidInNextCycle(kernelValidOutNextCycle_"..node:name().."),.writeValidInNextCycle(kernelValidOutNextCycle_"..node:name().."));\n")
     else
       local bytesPerPixel = node.kernel.type:sizeof()
       local extraBits = math.log(bytesPerPixel)/math.log(2)
@@ -1319,13 +1321,16 @@ function fpga.allocateLinebuffers(node, kernelGraph, outputLinebuffers)
       local varname_ready = "gatherReadInNextCycleY_"..v.from:name().."_to_"..v.to:name().."_"..pointerToVarname(v.key)
       table.insert(pipeline, "wire "..varname_ready..";\n")
 
+      local varname_valid = "gatherValidInNextCycle_"..v.from:name().."_to_"..v.to:name().."_"..pointerToVarname(v.key)
+      table.insert(pipeline, "wire "..varname_valid..";\n")
+
       for y=-v.linebufferSizeY,0 do
         table.insert(pipeline, "wire ["..(bytesPerPixel*8-1)..":0] "..v.from:name().."_to_"..v.to:name().."_gatherColumn_"..pointerToVarname(v.key).."_x0_y"..numToVarname(y)..";\n")
       end
 
       local lbname, lbmod = fpga.modules.linebuffer(v.linebufferSizeX, v.linebufferSizeY, node.kernel.type, v.effStripWidth, v.consumers, v.scale > 1, v.wasUpsampledY, true)
       result = concat(result, lbmod)
-      table.insert(pipeline,lbname.." kernelBufferGatherColumn_"..node:name().."_"..pointerToVarname(v.key).."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.writeInNextCycleX(kernelRWValidOutNextCycleX_"..node:name().."),.writeInNextCycleY(kernelRWValidOutNextCycleY_"..node:name().."),.readInNextCycleX("..varname_readx.."),.readInNextCycleY("..varname_ready.."),.gatherAddress("..varname.."),.validInNextCycle(kernelValidOutNextCycle_"..node:name().."));\n")
+      table.insert(pipeline,lbname.." kernelBufferGatherColumn_"..node:name().."_"..pointerToVarname(v.key).."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.writeInNextCycleX(kernelRWValidOutNextCycleX_"..node:name().."),.writeInNextCycleY(kernelRWValidOutNextCycleY_"..node:name().."),.readInNextCycleX("..varname_readx.."),.readInNextCycleY("..varname_ready.."),.gatherAddress("..varname.."),.readValidInNextCycle("..varname_valid.."),.writeValidInNextCycle(kernelValidOutNextCycle_"..node:name().."));\n")
     end
   end
   return pipeline, result
@@ -1451,6 +1456,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
               inputs = inputs..".gatherAddress_"..pointerToVarname(inputBuffer.key).."(gatherAddress_"..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."_"..pointerToVarname(inputBuffer.key).."),"
               inputs = inputs..".gatherReadInNextCycleX_"..pointerToVarname(inputBuffer.key).."(gatherReadInNextCycleX_"..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."_"..pointerToVarname(inputBuffer.key).."),"
               inputs = inputs..".gatherReadInNextCycleY_"..pointerToVarname(inputBuffer.key).."(gatherReadInNextCycleY_"..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."_"..pointerToVarname(inputBuffer.key).."),"
+              inputs = inputs..".gatherValidInNextCycle_"..pointerToVarname(inputBuffer.key).."(gatherValidInNextCycle_"..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."_"..pointerToVarname(inputBuffer.key).."),"
 
               for y=-inputBuffer.linebufferSizeY,0 do
                 inputs = inputs..".in_gatherColumn_"..pointerToVarname(inputBuffer.key).."_x0_y"..numToVarname(y).."("..inputBuffer.from:name().."_to_"..inputBuffer.to:name().."_gatherColumn_"..pointerToVarname(inputBuffer.key).."_x0_y"..numToVarname(y).."),"
