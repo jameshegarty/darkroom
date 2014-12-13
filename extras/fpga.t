@@ -345,7 +345,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
     end
   end
 
-  local result = {"module Kernel_"..kernelGraphNode:name().."(input CLK, input[12:0] inX, input[12:0] inY, output[12:0] outX, output[12:0] outY, input [7:0] cycle, output [7:0] cycleOut, \n"..inputs.."output ["..(kernel.type:sizeof()*8-1)..":0] out, input validIn, output validOutNextCycleX, output validOutNextCycleY);\n"}
+  local result = {"module Kernel_"..kernelGraphNode:name().."(input CLK, input[12:0] inX, input[12:0] inY, output[12:0] outX, output[12:0] outY, input [7:0] cycle, output [7:0] cycleOut, \n"..inputs.."output ["..(kernel.type:sizeof()*8-1)..":0] out, input validInNextCycle, output validOutNextCycle, output rwValidOutNextCycleX, output rwValidOutNextCycleY);\n"}
   local clockedLogic = {}
 
   table.insert(result,"wire [12:0] inX_0;\n")
@@ -358,35 +358,35 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
   local shiftX, shiftY = delayToXY(shift, options.stripWidth)
   local shiftT={shiftX,shiftY}
 
+  table.insert(result,"wire validOutNextCycle_0;\n")
+  table.insert(result,"assign validOutNextCycle_0 = validInNextCycle;\n")
+
   for i=1,2 do
     local coord = "X"
     if i==2 then coord="Y" end
     table.insert(result,"wire [12:0] in"..coord.."_internal;\n")
     table.insert(result,"wire [12:0] in"..coord.."_shifted;\n")
     table.insert(result,"assign in"..coord.."_shifted = in"..coord.." - 13'd"..shiftT[i]..";\n")
-    table.insert(result,"wire validOutNextCycle"..coord.."_0;\n")
+    table.insert(result,"wire rwValidOutNextCycle"..coord.."_0;\n")
     
     local rate = looprate(kernel["scaleN"..i],kernel["scaleD"..i],1)
 
     if rate==1 then
---      if i==1 then table.insert(result,"reg validOutThisCycle_0 = 1'b1;\n") end
-
       table.insert(result,"assign in"..coord.."_internal = in"..coord..";\n")        
       if largestEffectiveCycles>1 then
-        table.insert(result,"assign validOutNextCycle"..coord.."_0 = (cycle=="..valueToVerilogLL(largestEffectiveCycles-1,false,8)..");\n")
+        table.insert(result,"assign rwValidOutNextCycle"..coord.."_0 = (cycle=="..valueToVerilogLL(largestEffectiveCycles-1,false,8)..");\n")
       else
-        table.insert(result,"assign validOutNextCycle"..coord.."_0 = 1;\n")
+        table.insert(result,"assign rwValidOutNextCycle"..coord.."_0 = 1;\n")
       end
     else
---      if i==1 then table.insert(result,"reg validOutThisCycle_0 = 1'b0;\n") end
 
       local sft = math.log(rate)/math.log(2)
       assert(math.floor(sft)==sft)
       table.insert(result,"assign in"..coord.."_internal = in"..coord.." >> "..sft..";\n")
       if i==1 then
-        table.insert(result,"assign validOutNextCycle"..coord.."_0 = ( in"..coord.."_shifted["..(sft-1)..":0] =="..sft.."'d"..(rate-1)..");\n")
+        table.insert(result,"assign rwValidOutNextCycle"..coord.."_0 = ( in"..coord.."_shifted["..(sft-1)..":0] =="..sft.."'d"..(rate-1)..");\n")
       else
-        table.insert(result,"assign validOutNextCycle"..coord.."_0 = ( (in"..coord.."_shifted["..(sft-1)..":0] =="..sft.."'d0 & inX!=12'd"..(options.stripWidth-1+options.padMinX)..") | ((inX==12'd"..(options.stripWidth-1+options.padMinX)..") & (inY_shifted["..(sft-1)..":0]=="..sft.."'d"..(rate-1)..")));\n")
+        table.insert(result,"assign rwValidOutNextCycle"..coord.."_0 = ( (in"..coord.."_shifted["..(sft-1)..":0] =="..sft.."'d0 & inX!=12'd"..(options.stripWidth-1+options.padMinX)..") | ((inX==12'd"..(options.stripWidth-1+options.padMinX)..") & (inY_shifted["..(sft-1)..":0]=="..sft.."'d"..(rate-1)..")));\n")
       end
     end
   end
@@ -474,20 +474,23 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
     adddecl(darkroom.typedAST._topbb,{"reg [12:0] inX_"..i..";\n"})
     adddecl(darkroom.typedAST._topbb,{"reg [12:0] inY_"..i..";\n"})
     adddecl(darkroom.typedAST._topbb,{"reg [7:0] cycle_"..i.." = "..valueToVerilogLL(largestEffectiveCycles-1,false,8)..";\n"})
-    adddecl(darkroom.typedAST._topbb,{"reg validOutNextCycleX_"..i.." = 1'b0;\n"})
-    adddecl(darkroom.typedAST._topbb,{"reg validOutNextCycleY_"..i.." = 1'b0;\n"})
+    adddecl(darkroom.typedAST._topbb,{"reg rwValidOutNextCycleX_"..i.." = 1'b0;\n"})
+    adddecl(darkroom.typedAST._topbb,{"reg rwValidOutNextCycleY_"..i.." = 1'b0;\n"})
+    adddecl(darkroom.typedAST._topbb,{"reg validOutNextCycle_"..i.." = 1'b0;\n"})
     addclocked(darkroom.typedAST._topbb, {"inX_"..i.." <= inX_"..(i-1)..";\n"})
     addclocked(darkroom.typedAST._topbb, {"inY_"..i.." <= inY_"..(i-1)..";\n"})
     addclocked(darkroom.typedAST._topbb, {"cycle_"..i.." <= cycle_"..(i-1)..";\n"})
-    addclocked(darkroom.typedAST._topbb, {"validOutNextCycleX_"..i.." <= validOutNextCycleX_"..(i-1)..";\n"})
-    addclocked(darkroom.typedAST._topbb, {"validOutNextCycleY_"..i.." <= validOutNextCycleY_"..(i-1)..";\n"})
+    addclocked(darkroom.typedAST._topbb, {"rwValidOutNextCycleX_"..i.." <= rwValidOutNextCycleX_"..(i-1)..";\n"})
+    addclocked(darkroom.typedAST._topbb, {"rwValidOutNextCycleY_"..i.." <= rwValidOutNextCycleY_"..(i-1)..";\n"})
+    addclocked(darkroom.typedAST._topbb, {"validOutNextCycle_"..i.." <= validOutNextCycle_"..(i-1)..";\n"})
   end
 
   adddecl(darkroom.typedAST._topbb,{"assign outX = inX_"..retiming[kernel]..";\n"})
   adddecl(darkroom.typedAST._topbb,{"assign outY = inY_"..retiming[kernel]..";\n"})
   adddecl(darkroom.typedAST._topbb,{"assign cycleOut = cycle_"..retiming[kernel]..";\n"})
-  adddecl(darkroom.typedAST._topbb,{"assign validOutNextCycleX = validOutNextCycleX_"..retiming[kernel]..";\n"})
-  adddecl(darkroom.typedAST._topbb,{"assign validOutNextCycleY = validOutNextCycleY_"..retiming[kernel]..";\n"})
+  adddecl(darkroom.typedAST._topbb,{"assign rwValidOutNextCycleX = rwValidOutNextCycleX_"..retiming[kernel]..";\n"})
+  adddecl(darkroom.typedAST._topbb,{"assign rwValidOutNextCycleY = rwValidOutNextCycleY_"..retiming[kernel]..";\n"})
+  adddecl(darkroom.typedAST._topbb,{"assign validOutNextCycle = validOutNextCycle_"..retiming[kernel]..";\n"})
 
   local finalOut = kernel:visitEach(
     function(n, args)
@@ -928,8 +931,8 @@ print("CGIV",n.iterateNode,n,I._iterationvar,I._iterationvar.kind)
           end
           
           if c==1 then
-            adddecl(darkroom.typedAST._topbb,{"assign gatherReadValidInNextCycleX_"..pointerToVarname(n.__key).." = validOutNextCycleX_"..(retiming[n.x]+1)..";\n"})
-            adddecl(darkroom.typedAST._topbb,{"assign gatherReadValidInNextCycleY_"..pointerToVarname(n.__key).." = validOutNextCycleY_"..(retiming[n.x]+1)..";\n"})
+            adddecl(darkroom.typedAST._topbb,{"assign gatherReadValidInNextCycleX_"..pointerToVarname(n.__key).." = rwValidOutNextCycleX_"..(retiming[n.x]+1)..";\n"})
+            adddecl(darkroom.typedAST._topbb,{"assign gatherReadValidInNextCycleY_"..pointerToVarname(n.__key).." = rwValidOutNextCycleY_"..(retiming[n.x]+1)..";\n"})
                                                
             local bytesPerPixel = n._input.from.kernel.type:baseType():sizeof()
             local extraBits = math.log(bytesPerPixel)/math.log(2)
@@ -1303,7 +1306,7 @@ function fpga.allocateLinebuffers(node, kernelGraph, outputLinebuffers)
       local lbname, lbmod = fpga.modules.linebuffer(v.linebufferSizeX, v.linebufferSizeY, node.kernel.type, v.effStripWidth, v.consumers, v.scale > 1, v.wasUpsampledY)
       result = concat(result, lbmod)
       pipeline = concat(pipeline,v.declarations)
-      table.insert(pipeline,lbname.." kernelBuffer_"..node:name().."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.readValidInNextCycleX(kernelValidOutNextCycleX_"..node:name().."),.readValidInNextCycleY(kernelValidOutNextCycleY_"..node:name().."),.writeValidInNextCycleX(kernelValidOutNextCycleX_"..node:name().."),.writeValidInNextCycleY(kernelValidOutNextCycleY_"..node:name().."));\n")
+      table.insert(pipeline,lbname.." kernelBuffer_"..node:name().."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.readValidInNextCycleX(kernelRWValidOutNextCycleX_"..node:name().."),.readValidInNextCycleY(kernelRWValidOutNextCycleY_"..node:name().."),.writeValidInNextCycleX(kernelRWValidOutNextCycleX_"..node:name().."),.writeValidInNextCycleY(kernelRWValidOutNextCycleY_"..node:name().."),.validInNextCycle(kernelValidOutNextCycle_"..node:name().."));\n")
     else
       local bytesPerPixel = node.kernel.type:sizeof()
       local extraBits = math.log(bytesPerPixel)/math.log(2)
@@ -1322,7 +1325,7 @@ function fpga.allocateLinebuffers(node, kernelGraph, outputLinebuffers)
 
       local lbname, lbmod = fpga.modules.linebuffer(v.linebufferSizeX, v.linebufferSizeY, node.kernel.type, v.effStripWidth, v.consumers, v.scale > 1, v.wasUpsampledY, true)
       result = concat(result, lbmod)
-      table.insert(pipeline,lbname.." kernelBufferGatherColumn_"..node:name().."_"..pointerToVarname(v.key).."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.writeValidInNextCycleX(kernelValidOutNextCycleX_"..node:name().."),.writeValidInNextCycleY(kernelValidOutNextCycleY_"..node:name().."),.readValidInNextCycleX("..varname_readx.."),.readValidInNextCycleY("..varname_ready.."),.gatherAddress("..varname.."));\n")
+      table.insert(pipeline,lbname.." kernelBufferGatherColumn_"..node:name().."_"..pointerToVarname(v.key).."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.writeValidInNextCycleX(kernelRWValidOutNextCycleX_"..node:name().."),.writeValidInNextCycleY(kernelRWValidOutNextCycleY_"..node:name().."),.readValidInNextCycleX("..varname_readx.."),.readValidInNextCycleY("..varname_ready.."),.gatherAddress("..varname.."),.validInNextCycle(kernelValidOutNextCycle_"..node:name().."));\n")
     end
   end
   return pipeline, result
@@ -1381,8 +1384,8 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, options)
   local pipeline = {[=[module Pipeline(
 input CLK, input[12:0] inX, input[12:0] inY,
 output [12:0] outX, output [12:0] outY,
-input inValid,
-output outValid,
+input validInNextCycle,
+output validOut,
 input [7:0] cycle,
 input []=]..(totalInputBytes*8-1)..[=[:0] packedinput,
 output []=]..(outputBytes*8-1)..[=[:0] out);
@@ -1431,7 +1434,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
             function(n)
               inputs = ".in_"..n.from.."_x0_y0(in_"..n.from.."),"
             end)
-          inputXY = ".inX(inX),.inY(inY),.validIn(inValid),.cycle(cycle)"
+          inputXY = ".inX(inX),.inY(inY),.validInNextCycle(validInNextCycle),.cycle(cycle)"
         else
           for _,inputBuffer in pairs(inputLinebuffers[node]) do
             if inputBuffer.kind=="regular" then
@@ -1457,16 +1460,17 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
             end
           end
           local xySource = node:xySource(kernelGraph,pipelineRetiming)
-          inputXY = ".inX(kernelOutX_"..xySource:name().."),.inY(kernelOutY_"..xySource:name().."),.validIn(kernelValidOutNextCycle_"..xySource:name().."),.cycle(kernelCycle_"..xySource:name()..")"
+          inputXY = ".inX(kernelOutX_"..xySource:name().."),.inY(kernelOutY_"..xySource:name().."),.validInNextCycle(kernelValidOutNextCycle_"..xySource:name().."),.cycle(kernelCycle_"..xySource:name()..")"
         end
         
         table.insert(pipeline,"wire ["..(node.kernel.type:sizeof()*8-1)..":0] kernelOut_"..node:name()..";\n")
         table.insert(pipeline,"wire [12:0] kernelOutX_"..node:name()..";\n")
         table.insert(pipeline,"wire [7:0] kernelCycle_"..node:name()..";\n")
         table.insert(pipeline,"wire [12:0] kernelOutY_"..node:name()..";\n")
-        table.insert(pipeline,"wire kernelValidOutNextCycleX_"..node:name()..";\n")
-        table.insert(pipeline,"wire kernelValidOutNextCycleY_"..node:name()..";\n")
-        table.insert(pipeline,"Kernel_"..node:name().." kernel_"..node:name().."(.CLK(CLK),"..inputXY..",.outX(kernelOutX_"..node:name().."),.outY(kernelOutY_"..node:name().."),"..inputs..".out(kernelOut_"..node:name().."),.validOutNextCycleX(kernelValidOutNextCycleX_"..node:name().."),.validOutNextCycleY(kernelValidOutNextCycleY_"..node:name().."),.cycleOut(kernelCycle_"..node:name().."));\n")
+        table.insert(pipeline,"wire kernelValidOutNextCycle_"..node:name()..";\n")
+        table.insert(pipeline,"wire kernelRWValidOutNextCycleX_"..node:name()..";\n")
+        table.insert(pipeline,"wire kernelRWValidOutNextCycleY_"..node:name()..";\n")
+        table.insert(pipeline,"Kernel_"..node:name().." kernel_"..node:name().."(.CLK(CLK),"..inputXY..",.outX(kernelOutX_"..node:name().."),.outY(kernelOutY_"..node:name().."),"..inputs..".out(kernelOut_"..node:name().."),.rwValidOutNextCycleX(kernelRWValidOutNextCycleX_"..node:name().."),.rwValidOutNextCycleY(kernelRWValidOutNextCycleY_"..node:name().."),.cycleOut(kernelCycle_"..node:name().."),.validOutNextCycle(kernelValidOutNextCycle_"..node:name().."));\n")
         
         local pipelineLB, resultLB = fpga.allocateLinebuffers(node, kernelGraph, outputLinebuffers[node])
         pipeline = concat(pipeline,pipelineLB)
@@ -1508,8 +1512,8 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
   table.insert(pipeline, "assign outX = kernelOutX_"..kernelGraph.child1:name()..";\n")
   table.insert(pipeline, "assign outY = kernelOutY_"..kernelGraph.child1:name()..";\n")
   table.insert(pipeline, "reg kernelValidOutThisCycle_"..kernelGraph.child1:name()..";\n")
-  table.insert(pipeline, "always @ (posedge CLK) begin kernelValidOutThisCycle_"..kernelGraph.child1:name().." <= kernelValidOutNextCycleX_"..kernelGraph.child1:name().." & kernelValidOutNextCycleY_"..kernelGraph.child1:name().."; end\n")
-  table.insert(pipeline, "assign outValid = kernelValidOutThisCycle_"..kernelGraph.child1:name()..";\n")
+  table.insert(pipeline, "always @ (posedge CLK) begin kernelValidOutThisCycle_"..kernelGraph.child1:name().." <= kernelRWValidOutNextCycleX_"..kernelGraph.child1:name().." & kernelRWValidOutNextCycleY_"..kernelGraph.child1:name().."; end\n")
+  table.insert(pipeline, "assign validOut = kernelValidOutThisCycle_"..kernelGraph.child1:name()..";\n")
 
   table.insert(pipeline,"endmodule\n\n")
   table.insert(pipeline,"parameter PIPE_DELAY = "..(totalDelay)..";\n")

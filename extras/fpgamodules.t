@@ -163,7 +163,7 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
 
   local gatherAddrStr = ""
   if gatherAddr then gatherAddrStr = ", input ["..(10-extraBits)..":0] gatherAddress" end
-  local t = {"module "..name.."(input CLK,\n"..outputs.."input ["..(bytesPerPixel*8-1)..":0] in, input writeValidInNextCycleX, input writeValidInNextCycleY, input readValidInNextCycleX, input readValidInNextCycleY"..gatherAddrStr..");\n"}
+  local t = {"module "..name.."(input CLK,\n"..outputs.."input ["..(bytesPerPixel*8-1)..":0] in, input validInNextCycle, input writeValidInNextCycleX, input writeValidInNextCycleY, input readValidInNextCycleX, input readValidInNextCycleY"..gatherAddrStr..");\n"}
 
   table.insert(t,"wire readValidInNextCycle;\n")
   table.insert(t,"wire writeValidInNextCycle;\n")
@@ -430,8 +430,10 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
 
   end
 
---  table.insert(t,[=[initial begin $monitor("linebuffer writeValidInNextCycleX %d writeValidInNextCycleY %d readValidInNextCycleX %d readValidInNextCycleY %d lbReadAddr %d gatherAddr %d lbWriteAddr %d lbReadAddrGather %d\n",writeValidInNextCycleX,writeValidInNextCycleY,readValidInNextCycleX,readValidInNextCycleY,lbReadAddr,gatherAddress, lbWriteAddr0, lbReadAddrGather0); end
---]=])
+  if gatherAddr~=nil and false then
+  table.insert(t,[=[initial begin $monitor("linebuffer writeValidInNextCycleX %d writeValidInNextCycleY %d readValidInNextCycleX %d readValidInNextCycleY %d lbReadAddr %d gatherAddr %d lbWriteAddr %d lbReadAddrGather %d\n",writeValidInNextCycleX,writeValidInNextCycleY,readValidInNextCycleX,readValidInNextCycleY,lbReadAddr,gatherAddress, lbWriteAddr0, lbReadAddrGather0); end
+]=])
+  end
 
   table.insert(t,"endmodule\n\n")
 
@@ -570,8 +572,8 @@ module sim;
   reg [12:0] posX = 0;
   reg [12:0] posY = 0;
   reg [7:0] cycle = 0;
-  reg inValid = 0;
-  wire outValid;
+  reg validInNextCycle = 0;
+  wire validOut;
   integer realX = ]=]..(stripWidth+metadata.padMaxX-1)..[=[;
   integer realY = ]=]..(metadata.padMinY-1)..[=[;
   integer addr = -PIPE_DELAY+1-]=]..outputShift*metadata.cycles..[=[;
@@ -588,7 +590,7 @@ module sim;
 res = res..[=[  reg [10000:0] outputFilename; 
   reg [7:0] i = 0;
 
-  Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInput),.out(pipelineOutput),.inValid(inValid),.outValid(outValid),.cycle(cycle));
+  Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInput),.out(pipelineOutput),.validInNextCycle(validInNextCycle),.validOut(validOut),.cycle(cycle));
 
   initial begin
    $display("HELLO");]=]
@@ -610,16 +612,22 @@ res = res..[=[
    // we run this for a large number of cycles to simulate what will happen in the actual hardware
    addrT = 1000+PIPE_DELAY+]=]..outputShift..[=[;
    while(addrT>0) begin
-   posX = realX;
-   posY = realY;
-   cycle = ]=]..(metadata.cycles-1)..[=[;
-   inValid = 0;
+     posX = realX;
+     posY = realY;
+     cycle = ]=]..(metadata.cycles-1)..[=[;
+     validInNextCycle = 0;
+     CLK = 0;
+     #10
+     CLK = 1;
+     #10
+     addrT = addrT-1;
+   end
+
+   validInNextCycle = 1;
    CLK = 0;
    #10
    CLK = 1;
    #10
-     addrT = addrT-1;
-   end
 
    realY = ]=]..(metadata.padMinY)..[=[;
    while (realY < ]=]..(imageHeight+metadata.padMaxY)..[=[) begin
@@ -647,13 +655,13 @@ res = res..[=[       end else begin
        while (cycle < ]=]..metadata.cycles..[=[) begin
        posX = realX;
        posY = realY;
-       inValid = 1;
+       validInNextCycle = 1;
        CLK = 0;
        #10
        CLK = 1;
        #10
 //     $display(modOutput);
-       if(addr>=0 && outValid) begin 
+       if(addr>=0 && validOut) begin 
          i = 0;
          while( i<]=]..outputBytes..[=[) begin
            $fwrite(fileout, "%c", pipelineOutput[i*8+:8]); 
@@ -680,13 +688,13 @@ res = res..[=[       end else begin
        pipelineInput = 0;
        posX = realX;
        posY = realY;
-       inValid = 1;
+       validInNextCycle = 1;
        CLK = 0;
        #10
        CLK = 1;
        #10
 
-     if (outValid) begin 
+     if (validOut) begin 
        i=0;
        while( i<]=]..outputBytes..[=[) begin
          $fwrite(fileout, "%c", pipelineOutput[i*8+:8]);
