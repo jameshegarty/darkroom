@@ -282,11 +282,16 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
 
     -- we start these one address ahead of where we want to read this cycle
     -- b/c it takes one cycle to get data out of the ram
-    table.insert(t,"reg ["..(10-extraBits)..":0] lbReadAddr = "..(10-extraBits+1).."'d2;\n")
+    if upsampledYConsumer and gatherAddr==nil then
+      table.insert(t,"reg ["..(10-extraBits)..":0] lbReadAddr = "..(10-extraBits+1).."'d1;\n")
+    else
+      table.insert(t,"reg ["..(10-extraBits)..":0] lbReadAddr = "..(10-extraBits+1).."'d2;\n")
+    end
+
     -- After a valid cycle, we advance the address. We do this because it takes 1 cycle for the new address
     -- to load from ram. We basically preload the value that we are going to need,
     -- but we don't latch it into the SSR until we need it in the SSR (validInNextCycle)
-    if gatherAddr then
+    if gatherAddr or upsampledYConsumer then
       table.insert(clockedLogic, "if (readInNextCycleX & readValidInNextCycle) begin if (lbReadAddr == "..(stripWidth-1)..") begin lbReadAddr <= 0; end else begin lbReadAddr <= lbReadAddr + 1; end end\n")
     else
       table.insert(clockedLogic, "if (readInThisCycleX & readValidInThisCycle) begin if (lbReadAddr == "..(stripWidth-1)..") begin lbReadAddr <= 0; end else begin lbReadAddr <= lbReadAddr + 1; end end\n")

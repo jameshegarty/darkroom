@@ -385,9 +385,9 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
       assert(math.floor(sft)==sft)
       table.insert(result,"assign in"..coord.."_internal = in"..coord.." >> "..sft..";\n")
       if i==1 then
-        table.insert(result,"assign rwValidOutNextCycle"..coord.."_0 = ( in"..coord.."_shifted["..(sft-1)..":0] =="..sft.."'d"..(rate-1)..");\n")
+        table.insert(result,"assign rwValidOutNextCycle"..coord.."_0 = ( in"..coord.."_shifted["..(sft-1)..":0] =="..sft.."'d"..(rate-1)..") & (cycle=="..valueToVerilogLL(largestEffectiveCycles-1,false,8)..");\n")
       else
-        table.insert(result,"assign rwValidOutNextCycle"..coord.."_0 = ( (in"..coord.."_shifted["..(sft-1)..":0] =="..sft.."'d0 & inX!=12'd"..(options.stripWidth-1+options.padMinX)..") | ((inX==12'd"..(options.stripWidth-1+options.padMinX)..") & (inY_shifted["..(sft-1)..":0]=="..sft.."'d"..(rate-1)..")));\n")
+        table.insert(result,"assign rwValidOutNextCycle"..coord.."_0 = ( (in"..coord.."_shifted["..(sft-1)..":0] =="..sft.."'d0 & inX!=12'd"..(options.stripWidth-1+options.padMinX)..") | ((inX==12'd"..(options.stripWidth-1+options.padMinX)..") & (inY_shifted["..(sft-1)..":0]=="..sft.."'d"..(rate-1).."))) & (cycle=="..valueToVerilogLL(largestEffectiveCycles-1,false,8)..");\n")
       end
     end
   end
