@@ -404,7 +404,7 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
         prev = "lb_x"..(x+1).."_y"..numToVarname(y)
       else
         if upsampledYConsumer then
-          prev = "(readInLastCycleX)?((readInLastCycleY)?(readout_"..numToVarname(y+1).."):(readout_"..numToVarname(y)..")):(lb_x"..(x+1).."_y"..numToVarname(y)..")"
+          prev = "(readInLastCycleX)?((readInNextCycleY)?(readout_"..numToVarname(y+1).."):(readout_"..numToVarname(y)..")):(lb_x"..(x+1).."_y"..numToVarname(y)..")"
         else
           prev = "(readInLastCycleX)?(readout_"..numToVarname(y+1).."):(lb_x"..(x+1).."_y"..numToVarname(y)..")"
         end
