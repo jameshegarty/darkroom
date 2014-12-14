@@ -1312,15 +1312,16 @@ function fpga.collectLinebuffers(kernelGraph, options, pipelineRetiming, largest
   return inputLinebuffers, outputLinebuffers, outputUsedAsRegular
 end
 
-function fpga.allocateLinebuffers(node, kernelGraph, outputLinebuffers)
+function fpga.allocateLinebuffers(node, kernelGraph, outputLinebuffers, largestEffectiveCycles)
   assert(type(outputLinebuffers)=="table")
+  assert(type(largestEffectiveCycles)=="number")
 
   local pipeline = {}
   local result = {}
 
   for k,v in pairs(outputLinebuffers) do
     if v.kind=="regular" then
-      local lbname, lbmod = fpga.modules.linebuffer(v.linebufferSizeX, v.linebufferSizeY, node.kernel.type, v.effStripWidth, v.consumers, v.scale > 1, v.wasUpsampledY)
+      local lbname, lbmod = fpga.modules.linebuffer(v.linebufferSizeX, v.linebufferSizeY, node.kernel.type, v.effStripWidth, v.consumers, v.scale > 1 or largestEffectiveCycles>1, v.wasUpsampledY)
       result = concat(result, lbmod)
       pipeline = concat(pipeline,v.declarations)
       table.insert(pipeline,lbname.." kernelBuffer_"..node:name().."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.readInNextCycleX(kernelRWValidOutNextCycleX_"..node:name().."),.readInNextCycleY(kernelRWValidOutNextCycleY_"..node:name().."),.writeInNextCycleX(kernelRWValidOutNextCycleX_"..node:name().."),.writeInNextCycleY(kernelRWValidOutNextCycleY_"..node:name().."),.readValidInNextCycle(kernelValidOutNextCycle_"..node:name().."),.writeValidInNextCycle(kernelValidOutNextCycle_"..node:name().."));\n")
@@ -1495,7 +1496,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
         table.insert(pipeline,"wire kernelRWValidOutNextCycleY_"..node:name()..";\n")
         table.insert(pipeline,"Kernel_"..node:name().." kernel_"..node:name().."(.CLK(CLK),"..inputXY..",.outX(kernelOutX_"..node:name().."),.outY(kernelOutY_"..node:name().."),"..inputs..".out(kernelOut_"..node:name().."),.rwValidOutNextCycleX(kernelRWValidOutNextCycleX_"..node:name().."),.rwValidOutNextCycleY(kernelRWValidOutNextCycleY_"..node:name().."),.cycleOut(kernelCycle_"..node:name().."),.validOutNextCycle(kernelValidOutNextCycle_"..node:name().."));\n")
         
-        local pipelineLB, resultLB = fpga.allocateLinebuffers(node, kernelGraph, outputLinebuffers[node])
+        local pipelineLB, resultLB = fpga.allocateLinebuffers(node, kernelGraph, outputLinebuffers[node], largestEffectiveCycles)
         pipeline = concat(pipeline,pipelineLB)
         result = concat(result, resultLB)
         return 0
