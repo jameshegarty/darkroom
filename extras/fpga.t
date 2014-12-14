@@ -298,7 +298,7 @@ end
 local binopToVerilog={["+"]="+",["*"]="*",["<<"]="<<<",[">>"]=">>>",["pow"]="**",["=="]="==",["and"]="&",["-"]="-",["<"]="<",[">"]=">",["<="]="<=",[">="]=">="}
 local binopToVerilogBoolean={["=="]="==",["and"]="&&",["~="]="!="}
 
-function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth, imageHeight, kernelGraphRoot, pipelineRetiming, shift, inputLinebuffers, options,largestEffectiveCycles)
+function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth, imageHeight, kernelGraphRoot, pipelineRetiming, shift, inputLinebuffers, outputUsedAsRegular, options,largestEffectiveCycles)
   assert(type(imageWidth)=="number")
   assert(type(imageHeight)=="number")
   assert(darkroom.kernelGraph.isKernelGraph(kernelGraphRoot))
@@ -321,10 +321,12 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
     for _, inputLinebuffer in pairs(inputLinebuffers) do
       if inputLinebuffer.kind=="regular" then
         for k,v in kernelGraphNode:inputs() do
-          local s = kernel:stencil(v,kernel)
-          for x=s:min(1),s:max(1) do
-            for y=s:min(2), s:max(2) do
-              inputs = inputs.."input ["..(v.kernel.type:sizeof()*8-1)..":0] in_"..v:name().."_x"..numToVarname(x).."_y"..numToVarname(y)..",\n"
+          if outputUsedAsRegular[kernelGraphNode][v] then
+            local s = kernel:stencil(v,kernel)
+            for x=s:min(1),s:max(1) do
+              for y=s:min(2), s:max(2) do
+                inputs = inputs.."input ["..(v.kernel.type:sizeof()*8-1)..":0] in_"..v:name().."_x"..numToVarname(x).."_y"..numToVarname(y)..",\n"
+              end
             end
           end
         end
@@ -1170,17 +1172,20 @@ local function parentIsOutput(node, kernelGraph)
     return false
 end
 
-function fpga.collectLinebuffers(kernelGraph, options, pipelineRetiming)
+function fpga.collectLinebuffers(kernelGraph, options, pipelineRetiming, largestEffectiveCycles)
   assert(type(options)=="table")
   assert(type(pipelineRetiming)=="table")
+  assert(type(largestEffectiveCycles)=="number")
 
   local inputLinebuffers = {}
   local outputLinebuffers = {}
+  local outputUsedAsRegular = {} -- parent->input->1
 
   kernelGraph:visitEach(
     function(n)
       inputLinebuffers[n] = {}
       outputLinebuffers[n] = {}
+      outputUsedAsRegular[n] = {}
 
       if n.kernel~=nil then
         n.kernel:S("load"):process(
@@ -1190,10 +1195,18 @@ function fpga.collectLinebuffers(kernelGraph, options, pipelineRetiming)
               inputLinebuffers[n]["regular"] = {kind="regular"}
               if darkroom.kernelGraph.isKernelGraph(v.from) then
                 outputLinebuffers[v.from]["regular"] = {kind="regular"}
+                outputUsedAsRegular[n][v.from]=1
               end
             else
               for vv,_ in v:parents(n.kernel) do
-                if vv.kind=="gatherColumn" then
+                if vv.kind~="gatherColumn" then
+                  -- regular load
+                  inputLinebuffers[n]["regular"] = {kind="regular"}
+                  if darkroom.kernelGraph.isKernelGraph(v.from) then
+                    outputLinebuffers[v.from]["regular"] = {kind="regular"}
+                    outputUsedAsRegular[n][v.from]=1
+                  end
+                else
                   assert(darkroom.kernelGraph.isKernelGraph(v.from))
                   local extraPipeDelay = pipelineRetiming[n]-pipelineRetiming[v.from]-n:internalDelay(n.kernel)
                   assert(extraPipeDelay==0)
@@ -1225,12 +1238,7 @@ function fpga.collectLinebuffers(kernelGraph, options, pipelineRetiming)
 
                   inputLinebuffers[n][vv] = t
                   outputLinebuffers[v.from][vv] = t
-                else
-                  -- regular load
-                  inputLinebuffers[n]["regular"] = {kind="regular"}
-                  if darkroom.kernelGraph.isKernelGraph(v.from) then
-                    outputLinebuffers[v.from]["regular"] = {kind="regular"}
-                  end
+               
                 end
               end
             end
@@ -1257,18 +1265,9 @@ function fpga.collectLinebuffers(kernelGraph, options, pipelineRetiming)
         res.wasUpsampledY = false
         
         for v,_ in node:parents(kernelGraph) do
-          if v.kernel~=nil then
-            -- bake the extra retiming pipeline delay into the stencil.
-            -- Don't get confused here! We need to add extra delay to match the delays of each kernel.
-            -- we could do that by adding extra FIFOs, but instead we bake it into the linebuffer 
-            -- (shifting the stencil we read by 1 is equivilant to 1 extra cycle of delay)
-            --
-            -- we should probably refactor this so that the extra delay and stencil are separated out so
-            -- that it's less confusing.
-            local extraPipeDelay = pipelineRetiming[v]-pipelineRetiming[node]-v:internalDelay()
-            local stencil = v.kernel:stencil(node,v.kernel):translate(-extraPipeDelay,0,0)
-local RS = v.kernel:stencil(node,v.kernel)
-print("RS",RS:max(1),-extraPipeDelay,stencil:max(1))
+          if v.kernel~=nil and outputUsedAsRegular[v][node] then
+            local stencil = v.kernel:stencil(node,v.kernel)
+
             assert(stencil:max(1)<=0) -- needed for our stupid linebuffer design
             table.insert(res.consumers, stencil)
             
@@ -1276,12 +1275,28 @@ print("RS",RS:max(1),-extraPipeDelay,stencil:max(1))
             local b = -stencil:min(1)-stencil:min(2)*res.effStripWidth
             res.linebufferSizeX = math.max(res.linebufferSizeX,-stencil:min(1))
             res.linebufferSizeY = math.max(res.linebufferSizeY,-stencil:min(2))
+
+            local extraPipeDelay = (pipelineRetiming[v]-pipelineRetiming[node]-v:internalDelay())
             
             for x=stencil:min(1),stencil:max(1) do
               for y=stencil:min(2), stencil:max(2) do
-                local wirename = node:name().."_to_"..v:name().."_x"..numToVarname(x+extraPipeDelay).."_y"..numToVarname(y)
+                local wirename = node:name().."_to_"..v:name().."_x"..numToVarname(x).."_y"..numToVarname(y)
                 table.insert(res.declarations,"wire ["..(node.kernel.type:sizeof()*8-1)..":0] "..wirename..";\n")
-                res.lboutputs = res.lboutputs..".out"..(#res.consumers).."_x"..numToVarname(x).."_y"..numToVarname(y).."("..wirename.."),"
+
+                local startwire = wirename
+                if extraPipeDelay>0 then
+                  startwire = startwire.."_0"
+                  table.insert(res.declarations,"wire ["..(node.kernel.type:sizeof()*8-1)..":0] "..wirename.."_0;\n")
+
+                  for d=1,extraPipeDelay do
+                    table.insert(res.declarations,"reg ["..(node.kernel.type:sizeof()*8-1)..":0] "..wirename.."_"..(d)..";\n")
+                    table.insert(res.declarations,"always @ (posedge CLK) begin "..wirename.."_"..(d).." <= "..wirename.."_"..(d-1).."; end\n")
+                  end
+
+                  table.insert(res.declarations,"assign "..wirename.." = "..wirename.."_"..extraPipeDelay..";\n")
+                end
+
+                res.lboutputs = res.lboutputs..".out"..(#res.consumers).."_x"..numToVarname(x).."_y"..numToVarname(y).."("..startwire.."),"
               end
             end
             
@@ -1294,7 +1309,7 @@ print("RS",RS:max(1),-extraPipeDelay,stencil:max(1))
       end
     end)
 
-  return inputLinebuffers, outputLinebuffers
+  return inputLinebuffers, outputLinebuffers, outputUsedAsRegular
 end
 
 function fpga.allocateLinebuffers(node, kernelGraph, outputLinebuffers)
@@ -1423,12 +1438,12 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
   -- now we retime the whole pipeline, to account for the delays of each kernel
   local pipelineRetiming = fpga.trivialRetime(kernelGraph, kernelGraph)
 
-  local inputLinebuffers, outputLinebuffers = fpga.collectLinebuffers(kernelGraph, options, pipelineRetiming)
+  local inputLinebuffers, outputLinebuffers, outputUsedAsRegular = fpga.collectLinebuffers(kernelGraph, options, pipelineRetiming, largestEffectiveCycles)
 
   local totalDelay = kernelGraph:visitEach(
     function(node, inputArgs)
       if node.kernel~=nil then
-        local verilogKernel = fpga.codegenKernel(compilerState, node, kernelRetiming[node], imageWidth, imageHeight, kernelGraph, pipelineRetiming, shifts[node], inputLinebuffers[node], options, largestEffectiveCycles)
+        local verilogKernel = fpga.codegenKernel(compilerState, node, kernelRetiming[node], imageWidth, imageHeight, kernelGraph, pipelineRetiming, shifts[node], inputLinebuffers[node], outputUsedAsRegular, options, largestEffectiveCycles)
         result = concat(result, verilogKernel)
         
         local inputs = ""
@@ -1444,10 +1459,12 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
           for _,inputBuffer in pairs(inputLinebuffers[node]) do
             if inputBuffer.kind=="regular" then
               for _,v in node:inputs() do
-                local s = node.kernel:stencil(v,node.kernel)
-                for x=s:min(1),s:max(1) do
-                  for y=s:min(2), s:max(2) do
-                    inputs = inputs..".in_"..v:name().."_x"..numToVarname(x).."_y"..numToVarname(y).."("..v:name().."_to_"..node:name().."_x"..numToVarname(x).."_y"..numToVarname(y).."),"
+                if outputUsedAsRegular[node][v] then
+                  local s = node.kernel:stencil(v,node.kernel)
+                  for x=s:min(1),s:max(1) do
+                    for y=s:min(2), s:max(2) do
+                      inputs = inputs..".in_"..v:name().."_x"..numToVarname(x).."_y"..numToVarname(y).."("..v:name().."_to_"..node:name().."_x"..numToVarname(x).."_y"..numToVarname(y).."),"
+                    end
                   end
                 end
               end

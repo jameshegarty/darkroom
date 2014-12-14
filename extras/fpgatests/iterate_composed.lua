@@ -1,10 +1,21 @@
 (terralib.loadfile("test.t"))()
 import "darkroom"
 
-test(im(x,y) 
-     iterate i=-1,0 A=darkroom.gatherColumn(testinput,i,1,-1,0,-1,0) reduce(sum)
-       iterate j=-1,0 B=darkroom.gatherColumn(testinput,i,1,-1,0,-1,0) reduce(sum)
-         A[0]+A[1]+B[0]+B[1]
-       end
+-- sums to 256
+local K={1,4,7,4,1,
+                         4,15,24,15,4,
+                         7,24,36,24,7,
+                         4,15,24,15,4,
+                         1,4,7,4,1} 
+
+im a(x,y) 
+     iterate i=0,4 A=darkroom.gatherColumn(testinput,i-2,1,-2,2,-2,2) reduce(sum)
+       map j=-2,2 reduce(sum) [uint8](([uint16](A[j+2])*[uint16](K[(j+2)*5 + i]))>>[uint16](8)) end
      end
+end
+
+test(im(x,y) 
+     (iterate i=0,4 A=darkroom.gatherColumn(a,i-2,1,-2,2,-2,2) reduce(sum)
+       map j=-2,2 reduce(sum) [uint8](([uint16](A[j+2])*[uint16](K[(j+2)*5 + i]))>>[uint16](8)) end
+     end)+testinput
 end)
