@@ -371,11 +371,13 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
     table.insert(result,"wire [12:0] in"..coord.."_shifted;\n")
     table.insert(result,"assign in"..coord.."_shifted = in"..coord.." - 13'd"..shiftT[i]..";\n")
     table.insert(result,"wire rwValidOutNextCycle"..coord.."_0;\n")
+    if i==2 then table.insert(result,"wire [7:0] cycle_internal_0;\n") end
     
     local rate = looprate(kernel["scaleN"..i],kernel["scaleD"..i],1)
 
     if rate==1 then
       table.insert(result,"assign in"..coord.."_internal = in"..coord..";\n")        
+      if i==2 then table.insert(result,"assign cycle_internal_0 = cycle;\n") end
       if largestEffectiveCycles>1 then
         table.insert(result,"assign rwValidOutNextCycle"..coord.."_0 = (cycle=="..valueToVerilogLL(largestEffectiveCycles-1,false,8)..");\n")
       else
@@ -391,6 +393,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
       else
         table.insert(result,"assign rwValidOutNextCycle"..coord.."_0 = ( (in"..coord.."_shifted["..(sft-1)..":0] =="..sft.."'d0 & inX!=12'd"..(options.stripWidth-1+options.padMinX)..") | ((inX==12'd"..(options.stripWidth-1+options.padMinX)..") & (inY_shifted["..(sft-1)..":0]=="..sft.."'d"..(rate-1).."))) & (cycle=="..valueToVerilogLL(largestEffectiveCycles-1,false,8)..");\n")
       end
+      if i==2 then table.insert(result,"assign cycle_internal_0 = {cycle["..(7-sft)..":0],inX_shifted["..(sft-1)..":0]};\n") end
     end
   end
 
@@ -477,12 +480,14 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
     adddecl(darkroom.typedAST._topbb,{"reg [12:0] inX_"..i..";\n"})
     adddecl(darkroom.typedAST._topbb,{"reg [12:0] inY_"..i..";\n"})
     adddecl(darkroom.typedAST._topbb,{"reg [7:0] cycle_"..i.." = "..valueToVerilogLL(largestEffectiveCycles-1,false,8)..";\n"})
+    adddecl(darkroom.typedAST._topbb,{"reg [7:0] cycle_internal_"..i..";\n"})
     adddecl(darkroom.typedAST._topbb,{"reg rwValidOutNextCycleX_"..i.." = 1'b0;\n"})
     adddecl(darkroom.typedAST._topbb,{"reg rwValidOutNextCycleY_"..i.." = 1'b0;\n"})
     adddecl(darkroom.typedAST._topbb,{"reg validOutNextCycle_"..i.." = 1'b0;\n"})
     addclocked(darkroom.typedAST._topbb, {"inX_"..i.." <= inX_"..(i-1)..";\n"})
     addclocked(darkroom.typedAST._topbb, {"inY_"..i.." <= inY_"..(i-1)..";\n"})
     addclocked(darkroom.typedAST._topbb, {"cycle_"..i.." <= cycle_"..(i-1)..";\n"})
+    addclocked(darkroom.typedAST._topbb, {"cycle_internal_"..i.." <= cycle_internal_"..(i-1)..";\n"})
     addclocked(darkroom.typedAST._topbb, {"rwValidOutNextCycleX_"..i.." <= rwValidOutNextCycleX_"..(i-1)..";\n"})
     addclocked(darkroom.typedAST._topbb, {"rwValidOutNextCycleY_"..i.." <= rwValidOutNextCycleY_"..(i-1)..";\n"})
     addclocked(darkroom.typedAST._topbb, {"validOutNextCycle_"..i.." <= validOutNextCycle_"..(i-1)..";\n"})
@@ -656,7 +661,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         end
         return {finalOut}
       elseif n.kind=="iterate" then
-        local moduledef = {"module Iterate_"..n:name().."(input CLK, input[12:0] inX_internal, input[12:0] inY_internal, input [7:0] cycle,\n"}
+        local moduledef = {"module Iterate_"..n:name().."(input CLK, input[12:0] inX_internal, input[12:0] inY_internal, input [7:0] cycle_internal_0,\n"}
 
         local gatherInputs = ""
         local i=1
@@ -698,16 +703,16 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         result = concat(moduledef,result)
 
         adddecl(bb,{declareWire(n.expr.type,"iterate_"..n:name().."_out")})
-        adddecl(bb,{"Iterate_"..n:name().." iterate_"..n:name().."(.CLK(CLK),.inX_internal(inX_internal),.inY_internal(inY_internal),.cycle(cycle)"..table.concat(getInterface(exprbb,false))..gatherInputs..",.out(iterate_"..n:name().."_out));\n"})
+        adddecl(bb,{"Iterate_"..n:name().." iterate_"..n:name().."(.CLK(CLK),.inX_internal(inX_internal),.inY_internal(inY_internal),.cycle_internal_0(cycle_internal_0)"..table.concat(getInterface(exprbb,false))..gatherInputs..",.out(iterate_"..n:name().."_out));\n"})
 
         local finalOut = {}
         if n.reduceop=="sum" then
           for c=1,n.type:channels() do
             adddecl(bb,{declareReg(n.expr.type,n:cname(c))})
             -- implement the serial reduction
-            addclocked(bb,{[=[if (cycle_]=]..(retiming[n]-n:internalDelay(kernel))..[=[==0) begin
+            addclocked(bb,{[=[if (cycle_internal_]=]..(retiming[n]-n:internalDelay(kernel))..[=[==0) begin
   ]=]..n:cname(c)..[=[ <= iterate_]=]..n:name()..[=[_out;
-  end else if (cycle_]=]..(retiming[n]-n:internalDelay(kernel))..[=[ < ]=]..n.cycles..[=[) begin
+  end else if (cycle_internal_]=]..(retiming[n]-n:internalDelay(kernel))..[=[ < ]=]..n.cycles..[=[) begin
   ]=]..n:cname(c)..[=[ <= ]=]..n:cname(c)..[=[ + iterate_]=]..n:name()..[=[_out;
 end
 ]=]})
@@ -831,7 +836,7 @@ end
           local I = kernel:lookup(n.iterateNode)
 print("CGIV",n.iterateNode,n,I._iterationvar,I._iterationvar.kind)
           table.insert(resDeclarations, declareWire(n.type:baseType(), n:name(), ""," // iteration var"))
-          table.insert(resDeclarations, "assign "..n:name().." = cycle+("..valueToVerilogLL(I.iterationSpaceLow,true,32).."); // iteration var\n")
+          table.insert(resDeclarations, "assign "..n:name().." = cycle_internal_0+("..valueToVerilogLL(I.iterationSpaceLow,true,32).."); // iteration var\n")
           res = n:name()
         elseif n.kind=="iterateload" then
           res = "iterateload_"..n.varname.."_c"..c

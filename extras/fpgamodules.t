@@ -354,7 +354,9 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
       local lbReadAddrStr = "lbReadAddr"
       if gatherAddr then 
         table.insert(t,"wire ["..(10-extraBits)..":0] lbReadAddrGatherT"..(numToVarname(i))..";\n")
-        table.insert(t,"assign lbReadAddrGatherT"..(numToVarname(i)).." = "..lbReadAddrStr.."+gatherAddress-"..valueToVerilogLL(3-i,false,11-extraBits)..";\n" )
+        local addrSkew = 3-i
+        if downsampledInput then addrSkew = 2 end
+        table.insert(t,"assign lbReadAddrGatherT"..(numToVarname(i)).." = "..lbReadAddrStr.."+gatherAddress-"..valueToVerilogLL(addrSkew,false,11-extraBits)..";\n" )
         table.insert(t,"wire ["..(10-extraBits)..":0] lbReadAddrGather"..(numToVarname(i))..";\n")
         -- remember, in 2's negative numbers are larger than positive. This is actually checking for negative numbers
         table.insert(t,"assign lbReadAddrGather"..(numToVarname(i)).." = (lbReadAddrGatherT"..(numToVarname(i))..">"..valueToVerilogLL(stripWidth-1,false,10-extraBits)..")?(lbReadAddrGatherT"..(numToVarname(i)).."+"..valueToVerilogLL(stripWidth,false,10-extraBits).."):(lbReadAddrGatherT"..(numToVarname(i))..");\n" )
