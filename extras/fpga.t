@@ -561,7 +561,16 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         local exprbb = n.expr:calculateMinBB(kernel)
         local declexprbb = mdeclarations[exprbb]
         local clockedexprbb = mclockedLogic[exprbb]
-        if bb==exprbb then declexprbb={};clockedexprbb={} end
+        local extraInterfaceFormal = {}
+        local extraInterfaceActual = {}
+        if bb==exprbb then 
+          -- even though we don't calculate anything inside the module, we need to thread the output
+          for k,v in pairs(inputs.expr) do
+            table.insert(extraInterfaceFormal, "input ["..(n.expr.type:sizeof()*8-1)..":0] "..v..",")
+            table.insert(extraInterfaceActual, ",."..v.."("..v..")")
+          end
+          declexprbb={};clockedexprbb={} 
+        end
 
         local i = 1
         while n["varname"..i] do
@@ -686,9 +695,20 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         local exprbb = n.expr:calculateMinBB(kernel)
         local declexprbb = mdeclarations[exprbb]
         local clockedexprbb = mclockedLogic[exprbb]
-        if bb==exprbb then declexprbb={};clockedexprbb={} end
+        local extraInterfaceFormal = {}
+        local extraInterfaceActual = {}
+        if bb==exprbb then 
+          -- even though we don't calculate anything inside the module, we need to thread the output
+          for k,v in pairs(inputs.expr) do
+            table.insert(extraInterfaceFormal, "input ["..(n.expr.type:sizeof()*8-1)..":0] "..v..",")
+            table.insert(extraInterfaceActual, ",."..v.."("..v..")")
+          end
+          declexprbb={};clockedexprbb={} 
+        end
 
         moduledef = concat(moduledef,getInterface(exprbb,true))
+        moduledef = concat(moduledef,extraInterfaceFormal)
+
         table.insert(moduledef,"output ["..(n.expr.type:sizeof()*8-1)..":0] out);\n\n")
 
         table.insert(moduledef,table.concat(declexprbb,""))
@@ -703,7 +723,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         result = concat(moduledef,result)
 
         adddecl(bb,{declareWire(n.expr.type,"iterate_"..n:name().."_out")})
-        adddecl(bb,{"Iterate_"..n:name().." iterate_"..n:name().."(.CLK(CLK),.inX_internal(inX_internal),.inY_internal(inY_internal),.cycle_internal_0(cycle_internal_0)"..table.concat(getInterface(exprbb,false))..gatherInputs..",.out(iterate_"..n:name().."_out));\n"})
+        adddecl(bb,{"Iterate_"..n:name().." iterate_"..n:name().."(.CLK(CLK),.inX_internal(inX_internal),.inY_internal(inY_internal),.cycle_internal_0(cycle_internal_0)"..table.concat(getInterface(exprbb,false))..table.concat(extraInterfaceActual)..gatherInputs..",.out(iterate_"..n:name().."_out));\n"})
 
         local finalOut = {}
         if n.reduceop=="sum" then
