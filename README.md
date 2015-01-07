@@ -217,7 +217,7 @@ Supported reduce operators are: `sum min max argmin argmax`
 
 > Tip: Notice that an important feature of our map-reduce operator is that it doesn't imply an order for the reduction operator (it's associative). Darkroom exploits this to reduce the expression in the order that has the highest performance. While you could write out a similar expression by hand, Darkroom's operators aren't associative and commutative, and it's possible you will choose an inefficient order.
 
-`sum min max` evaluate to the type of the `[expression]`. `argmin argmax` return the variable values that attained the highest or lowest expression value, and the extremal value itself. They evalute to the type `int[N+1]`, where N is the number of variables. The last channel (channel N) contains the extremal value.
+`sum min max` evaluate to the type of the `[expression]`. `argmin argmax` return the variable values that attained the highest or lowest expression value, and the extremal value itself. They evalute to the type `int[N+1]`, where N is the number of variables. The last channel (channel N) contains the extremal value. If multiple variable values evaluate to the same extremal value, then the lowest variable value will be chosen.
 
 Metaprogramming
 ---------------
