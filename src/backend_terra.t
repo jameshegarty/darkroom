@@ -1707,9 +1707,9 @@ function darkroom.terracompiler.allocateImageWrappers(
   local outputs = {} -- kernelGraphNode->output wrapper
   local linebufferSize = 0
 
-  local function channelPointer(c,ptr,ty)
+  local function channelPointer(c,ptr,ty,width,height)
     -- always round the width up so that aligned stores work
-    return `[&ty](ptr)+[upToNearest(options.V, options.width)*options.height]*c
+    return `[&ty](ptr)+[upToNearest(options.V, width)*height]*c
   end
 
   local inputWrappers = {}
@@ -1717,7 +1717,7 @@ function darkroom.terracompiler.allocateImageWrappers(
     if inputWrappers[id]==nil then
       inputWrappers[id] = {}
       -- we don't actually care about the alignment of inputs b/c we do unaligned loads
-      for c = 1,type:channels() do inputWrappers[id][c] = newImageWrapper( channelPointer(c-1,inputImageSymbolMap[id], type:baseType():toTerraType()), type:baseType(), options.width, options.debug ,1,1,1,1, largestScaleY, false) end
+      for c = 1,type:channels() do inputWrappers[id][c] = newImageWrapper( channelPointer(c-1,inputImageSymbolMap[id], type:baseType():toTerraType(), options.width, options.height), type:baseType(), options.width, options.debug ,1,1,1,1, largestScaleY, false) end
       setmetatable(inputWrappers[id],pointwiseDispatchMT)
     end
     return inputWrappers[id]
@@ -1751,7 +1751,11 @@ function darkroom.terracompiler.allocateImageWrappers(
         -- make the output
         if parentIsOutput(n)~=nil then
           outputs[n] = {}
-          for c=1,n.kernel.type:channels() do outputs[n][c] = newImageWrapper( channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType()), n.kernel.type:baseType(), upToNearest(options.V, imageSize(options.width,n.kernel.scaleN1,n.kernel.scaleD1)), options.debug, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, largestScaleY, n.kernel.kind=="filter") end
+          for c=1,n.kernel.type:channels() do 
+            local W = imageSize(options.width,n.kernel.scaleN1,n.kernel.scaleD1)
+            local H = imageSize(options.height,n.kernel.scaleN2,n.kernel.scaleD2)
+            outputs[n][c] = newImageWrapper( channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType(),W,H), n.kernel.type:baseType(), upToNearest(options.V, W), options.debug, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, largestScaleY, n.kernel.kind=="filter") 
+          end
           setmetatable(outputs[n],pointwiseDispatchMT)
         else
           outputs[n] = {}
