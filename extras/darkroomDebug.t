@@ -581,7 +581,7 @@ function typedASTPrintPrettys(root)
     local i=1
     while self["translate"..i] do
       -- translate is either a number or an AST
-      out = out..darkroom.dimToCoord[i].."*("..self["scaleD"..i].."/"..self["scaleN"..i]..")+"..astPrintPrettys(self["translate"..i], root, assignments)
+      out = out..darkroom.dimToCoord[i].."*("..(self["scaleD"..i]*self.expr["scaleN"..i]).."/"..(self["scaleN"..i]*self.expr["scaleD"..i])..")+"..astPrintPrettys(self["translate"..i], root, assignments)
       if self["translate"..(i+1)] then out = out.."," end
       i=i+1
     end
