@@ -18,7 +18,7 @@ function schedule(graph, largestScaleY, HWWidth)
           if type(HWWidth)=="number" then
             -- this is an impossible situation - our math won't work anymore if this is the case
             assert(node:maxUse(1,v)<HWWidth)
-            s = node:maxUse(2,v)*HWWidth + node:maxUse(1,v) + shifts[v]
+            s = node:maxUse(2,v)*HWWidth*looprate(v.kernel.scaleN2,v.kernel.scaleD2,1) + node:maxUse(1,v)*looprate(v.kernel.scaleN1,v.kernel.scaleD1,1) + shifts[v]
 
             if s<0 and node:maxUse(1,v)>0 then
               -- HACK: our current linebuffer design assumes that the max
@@ -33,6 +33,28 @@ function schedule(graph, largestScaleY, HWWidth)
 
           if s > shifts[node] then shifts[node] = s end
         end
+
+        -- fixup round: it's possible that in the process of calculating multiple shifts,
+        -- some of them pushed X before 0. Go through and fixup.
+        -- does this terminate? probably not
+        if type(HWWidth)=="number" then
+          for k,v in node:inputs() do
+            local s = shifts[node]-shifts[v]
+            local sy = -math.floor(s/HWWidth)
+            local sx = -(s+sy*HWWidth)
+            if node:maxUse(1,v)+sx>0 then
+               shifts[node] = shifts[node] + node:maxUse(1,v)+sx
+            end
+          end
+
+          -- verify
+          for k,v in node:inputs() do
+            local s = shifts[node]-shifts[v]
+            local sy = -math.floor(s/HWWidth)
+            local sx = -(s+sy*HWWidth)
+            assert(node:maxUse(1,v)+sx <= 0)
+          end
+        end
       end 
     end)
 
@@ -41,7 +63,7 @@ end
 
 function synthRel(rel,t)
   if type(t)=="number" and type(rel)=="number" then
-    return darkroom.ast.new({kind="value",value=rel+t})
+    return darkroom.ast.new({kind="value",value=rel+t}):setLinenumber(0):setOffset(0):setFilename("null_special")
   elseif type(rel)=="number" and darkroom.ast.isAST(t) then
     local v = darkroom.ast.new({kind="value",value=rel}):copyMetadataFrom(t)
     return darkroom.ast.new({kind="binop", lhs=t, rhs=v, op="+"}):copyMetadataFrom(t)
@@ -70,9 +92,24 @@ function shift(graph, shifts, largestScaleY, HWWidth)
         local newKernelGraphNode = kernelGraphNode:shallowcopy()
         
         -- eliminate transforms
-        -- this is wildly inefficient in general. But its only slow in corner cases b/c it is uncommon to have transforms within kernel graph nodes
+        -- the reason we do this as an n^2 algorithm, is that when you transform a node multiple ways inside a kernel
+        -- you really do want to create multiple copies of the children of the transform.
+        -- We do check for the case of noop transforms, but otherwise if there is a transform here, we 
+        -- probably really do want to make a copy.
         newKernelGraphNode.kernel = kernelGraphNode.kernel:S("transformBaked"):process(
           function(n)
+            local tx = n.translate1:eval(1,kernelGraphNode.kernel)
+            local ty = n.translate2:eval(1,kernelGraphNode.kernel)
+            local dsStride1, usStride1 = calculateStride(n.expr.scaleN1, n.expr.scaleD1, n.scaleN1, n.scaleD1)
+            local dsStride2, usStride2 = calculateStride(n.expr.scaleN2, n.expr.scaleD2, n.scaleN2, n.scaleD2)
+            if tx:area()==1 and ty:area()==1 and tx:min(1)==0 and ty:min(1)==0 
+              and dsStride1==1 and usStride1==1 and dsStride2==1 and usStride2==1 then
+              -- noop
+              -- it's actually important that we detect this case, b/c the loop invariant code motion algorithm
+              -- will expect nodes that are translated by 0 to be identical, so if we go and make a copy here it's a problem
+              return n.expr
+            end
+
             return n.expr:S(function(n) return n.kind=="load" or n.kind=="position" end):process(
               function(nn)
                 if nn.kind=="load" then
@@ -80,6 +117,8 @@ function shift(graph, shifts, largestScaleY, HWWidth)
 
                   r.relX = synthRel(r.relX, n.translate1):optimize()
                   r.relY = synthRel(r.relY, n.translate2):optimize()
+                  r._relXTAST = darkroom.typedAST._toTypedAST(r.relX) -- used to track dependencies for loop invariant code motion
+                  r._relYTAST = darkroom.typedAST._toTypedAST(r.relY) -- used to track dependencies for loop invariant code motion
                   r.scaleN1 = n.scaleN1
                   r.scaleN2 = n.scaleN2
                   r.scaleD1 = n.scaleD1
@@ -115,16 +154,28 @@ function shift(graph, shifts, largestScaleY, HWWidth)
                 local r = nn:shallowcopy()
                 
                 if type(HWWidth)=="number" then
+                  local inputKernel = newToOldRemap[nn.from]
                   local s = shifts[newToOldRemap[nn.from]]-shifts[orig]
                   assert(s<=0) -- I don't think we shift things into the future?
                   local sy = -math.floor(-s/HWWidth)
                   local sx = s-sy*HWWidth
+
+                  sy = sy / looprate(inputKernel.kernel.scaleN2,inputKernel.kernel.scaleD2,1)
+                  assert(sy==math.floor(sy)) -- only powers of 2 supported
+
+                  sx = sx / looprate(inputKernel.kernel.scaleN1,inputKernel.kernel.scaleD1,1)
+                  assert(sx==math.floor(sx)) -- only powers of 2 supported
+
                   r.relY = synthRel(r.relY, sy):optimize()
                   r.relX = synthRel(r.relX, sx):optimize()
+
+                  r._relXTAST = darkroom.typedAST._toTypedAST(r.relX) -- used to track dependencies for loop invariant code motion
+                  r._relYTAST = darkroom.typedAST._toTypedAST(r.relY) -- used to track dependencies for loop invariant code motion
                 else
                   local inputKernel = newToOldRemap[nn.from]
                   local sy = math.floor( (shifts[inputKernel]-shifts[orig])/looprate(inputKernel.kernel.scaleN2,inputKernel.kernel.scaleD2,largestScaleY))
                   r.relY = synthRel(r.relY, sy):optimize()
+                  r._relYTAST = darkroom.typedAST._toTypedAST(r.relY) -- used to track dependencies for loop invariant code motion
                 end
 
                 if type(nn.from)=="table" then r.from = oldToNewRemap[nn.from]; assert(r.from~=nil) end
@@ -136,17 +187,47 @@ function shift(graph, shifts, largestScaleY, HWWidth)
 
               if type(HWWidth)=="number" then
                 local sy = math.floor(shifts[orig]/HWWidth)
+                local sx = shifts[orig]-sy*HWWidth
+
+                sy = sy / looprate(orig.kernel.scaleN2, orig.kernel.scaleD2,1)
+                assert(sy==math.floor(sy)) -- only powers of 2 supported
+
+                sx = sx / looprate(orig.kernel.scaleN1, orig.kernel.scaleD1,1)
+                assert(sx==math.floor(sx)) -- only powers of 2 supported
+
                 r.shiftY = r.shiftY + sy
-                r.shiftX = r.shiftX + (shifts[orig]-sy*HWWidth)
+                r.shiftX = r.shiftX + sx
               else
                 r.shiftY = r.shiftY + math.floor(shifts[orig]/looprate(orig.kernel.scaleN2,orig.kernel.scaleD2,largestScaleY))
               end
 
               return darkroom.typedAST.new(r):copyMetadataFrom(nn)
             elseif nn.kind=="position" then
-              if nn.coord=="y" and shifts[orig]~=0 then
-                local v = darkroom.typedAST.new({kind="value", value=-math.floor(shifts[orig]/looprate(orig.kernel.scaleN2,orig.kernel.scaleD2,largestScaleY)), type=nn.type}):copyMetadataFrom(nn)
-                return darkroom.typedAST.new({kind="binop", lhs=nn, rhs = v, type = nn.type, op="+"}):copyMetadataFrom(nn)
+              if type(HWWidth)=="number" then
+                local sy = math.floor(shifts[orig]/HWWidth)
+                local sx = shifts[orig]-sy*HWWidth
+
+                if nn.coord=="y" and sy~=0 then
+                  local v = darkroom.typedAST.new({kind="value", value=-sy, type=nn.type}):copyMetadataFrom(nn)
+                  return darkroom.typedAST.new({kind="binop", lhs=nn, rhs = v, type = nn.type, op="+"}):copyMetadataFrom(nn)
+                elseif nn.coord=="x" and sx~=0 then
+                  local v = darkroom.typedAST.new({kind="value", value=-sx, type=nn.type}):copyMetadataFrom(nn)
+                  return darkroom.typedAST.new({kind="binop", lhs=nn, rhs = v, type = nn.type, op="+"}):copyMetadataFrom(nn)
+                end
+              else
+                if nn.coord=="y" and shifts[orig]~=0 then
+--                  local v = darkroom.typedAST.new({kind="value", value=-math.floor(shifts[orig]/looprate(orig.kernel.scaleN2,orig.kernel.scaleD2,largestScaleY)), type=nn.type}):copyMetadataFrom(nn)
+                  local v = darkroom.typedAST.new({kind="value", value=-shifts[orig], type=nn.type}):copyMetadataFrom(nn)
+                  local res = darkroom.typedAST.new({kind="binop", lhs=nn, rhs = v, type = nn.type, op="+"}):copyMetadataFrom(nn)
+
+                  local lr = looprate(orig.kernel.scaleN2,orig.kernel.scaleD2,largestScaleY)
+                  if lr~=1 then
+                    local lrv = darkroom.typedAST.new({kind="value", value=lr, type=nn.type}):copyMetadataFrom(nn)
+                    res = darkroom.typedAST.new({kind="binop", lhs=res, rhs = lrv, type = nn.type, op="floorDivide"}):copyMetadataFrom(nn)
+                  end
+
+                  return res
+                end
               end
             else
               print(nn.kind)

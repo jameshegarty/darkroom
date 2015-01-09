@@ -269,7 +269,8 @@ terra fixedModulus(a : int,b : int)
 end
 
 -- a/b
--- makes it floor correctly with negative numbers:
+-- makes it floor 'correctly' with negative numbers:
+-- (usual integer divide rounds down for positive numbers, up for negative numbers)
 -- -7/7 = -1, -3/7=-1, -8/7 = -2
 -- assumes b is positive
 terra floorDivide(a : int, b: int)

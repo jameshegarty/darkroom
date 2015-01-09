@@ -83,6 +83,11 @@ function darkroom.abs( thisast, expr)
   return darkroom.ast.new({kind="unary",op="abs",expr=expr}):copyMetadataFrom(thisast)
 end
 
+function darkroom.arctan( thisast, expr)
+  assert(darkroom.ast.isAST(expr))
+  return darkroom.ast.new({kind="unary",op="arctan",expr=expr}):copyMetadataFrom(thisast)
+end
+
 function darkroom.cos( thisast, expr)
   assert(darkroom.ast.isAST(expr))
   return darkroom.ast.new({kind="unary",op="cos",expr=expr}):copyMetadataFrom(thisast)
@@ -91,6 +96,16 @@ end
 function darkroom.sin( thisast, expr)
   assert(darkroom.ast.isAST(expr))
   return darkroom.ast.new({kind="unary",op="sin",expr=expr}):copyMetadataFrom(thisast)
+end
+
+function darkroom.ln( thisast, expr)
+  assert(darkroom.ast.isAST(expr))
+  return darkroom.ast.new({kind="unary",op="ln",expr=expr}):copyMetadataFrom(thisast)
+end
+
+function darkroom.sqrt( thisast, expr)
+  assert(darkroom.ast.isAST(expr))
+  return darkroom.ast.new({kind="unary",op="sqrt",expr=expr}):copyMetadataFrom(thisast)
 end
 
 function darkroom.exp( thisast, expr)
@@ -131,26 +146,28 @@ end
 -- clamp: what to do when we go outside of maxX, maxY? clamp to that
 --        window, or raise an assert?
 function darkroom.gather( thisast, input,x,y,maxXV,maxYV)
-  assert(darkroom.ast.isAST(input))
-  assert(darkroom.ast.isAST(x))
-  assert(darkroom.ast.isAST(y))
-
-  if darkroom.ast.isAST(maxXV)==false or maxXV.kind~="value" or type(maxXV.value)~="number" then
-    darkroom.error("Gather expects maxX to be an integer constant, not an expression",thisast:linenumber(), thisast:offset(), thisast:filename())
-  end
-  local maxX = maxXV.value
-
-  if darkroom.ast.isAST(maxYV)==false or maxYV.kind~="value" or type(maxYV.value)~="number" then
-    darkroom.error("Gather expects maxY to be an integer constant, not an expression",thisast:linenumber(), thisast:offset(), thisast:filename())
-  end
-  local maxY = maxYV.value
+  local minX = darkroom.ast.new({kind="unary",op="-",expr=maxXV}):copyMetadataFrom(thisast)
+  local minY = darkroom.ast.new({kind="unary",op="-",expr=maxYV}):copyMetadataFrom(thisast)
 
   return darkroom.ast.new({kind="gather",
-                        input=input, 
+                        _input=input, 
                         x=x,
                         y=y,
-                        maxX=maxX,
-                        maxY=maxY}):copyMetadataFrom(thisast)
+                        maxX=maxXV, minX = minX,
+                        maxY=maxYV, minY = minY}):copyMetadataFrom(thisast)
+end
+
+function darkroom.gatherAdvanced( thisast, input,x,y,minXV,maxXV,minYV,maxYV)
+  return darkroom.ast.new({kind="gather",
+                        _input=input, 
+                        x=x,
+                        y=y,
+                        maxX=maxXV, minX = minXV,
+                        maxY=maxYV, minY = minYV}):copyMetadataFrom(thisast)
+end
+
+function darkroom.gatherColumn( thisast, input, x, rowWidth, columnStartX, columnEndX, columnStartY, columnEndY)
+  return darkroom.ast.new({kind="gatherColumn",_input=input, x=x, rowWidth=rowWidth, columnStartX=columnStartX, columnEndX=columnEndX, columnStartY=columnStartY, columnEndY=columnEndY,__key={}}):copyMetadataFrom(thisast)
 end
 
 function darkroom.filter( thisast, cond, expr )
@@ -191,9 +208,26 @@ end
 -- convert the luavalue to an orion type
 -- implements behavior of dropping a unquoted lua value in Orion
 -- ast is either a func node or a lua node that yielded this value
-function darkroom.evalEscape(luavalue, ast)
+function darkroom.evalEscape(luavalue, ast, origAST, root)
   assert(darkroom.ast.isAST(ast))
-  assert(ast.kind=="escape")
+  assert(ast.kind=="escape" or ast.kind=="fieldselect" or ast.kind=="var")
+  assert(darkroom.ast.isAST(origAST))
+  assert(darkroom.ast.isAST(root))
+
+  -- this is kind of dumb. b/c we eval stuff one symbol at a time,
+  -- ie (a.b.c) first evals 'a', then 'b', then 'c', it's possible
+  -- that some of the intermediates are not valid darkroom values.
+  -- So, we check whether this is the last evaluation in a chain, 
+  -- and skip the validity checks if its not.
+  local terminal = false
+  local tcnt = 0
+  for parentNode,key in origAST:parents(root) do tcnt = tcnt+1; if parentNode.kind~="fieldselect" then terminal=true end; end
+  terminal = terminal or (tcnt==0)
+  
+  if terminal==false then
+    -- we will do a fieldselect on the value later
+    return darkroom.ast.new({kind="value", value=luavalue}):copyMetadataFrom(ast)
+  end
 
   if darkroom.ast.isAST(luavalue) then
     return luavalue
@@ -204,33 +238,41 @@ function darkroom.evalEscape(luavalue, ast)
 
     return darkroom.ast.new({kind="value",value=luavalue}):copyMetadataFrom(ast)
   elseif type(luavalue)=="table" and terralib.types.istype(luavalue) then
-    return darkroom.ast.new({kind="type",type=darkroom.type.fromTerraType(luavalue)}):copyMetadataFrom(ast)
+    return darkroom.ast.new({kind="type",type=darkroom.type.fromTerraType(luavalue,ast:linenumber(), ast:offset(), ast:filename())}):copyMetadataFrom(ast)
   elseif type(luavalue)=="table" then
     for k,v in pairs(luavalue) do
       if type(k)~="number" then 
         if ast.identifier~=nil then print(table.concat(ast.identifier)) end
-        darkroom.error("When converting a lua table to an orion type, all keys must be numeric",ast:linenumber(), ast:offset())
+        darkroom.error("When converting a lua table to an darkroom type, all keys must be numeric", ast:linenumber(), ast:offset(), ast:filename() )
       end
     end
 
     local newnode = {kind="array"}
 
+    local allnumbers = true
+    local allasts = true
     for i=1,#luavalue do
-      if type(luavalue[i])~="number" then
-        darkroom.error("tables inserted into orion must contain all numbers", ast:linenumber(), ast:offset(),ast:filename())
+      if type(luavalue[i])=="number" then
+        newnode["expr"..i] = darkroom.ast.new({kind="value",value=luavalue[i]}):copyMetadataFrom(ast)
+      elseif type(luavalue[i])=="table" and darkroom.ast.isAST(luavalue[i]) then
+        newnode["expr"..i] = luavalue[i]
+      else
+        allnumbers=false
+        allasts=false
       end
+    end
 
-      newnode["expr"..i] = darkroom.ast.new({kind="value",value=luavalue[i]}):copyMetadataFrom(ast)
+    if allnumbers==false and allasts==false then
+      darkroom.error("tables inserted into darkroom must contain all numbers, or all darkroom images", ast:linenumber(), ast:offset(),ast:filename())
     end
 
     return darkroom.ast.new(newnode):copyMetadataFrom(ast)
 
   elseif(type(luavalue)=="function") then
-    assert(ast.kind=="func")
-    return darkroom.ast.new({kind="macro",func=luavalue}):copyMetadataFrom(ast)
+    return darkroom.ast.new({kind="value",value=luavalue}):copyMetadataFrom(ast)
   end
   
-  darkroom.error("Type "..type(luavalue).." can't be converted to an orion type!", ast:linenumber(), ast:offset(), ast:filename())
+  darkroom.error("Type "..type(luavalue).." can't be converted to an darkroom type!", ast:linenumber(), ast:offset(), ast:filename())
 
   return nil
 end
@@ -405,6 +447,39 @@ darkroom.lang.expr = darkroom.Parser.Pratt()
     for k,v in ipairs(vars) do newnode["varname"..k]=v[1];newnode["varlow"..k]=v[2];newnode["varhigh"..k]=v[3]; end
     return darkroom.ast.new(newnode):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
   end)
+:prefix("iterate",function(p)
+    p:expect("iterate")
+
+    local iterationSpaceName = p:expect(p.name).value
+    p:expect("=")
+    local iterationSpaceLow = p:expr()
+    p:expect(",")
+    local iterationSpaceHigh = p:expr()
+
+    local loads={}
+    local loadNameMap = {}
+    while p:matches(p.name) do
+      local name = p:expect(p.name).value
+      p:expect("=")
+      local expr = p:expr()
+      if loadNameMap[name]~=nil then p:error("Can't use the same name twice") end
+      loadNameMap[name] = 1
+      table.insert(loads,{name,expr})
+    end
+
+    p:expect("reduce")
+    p:expect("(")
+    local reduceop = p:expect(p.name).value
+    p:expect(")")
+
+    local expr = p:letexpr()
+    
+    p:expect("end")
+
+    local newnode = {kind="iterate",expr=expr,reduceop=reduceop, iteratorName=iterationSpaceName, iterationSpaceLow=iterationSpaceLow, iterationSpaceHigh=iterationSpaceHigh}
+    for k,v in ipairs(loads) do newnode["loadname"..k]=v[1];newnode["_loadexpr"..k]=v[2]; end
+    return darkroom.ast.new(newnode):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
+  end)
 
 darkroom.lang.letexpr = function(p)
   local letast = {kind="let"}
@@ -496,6 +571,7 @@ darkroom.lang.imageFunction = function(p)
             rvalue=rvalue, linenumber=p:cur().linenumber, offset=p:cur().offset, filename = p:cur().filename}
 end
 
+
 function darkroom.compileTimeProcess(imfunc, envfn)
 
   -- first, check that the users AST isn't totally messed up
@@ -517,25 +593,63 @@ function darkroom.compileTimeProcess(imfunc, envfn)
   rvalue=rvalue:S("mapreduce"):process(
     function(inp)
       local newNode = inp:shallowcopy()
-      
-      local i,vars,low,high,id = 1,{},{},{},{}
-      while inp["varname"..i] do 
-        vars[inp["varname"..i]]=1;
-        low[inp["varname"..i]]=inp["varlow"..i];
-        high[inp["varname"..i]]=inp["varhigh"..i];
-        newNode["varid"..i] = {}
-        id[inp["varname"..i]] = newNode["varid"..i]
+      newNode.__key = {}
 
+      local i,vars,varnode = 1,{},{}
+      while inp["varname"..i] do 
+        newNode["__varid"..i] = {}
+        newNode["varnode"..i] = darkroom.ast.new({kind="mapreducevar", id = i, mapreduceNode = newNode["__varid"..i], mapreduceNodeKey = newNode.__key}):copyMetadataFrom(inp)
+        vars[inp["varname"..i]] = 1
+        varnode[inp["varname"..i]] = newNode["varnode"..i]
         i=i+1 
       end
       
       newNode.expr = inp.expr:S("var"):process(
         function(fin)
           if vars[fin.name]~=nil then
-            return darkroom.ast.new({kind="mapreducevar", id = id[fin.name], variable=fin.name, low=low[fin.name], high=high[fin.name]}):copyMetadataFrom(fin)
+            return varnode[fin.name]
           end
           return fin
         end)
+      newNode = darkroom.ast.new(newNode):copyMetadataFrom(inp)
+      
+      return newNode
+    end)
+
+  rvalue=rvalue:S("iterate"):process(
+    function(inp)
+      local newNode = inp:shallowcopy()
+      newNode.__key = {}
+
+      newNode._iterationvar = darkroom.ast.new({kind="iterationvar", iterateNode = newNode.__key, varname = newNode.iteratorName}):copyMetadataFrom(inp)
+
+      local i,vars,varnode = 1,{},{}
+      vars[inp.iteratorName] = 1
+      varnode[inp.iteratorName] = newNode._iterationvar
+
+      while inp["loadname"..i] do 
+        newNode["loadid"..i] = {}
+
+        newNode["_loadexpr"..i] = inp["_loadexpr"..i]:S("var"):process(
+          function(fin) if fin.name==inp.iteratorName then return newNode._iterationvar end end)
+
+        -- we include the expr here for typechecking purposes, but have it not be codegened
+--        newNode["loadnode"..i] = darkroom.ast.new({kind="iterateload", id = i, iterateNode = newNode["__loadid"..i], mapreduceNodeKey = newNode.__key, varname=inp["loadname"..i], _expr=newNode["loadexpr"..i]}):copyMetadataFrom(inp)
+--        local loadnode = darkroom.ast.new({kind="iterateload", id = i, iterateNode = newNode["__loadid"..i], mapreduceNodeKey = newNode.__key, varname=inp["loadname"..i], _expr=newNode["loadexpr"..i]}):copyMetadataFrom(inp)
+        vars[inp["loadname"..i]] = 1
+--        varnode[inp["loadname"..i]] = newNode["loadnode"..i]
+        varnode[inp["loadname"..i]] = newNode["_loadexpr"..i]
+        i=i+1 
+      end
+      
+      newNode.expr = inp.expr:S("var"):process(
+        function(fin)
+          if vars[fin.name]~=nil then
+            return varnode[fin.name]
+          end
+          return fin
+        end)
+
       newNode = darkroom.ast.new(newNode):copyMetadataFrom(inp)
       
       return newNode
@@ -576,16 +690,15 @@ function darkroom.compileTimeProcess(imfunc, envfn)
     print("Size preresolve:",rvalue:S("*"):count(),rvalue:name())
   end
 
-  rvalue = rvalue:S(
+  local function resolveVars(rvalue)
+  return rvalue:S(
     function(n)  return n.kind=="index" or n.kind=="apply" or  n.kind=="escape" or n.kind=="var" or n.kind=="fieldselect" end):process(
-    function(inp)
+    function(inp, origInp)
       if inp.kind=="var" then
         if inp.name==imfunc.xvar then  return darkroom.ast.new({kind="position",coord="x"}):copyMetadataFrom(inp)
         elseif inp.name==imfunc.yvar then  return darkroom.ast.new({kind="position",coord="y"}):copyMetadataFrom(inp) 
-        elseif darkroom.ast.isAST(env[inp.name]) then
-          return env[inp.name]
-        elseif env[inp.name]~=nil then
-          return darkroom.ast.new({kind="value", value=env[inp.name]}):copyMetadataFrom(inp)
+        elseif darkroom.ast.isAST(env[inp.name]) or env[inp.name]~=nil then
+          return darkroom.evalEscape(env[inp.name],inp,origInp,rvalue)
         else
           darkroom.error("Could not resolve identifier: "..inp.name, inp:linenumber(), inp:offset(), inp:filename())
         end
@@ -598,15 +711,13 @@ function darkroom.compileTimeProcess(imfunc, envfn)
           return darkroom.ast.new(n):copyMetadataFrom(inp)
         end
       elseif inp.kind=="fieldselect" then
-        if darkroom.ast.isAST(inp.expr.value[inp.field]) then
-          return inp.expr.value[inp.field]
-        elseif inp.expr.value[inp.field]~=nil then
-          return darkroom.ast.new({kind="value", value=inp.expr.value[inp.field]}):copyMetadataFrom(inp)
+        if darkroom.ast.isAST(inp.expr.value[inp.field]) or inp.expr.value[inp.field]~=nil then
+          return darkroom.evalEscape(inp.expr.value[inp.field], inp, origInp,rvalue)
         else
           darkroom.error("Field is nil: "..inp.field, inp:linenumber(), inp:offset(), inp:filename())
         end
       elseif inp.kind=="escape" then
-        return darkroom.evalEscape(inp.expr(inp:localEnvironment(rvalue,env)),inp)
+       return darkroom.evalEscape(inp.expr(inp:localEnvironment(rvalue,env,resolveVars)),inp, origInp,rvalue)
       elseif inp.kind=="apply" then
         if inp.expr.kind=="type" then -- a typecast
           if inp:arraySize("arg") ~= 1 then
@@ -643,6 +754,9 @@ function darkroom.compileTimeProcess(imfunc, envfn)
         end
       end
     end)
+  end
+  
+  rvalue = resolveVars(rvalue)
 
   if darkroom.verbose then
     print("end process, node count:",rvalue:S("*"):count(),rvalue:name())

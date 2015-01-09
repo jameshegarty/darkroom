@@ -63,27 +63,38 @@ function astFunctions:optimize()
   return res
 end
 
-function astFunctions:eval(dim)
+function astFunctions:eval(dim, irRoot)
   assert(type(dim)=="number")
+  assert(darkroom.IR.isIR(irRoot))
 
   if self.kind=="value" then
     assert(type(self.value)=="number")
     return Stencil.new():addDim(dim, self.value)
   elseif self.kind=="unary" and self.op=="-" then
-    return self.expr:eval(dim):flipDim(dim)
+    return self.expr:eval(dim, irRoot):flipDim(dim)
   elseif self.kind=="mapreducevar" then
-    local l = self.low:eval(dim)
-    local h = self.high:eval(dim)
-    assert(l:area()==1)
-    assert(h:area()==1)
-    -- we call :min here just to extract the one coord we care about
-    return Stencil.new():addDim(dim, l:min(dim)):addDim(dim, h:min(dim))
+    local l = irRoot:lookup(self.mapreduceNode)["varlow"..self.id]
+    local h = irRoot:lookup(self.mapreduceNode)["varhigh"..self.id]
+    if darkroom.ast.isAST(l) then l=l:eval(dim, irRoot); assert(l:area()==1); l = l:min(dim) end
+    if darkroom.ast.isAST(h) then h=h:eval(dim, irRoot); assert(h:area()==1); h = h:min(dim) end
+    assert(type(l)=="number")
+    assert(type(h)=="number")
+    return Stencil.new():addDim(dim, l):addDim(dim, h)
+  elseif self.kind=="iterationvar" then
+    local n = irRoot:lookup(self.iterateNode)
+    local l = n.iterationSpaceLow
+    local h = n.iterationSpaceHigh
+    if darkroom.ast.isAST(l) then l=l:eval(dim, irRoot); assert(l:area()==1); l = l:min(dim) end
+    if darkroom.ast.isAST(h) then h=h:eval(dim, irRoot); assert(h:area()==1); h = h:min(dim) end
+    assert(type(l)=="number")
+    assert(type(h)=="number")
+    return Stencil.new():addDim(dim, l):addDim(dim, h)
   elseif self.kind=="binop" and self.op=="+" then
-    return self.lhs:eval(dim):sum(self.rhs:eval(dim))
+    return self.lhs:eval(dim, irRoot):sum(self.rhs:eval(dim, irRoot))
   elseif self.kind=="binop" and self.op=="-" then
-    return self.lhs:eval(dim):sum(self.rhs:eval(dim):flipDim(dim))
+    return self.lhs:eval(dim, irRoot):sum(self.rhs:eval(dim, irRoot):flipDim(dim))
   elseif self.kind=="binop" and self.op=="*" then
-    return self.lhs:eval(dim):product(self.rhs:eval(dim))
+    return self.lhs:eval(dim, irRoot):product(self.rhs:eval(dim, irRoot))
   else
     print("internal error, couldn't statically evaluate ", self.kind)
     assert(false)
@@ -102,10 +113,10 @@ function astFunctions:codegen()
   elseif self.kind=="unary" and self.op=="-" then
     return `-[self.expr:codegen()]
   elseif self.kind=="mapreducevar" then
-    if mapreducevarSymbols[self.id]==nil then
-      mapreducevarSymbols[self.id] = symbol(int,self.variable)
+    if mapreducevarSymbols[self.mapreduceNode]==nil then
+      mapreducevarSymbols[self.mapreduceNode] = symbol(int,self.variable)
     end
-    return `[mapreducevarSymbols[self.id]]
+    return `[mapreducevarSymbols[self.mapreduceNode]]
   else
     print("internal error, couldn't codegen ast ", self.kind)
     assert(false)
@@ -113,32 +124,25 @@ function astFunctions:codegen()
 
 end
 
--- 
-function astFunctions:localEnvironment(root,envROOT)
+function astFunctions:localEnvironment( root, envROOT, resolveVars)
+  assert(type(resolveVars)=="function")
+
   local env
   if root == self then
-    env = {}
-    -- need to do a deep copy b/c we don't want to mess up envRoot
-    --    for k,v in pairs(envROOT) do env[k]=v end
-    env= envROOT
+    env =  envROOT
   else
     -- if this is false, it violates lexical scope?
     assert( self:parentCount(root)==1 )
     for parentNode, key in self:parents(root) do
-      env = parentNode:localEnvironment(root, envROOT)
+      env = parentNode:localEnvironment(root, envROOT, resolveVars)
     end
   end
-
 
   -- if this node added stuff to the lexical environment, modify env
   if self.kind=="mapreduce" then
     self:map("varname", 
              function(n,i)
-               print("ADD",n)
-               env[n] = darkroom.ast.new({kind="mapreducevar",
-                                       variable=n,
-                                       low=self["varlow"..i],
-                                       high=self["varhigh"..i]}):copyMetadataFrom(self)
+               env[n] = self["varnode"..i]
              end)
   elseif self.kind=="let" then
     self:map("expr",
@@ -148,7 +152,5 @@ function astFunctions:localEnvironment(root,envROOT)
              end)
   end
 
-
   return env
-
 end

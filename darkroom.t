@@ -20,7 +20,7 @@ terralib.require("backend_terra")
 return {
   name = "darkroom";
   entrypoints = {"im"};
-  keywords = {"map","reduce","let","in","switch","default","case"};
+  keywords = {"map","reduce","let","in","switch","default","case","iterate"};
   statement = function(self,lex)
     local imfunc = darkroom.Parser.Parse(darkroom.lang,lex,"imageFunction")
 

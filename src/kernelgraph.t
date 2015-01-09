@@ -31,15 +31,15 @@ end
 function kernelGraphFunctions:maxUse(dim, input)
   assert(type(dim)=="number")
   assert(self.kernel~=nil)
-  if self.kernel:stencil(input):area()==0 then return 0 end
-  return self.kernel:stencil(input):max(dim)
+  if self.kernel:stencil(input, self.kernel):area()==0 then return 0 end
+  return self.kernel:stencil(input, self.kernel):max(dim)
 end
 
 function kernelGraphFunctions:minUse(dim, input)
   assert(type(dim)=="number")
   assert(self.kernel~=nil)
-  if self.kernel:stencil(input):area()==0 then return 0 end
-  return self.kernel:stencil(input):min(dim)
+  if self.kernel:stencil(input, self.kernel):area()==0 then return 0 end
+  return self.kernel:stencil(input, self.kernel):min(dim)
 end
 
 -- find the consumer with the largest stencil
@@ -81,12 +81,14 @@ function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
   local function multipleTransforms(node) 
     local transformCount = 0
     for v,k in node:parents(typedAST) do 
-      if v.kind=="transformBaked" and k=="expr" then transformCount = transformCount+darkroom.typedAST.transformArea(v.translate1,v.translate2):area() end
+      if v.kind=="transformBaked" and k=="expr" then transformCount = transformCount+darkroom.typedAST.transformArea(v.translate1,v.translate2,typedAST):area() end
       if v.kind=="transformBaked" and k=="expr" and v.scaleD1~=0 and node.scaleD1~=0 and v.scaleN1~=0 and node.scaleN1~=0 and v.scaleD2~=0 and node.scaleD2~=0 and v.scaleN2~=0 and node.scaleN2~=0 and ((v.scaleN1/v.scaleD1)~=(node.scaleN1/node.scaleD1) or (v.scaleN2/v.scaleD2)~=(node.scaleN2/node.scaleD2)) then return true end
-      if v.kind=="gather" and k=="input" then return true end 
+      if (v.kind=="gather" or v.kind=="gatherColumn") and k=="_input" then return true end 
     end
     return transformCount > 1
   end
+
+  local largestEffectiveCycles = 1
 
   -- We do this with a traverse instead of a process b/c we're converting
   -- from one type of AST to another
@@ -123,7 +125,29 @@ function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
           local res = darkroom.typedAST.new({kind="load",from=child,type=n.type,relX=0,relY=0,scaleN1=child.kernel.scaleN1,scaleD1=child.kernel.scaleD1,scaleN2=child.kernel.scaleN2,scaleD2=child.kernel.scaleD2}):copyMetadataFrom(n)
           return res
         end)
-      
+
+      -- we do this typechecking here, b/c cycle delay depends on how we split up the kernels
+      kernel = kernel:S("*"):process(
+        function(n)
+          local nn = n:shallowcopy()
+
+          if nn.kind=="iterate" then
+            nn.cycles = n.expr.cycles + (n.iterationSpaceHigh-n.iterationSpaceLow+1)
+          elseif n:inputCount()==0 then -- leaf
+            nn.cycles = 0
+          else
+            for k,v in n:inputs() do
+              if nn.cycles==nil or nn.cycles < v.cycles then nn.cycles = v.cycles end
+            end
+          end
+
+          if type(nn.cycles)~="number" then print("missing cycles",nn.kind); assert(false) end
+          return darkroom.typedAST.new(nn):copyMetadataFrom(n)
+        end)
+
+      local effCycles = math.ceil(kernel.cycles*ratioToScale(kernel.scaleN1,kernel.scaleD1)*ratioToScale(kernel.scaleN2,kernel.scaleD2))
+      largestEffectiveCycles = math.max(effCycles, largestEffectiveCycles, 1) -- don't go below 1 cycle
+
       if kernel.kind=="outputs" then
         if kernel:arraySize("expr")~=childCount-1 then
           darkroom.error("Duplicate outputs are not allowed! each output must be a unique image function. This may have been caused by common subexpression elimination")
@@ -148,7 +172,7 @@ function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
     print("Kernel Graph Done --------------------------------------")
   end
 
-  return kernelGraph
+  return kernelGraph, largestEffectiveCycles
 end
 
 function darkroom.kernelGraph.isKernelGraph(ast) return getmetatable(ast)==kernelGraphMT end

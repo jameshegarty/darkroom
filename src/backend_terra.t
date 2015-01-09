@@ -65,6 +65,7 @@ end
 function calculateStride(producerN, producerD, consumerN, consumerD)
   if consumerN==nil or (producerN==0 and producerD==0 and consumerN==0 and consumerD==0) then return 1,1 end
   if producerN==0 and producerD==0 then producerN=1; producerD=1 end
+  if consumerN==0 and consumerD==0 then consumerN=1; consumerD=1 end
   producerN, producerD = ratioFactor(producerN, producerD)
   consumerN, consumerD = ratioFactor(consumerN, consumerD)
 
@@ -75,10 +76,12 @@ function calculateStride(producerN, producerD, consumerN, consumerD)
     return d,1
   elseif (producerN/producerD)<=(consumerN/consumerD) then
     -- a upsample
-    local d = (consumerN/consumerD)/(producerN/producerD)
+--    local d = (consumerN/consumerD)/(producerN/producerD)
+    local d = (consumerN*producerD)/(consumerD*producerN) -- line above was causing floating point errors, making assert below fail
     assert(d==math.floor(d))
     return 1,d
   end
+  print(producerN,producerD,consumerN,consumerD)
   assert(false)
 end
 
@@ -119,7 +122,8 @@ local vmIV = terralib.includecstring [[
 void * makeCircular (void* address, int bytes) {
   char path[] = "/tmp/ring-buffer-XXXXXX";
   int file_descriptor = mkstemp(path);
- 
+
+  assert(bytes > 0); 
   assert(bytes % (4*1024) == 0);
   assert((int)address % (4*1024) == 0);
 
@@ -134,7 +138,7 @@ void * makeCircular (void* address, int bytes) {
   void * addressp =
     mmap(address, bytes, PROT_READ | PROT_WRITE,
          MAP_FIXED | MAP_SHARED, file_descriptor, 0);
- 
+
     assert(address == addressp);
   
     addressp = mmap ((char*)address + bytes,
@@ -168,7 +172,7 @@ LineBufferWrapperMT={__index=LineBufferWrapperFunctions}
 linebufferCount = 7 -- just start with a random id to make the debug checks more effective
 function isLineBufferWrapper(b) return getmetatable(b)==LineBufferWrapperMT end
 
-function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightStencil, debug, scaleN1, scaleD1, scaleN2, scaleD2, largestScaleY )
+function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightStencil, debug, scaleN1, scaleD1, scaleN2, scaleD2, largestScaleY, V )
   assert(type(lines)=="number")
   assert(type(leftStencil)=="number")
   assert(type(stripWidth)=="number")
@@ -180,6 +184,13 @@ function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightS
   assert(type(scaleD2)=="number")
   assert(type(largestScaleY)=="number")
   assert(darkroom.type.isType(orionType))
+  assert(type(V)=="number")
+
+  assert( stripWidth % V == 0 ) -- this had better be the case, or sets will fail
+
+  assert(lines > 0) -- a line buffer had better contain lines
+  assert(stripWidth > 0)
+  assert(stripWidth - leftStencil + rightStencil > 0)
 
   local tab = {lines=lines, 
                id = linebufferCount, -- for debugging
@@ -317,10 +328,10 @@ function LineBufferWrapperFunctions:set( loopid, value, V )
                        @([self.ivDebugX[loopid]]+i) = [self.posX[loopid]]+i
                        @([self.ivDebugY[loopid]]+i) = [self.posY[loopid]]
                        @([self.ivDebugId[loopid]]+i) = [self.id]
-
-                       orionAssert(uint64([self.iv[loopid]]) % (V*sizeof([self.orionType:toTerraType()])) == 0,"lb set not aligned")
         end)
       end
+      table.insert(res, quote 
+                     orionAssert(uint64([self.iv[loopid]]) % (V*sizeof([self.orionType:toTerraType()])) == 0,"lb set not aligned") end)
     end
 
   table.insert(res,quote @[&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]]) = value end)
@@ -344,7 +355,7 @@ function LineBufferWrapperFunctions:get(loopid, gather, relX,relY, V, validLeft,
     for i=0,V-1 do table.insert(vres, `@([self.iv[loopid]] + relY[i]*[self:lineWidth()] + relX[i] + i) ) end
     res = `vectorof([self.orionType:toTerraType()], vres)
   else
-    res = `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]] + relY*[self:lineWidth()]+ relX),{align=V})
+    res = `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]] + relY*[self:lineWidth()]+ relX),{align=[self.orionType:sizeof()]})
   end
 
   if self.debug then
@@ -432,6 +443,7 @@ function LineBufferWrapperFunctions:nextLine(loopid,  sub)
         if [buf[k]] >= [base[k]]+[self:modularSize(bufType[k])*2] then [buf[k]] = [buf[k]] - [self:modularSize(bufType[k])] end
       end)
   end
+
 
   return quote res end
 end
@@ -542,7 +554,7 @@ function ImageWrapperFunctions:get(loopid, gather, relX, relY, V)
     for i=0,V-1 do table.insert(res, `@([&self.orionType:toTerraType()]([self.data[loopid]] + relY[i]*[self.stride] + relX[i])) ) end
     expr = `vectorof([self.orionType:toTerraType()], res)
   else
-    expr = `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]] + relY*[self.stride] + relX),{align=V})
+    expr = `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]] + relY*[self.stride] + relX),{align=[self.orionType:sizeof()]})
   end
 
   if self.debug then
@@ -636,6 +648,7 @@ darkroom.terracompiler.numberBinops={
   [">>"]=function(lhs,rhs) return `lhs>>rhs end,
   ["min"]=function(lhs,rhs) return `terralib.select(lhs<rhs,lhs,rhs) end,
   ["max"]=function(lhs,rhs) return `terralib.select(lhs>rhs,lhs,rhs) end,
+  ["floorDivide"]=function(lhs,rhs,V) return darkroom.terracompiler.vectorizeBinaryPointwise(floorDivide,lhs,rhs,V) end, -- used to modify Y coordinate when we shift scaled images
   ["pow"]=function(lhs,rhs,V)
     return darkroom.terracompiler.vectorizeBinaryPointwise(cmath.pow,lhs,rhs,V)
   end
@@ -695,9 +708,33 @@ darkroom.terracompiler.numberUnary={
       assert(false)
     end
   end,
+  ["arctan"] = function(expr,ast,V)
+    if ast.type:baseType():isFloat() then
+      return darkroom.terracompiler.vectorizeUnaryPointwise(  cmath.atan, expr, V )
+    else
+      ast.type:print()
+      assert(false)
+    end
+  end,
   ["exp"] = function(expr,ast,V)
     if ast.type:baseType():isFloat() then
       return darkroom.terracompiler.vectorizeUnaryPointwise(  cmath.exp, expr, V )
+    else
+      ast.type:print()
+      assert(false)
+    end
+  end,
+  ["sqrt"] = function(expr,ast,V)
+    if ast.type:baseType():isFloat() then
+      return darkroom.terracompiler.vectorizeUnaryPointwise(  cmath.sqrt, expr, V )
+    else
+      ast.type:print()
+      assert(false)
+    end
+  end,
+  ["ln"] = function(expr,ast,V)
+    if ast.type:baseType():isFloat() then
+      return darkroom.terracompiler.vectorizeUnaryPointwise(  cmath.log, expr, V )
     else
       ast.type:print()
       assert(false)
@@ -725,6 +762,75 @@ darkroom.terracompiler.boolBinops={
   ["or"]=function(lhs,rhs) return `lhs or rhs end
 }
 
+function eliminateIterate(typedAST)
+  assert(darkroom.typedAST.isTypedAST(typedAST))
+
+  local res = typedAST:S(function(n) return n.kind=="iterate" or n.kind=="gatherColumn" or n.kind=="iterateload" end):process(
+    function(n)
+      if n.kind=="iterate" then
+        local nn = {}
+        nn.kind="mapreduce"
+        nn.reduceop = n.reduceop
+        nn.type = n.type
+        nn.varname1 = n.iteratorName
+        nn.varlow1 = n.iterationSpaceLow
+        nn.varhigh1 = n.iterationSpaceHigh
+        nn.__varid1 = {}
+        local mapreducevar = {kind="mapreducevar", type=darkroom.type.int(32), id=1, mapreduceNode = nn.__varid1, mapreduceNodeKey = nn.__key}
+        mapreducevar = darkroom.typedAST.new(mapreducevar):copyMetadataFrom(n)
+
+        local mapreducevarAST = {kind="mapreducevar", id = 1, mapreduceNode = nn.__varid1}
+        mapreducevarAST = darkroom.ast.new(mapreducevarAST):copyMetadataFrom(n)
+
+        nn.expr = n.expr:S("*"):process(
+          function(iv) 
+            if iv.kind=="iterationvar" then
+              return mapreducevar 
+            else
+              local n = iv:shallowcopy()
+              local changed = false
+              for k,v in pairs(iv) do
+                if darkroom.ast.isAST(v) then
+                  changed = true
+                  n[k] = v:S("iterationvar"):process(function(iiv) return mapreducevarAST end)
+                end
+              end
+              if changed then return darkroom.typedAST.new(n):copyMetadataFrom(iv) end
+            end
+          end)
+
+        return darkroom.typedAST.new(nn):copyMetadataFrom(n)
+      elseif n.kind=="gatherColumn" then
+        local array = {kind="array", type = n.type}
+        local c = 1
+        -- row major
+        for y=n.columnStartY, n.columnEndY do
+          for x=0,n.rowWidth-1 do
+            local xast = {kind="value", value=x, type=darkroom.type.int(32)}
+            xast = darkroom.typedAST.new(xast):copyMetadataFrom(n)
+            local xb = {kind="binop",lhs=n.x,rhs=xast,op="+",type=darkroom.type.int(32)}
+            xb = darkroom.typedAST.new(xb):copyMetadataFrom(n)
+            local yast = {kind="value", value=y, type=darkroom.type.int(32)}
+            yast = darkroom.typedAST.new(yast):copyMetadataFrom(n)
+
+            local g = {kind="gather",x=xb,y=yast,_input=n._input,type=n.type:baseType(),minX=n.columnStartX,maxX=n.columnEndX,minY=n.columnStartY,maxY=n.columnEndY}
+            g = darkroom.typedAST.new(g):copyMetadataFrom(n)
+
+            array["expr"..c] = g
+            c = c + 1
+          end
+        end
+        return darkroom.typedAST.new(array):copyMetadataFrom(n)
+      elseif n.kind=="iterateload" then
+        return n._expr
+      end
+    end)
+  
+  res:S(function(n) return n.kind=="iterate" or n.kind=="gatherColumn" or n.kind=="iterationvar" end):process(function(n) assert(false) end)
+
+  return res
+end
+
 mapreducevarSymbols = {}
 function darkroom.terracompiler.codegen(
   inkernel, V, xsymb, ysymb, loopid, stripCount, kernelNode, inputImages, outputs, taps, TapStruct, validLeft, validRight, debug)
@@ -734,20 +840,40 @@ function darkroom.terracompiler.codegen(
   assert(type(TapStruct)=="table")
   assert(type(debug)=="boolean")
 
+  inkernel = eliminateIterate(inkernel)
+
+  local stat = {}
+  local statSeen = {} -- for debugging
+
+  local function addstat(bb,qte,contents)
+    stat[bb] = stat[bb] or {}
+    statSeen[bb] = statSeen[bb] or {}
+    assert(statSeen[bb][qte] == nil);
+
+    if contents~=nil then
+      for k,v in pairs(contents) do
+        for kk,vv in pairs(v) do
+          assert(statSeen[bb][vv] == nil);
+        end
+      end
+    end
+
+    table.insert(stat[bb],qte)
+    statSeen[bb][qte] = 1
+  end
+
   local res = inkernel:visitEach(
     function(node,args)
 
+      if node:codegened(inkernel)==false then
+        return {1,2,3} -- garbage
+      end
+
       local inputs = {}
       local packedSymbol = {}
-      local stat = {}
-      local statSeen = {} -- dedup the statements. It's possible a single node is refered to multiple times eg (a+a)
       for k,v in pairs(args) do 
         inputs[k] = args[k][1]
         packedSymbol[k] = args[k][2]
-        for kk, vv in pairs(args[k][3]) do
-          assert(terralib.isquote(vv))
-          if statSeen[vv]==nil then table.insert(stat, vv); statSeen[vv]=1 end
-        end
       end
 
       local finalOut = {}
@@ -756,48 +882,47 @@ function darkroom.terracompiler.codegen(
       if node.kind=="mapreduce" then
 
         local i = 1
-        while node["varid"..i] do -- unused variables
-          if mapreducevarSymbols[node["varid"..i]]==nil then
-            mapreducevarSymbols[node["varid"..i]] = symbol(int)
+        while node["varname"..i] do -- unused variables
+          if mapreducevarSymbols[node["__varid"..i]]==nil then
+            mapreducevarSymbols[node["__varid"..i]] = symbol(int,node["varname"..i])
           end
           i = i + 1
         end
-        
-        if node.reduceop=="sum" or node.reduceop=="max" or node.reduceop=="min" then
 
+        local bb = node:calculateMinBB(inkernel)
+        local exprbb = node.expr:calculateMinBB(inkernel)
+        local statexprbb = stat[exprbb]
+        if bb==exprbb then statexprbb={} end -- eg a mapreduce with a constant in the body
+
+        if node.reduceop=="sum" or node.reduceop=="max" or node.reduceop=="min" then
           local finalOut = {}
-          local statOut = {}
 
           for c = 1, node.type:channels() do
             local sum = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V), node.reduceop)
 
             local out
             if node.reduceop=="sum" then
-              out = quote stat; sum = sum + [inputs["expr"][c]] end
+              out = quote [statexprbb]; sum = sum + [inputs["expr"][c]] end
             elseif node.reduceop=="max" then
-              out = quote stat; sum = terralib.select([inputs["expr"][c]]>sum,[inputs["expr"][c]],sum) end
+              out = quote [statexprbb]; sum = terralib.select([inputs["expr"][c]]>sum,[inputs["expr"][c]],sum) end
             elseif node.reduceop=="min" then
-              out = quote stat; sum = terralib.select([inputs["expr"][c]]<sum,[inputs["expr"][c]],sum) end
-            end
-
-            if c==node.type:channels() then
-              for k,v in pairs(stat) do stat[k] = nil end -- no longer needed in top scope
+              out = quote [statexprbb]; sum = terralib.select([inputs["expr"][c]]<sum,[inputs["expr"][c]],sum) end
             end
           
             local i = 1
-            while node["varid"..i] do
-              out = quote for [mapreducevarSymbols[node["varid"..i]]]=[node["varlow"..i]],[node["varhigh"..i]]+1 do out end end
+            while node["varname"..i] do
+              out = quote for [mapreducevarSymbols[node["__varid"..i]]]=[node["varlow"..i]],[node["varhigh"..i]]+1 do out end end
               i = i + 1
             end
 
-            table.insert(statOut, quote var [sum] = 0; out end)
+            addstat(bb, quote var [sum] = 0; out end,{statexprbb})
             table.insert(finalOut, sum)
           end
 
           local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
-          table.insert(statOut, quote var [packedSymbol] = array(finalOut) end)
+          addstat(bb, quote var [packedSymbol] = array(finalOut) end)
           for c=0,node.type:channels()-1 do finalOut[c+1] = `[packedSymbol][c] end
-          return {finalOut, `[packedSymbol], statOut}
+          return {finalOut, `[packedSymbol]}
 
         elseif node.reduceop=="argmin" or node.reduceop=="argmax" then
           -- special case: for argmin, the multiple channels are generated by the one loop
@@ -811,15 +936,15 @@ function darkroom.terracompiler.codegen(
           local assignSelect = {}
 
           local i = 1
-          while node["varid"..i] do
+          while node["varname"..i] do
             table.insert(results, symbol(vector(int,V)))
             table.insert(declareResults, quote var [results[#results]] end)
-            table.insert(assign, quote [results[#results]] = [mapreducevarSymbols[node["varid"..i]]] end)
+            table.insert(assign, quote [results[#results]] = [mapreducevarSymbols[node["__varid"..i]]] end)
 
             if node.reduceop=="argmin" then
-              table.insert(assignSelect, quote [results[#results]] = terralib.select( [inputs["expr"][1]] < value, [mapreducevarSymbols[node["varid"..i]]], [results[#results]]) end)
+              table.insert(assignSelect, quote [results[#results]] = terralib.select( [inputs["expr"][1]] < value, [mapreducevarSymbols[node["__varid"..i]]], [results[#results]]) end)
             else
-              table.insert(assignSelect, quote [results[#results]] = terralib.select( [inputs["expr"][1]] > value, [mapreducevarSymbols[node["varid"..i]]], [results[#results]]) end)
+              table.insert(assignSelect, quote [results[#results]] = terralib.select( [inputs["expr"][1]] > value, [mapreducevarSymbols[node["__varid"..i]]], [results[#results]]) end)
             end
             i = i + 1
           end
@@ -831,7 +956,7 @@ function darkroom.terracompiler.codegen(
             assignValue = quote value = terralib.select( [inputs["expr"][1]] > value, [inputs["expr"][1]], value) end
           end
           -- inner loop
-          local out = quote stat; 
+          local out = quote [statexprbb]; 
             if set==false then
               assign; set=true; value = [inputs["expr"][1]];
             else
@@ -841,20 +966,33 @@ function darkroom.terracompiler.codegen(
           end
 
           local i = 1
-          while node["varid"..i] do
-            out = quote for [mapreducevarSymbols[node["varid"..i]]]=[node["varlow"..i]],[node["varhigh"..i]]+1 do out end end
+          while node["varname"..i] do
+            out = quote for [mapreducevarSymbols[node["__varid"..i]]]=[node["varlow"..i]],[node["varhigh"..i]]+1 do out end end
             i = i + 1
           end
 
-          local statOut = {quote var [set] = false; var [value] = 0; declareResults; out end}
+          addstat(bb, quote var [set] = false; var [value] = 0; declareResults; out end,{statexprbb})
           local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
           
           table.insert(results, value) -- last value returned is the extremal value
-          table.insert(statOut, quote var [packedSymbol] = array(results) end)
+          addstat(bb, quote var [packedSymbol] = array(results) end)
           local finalOut = {}
           for c=0,node.type:channels()-1 do finalOut[c+1] = `[packedSymbol][c] end
-          return {finalOut, `[packedSymbol], statOut}
+          return {finalOut, `[packedSymbol]}
 
+        elseif node.reduceop=="none" then
+          local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
+          addstat(bb, quote 
+                         var [packedSymbol]
+                         for [mapreducevarSymbols[node["__varid1"]]]=[node["varlow1"]],[node["varhigh1"]]+1 do 
+                           [statexprbb]; 
+                           [packedSymbol][
+                             [mapreducevarSymbols[node["__varid1"]]]
+                                         ] = [inputs.expr[1]];
+                         end end,{statexprbb})
+          local finalOut = {}
+          for c=0,node.type:channels()-1 do finalOut[c+1] = `[packedSymbol][c] end
+          return {finalOut, `[packedSymbol]}
         else
           print(node.reduceop)
           assert(false)
@@ -862,34 +1000,28 @@ function darkroom.terracompiler.codegen(
 
       elseif node.kind=="filter" then
         local finalOut = {}
-        local statOut = {}
 
-        -- we need to sparate out the statements that relate to the condition vs the value
-        local statCond = {}
-        local statCondSeen = {}
-        for kk, vv in pairs(args.cond[3]) do assert(terralib.isquote(vv)); if statCondSeen[vv]==nil then table.insert(statCond, vv); statCondSeen[vv]=1 end end
-
-        local statExpr = {}
-        local statExprSeen = {}
-        for kk, vv in pairs(args.expr[3]) do assert(terralib.isquote(vv)); if statCondSeen[vv]==nil and statExprSeen[vv]==nil then table.insert(statExpr, vv); statExprSeen[vv]=1 end end
+        local bb = darkroom.typedAST._topbb -- always at the top by defn
+        local exprbb = node.expr:calculateMinBB(inkernel)
+        local condbb = node.cond:calculateMinBB(inkernel)
 
         for c = 1, node.type:channels() do
           table.insert(finalOut, symbol(darkroom.type.toTerraType(node.type:baseType(),false,V),"filteredOut"))
           local cond = `[inputs.cond[c]][0]
           for v=1,V-1 do cond = `[cond] or [inputs.cond[c]][v] end
-          table.insert(statOut,quote
+          addstat(bb,quote
                          var [finalOut[c]] = 0
-                         statCond;
+                         [stat[condbb]];
                          if cond then
-                           statExpr;
+                           [stat[exprbb]];
                            [finalOut[c]] = [inputs.expr[c]];
-                         end end)
+                         end end,{stat[condbb],stat[exprbb]})
            finalOut[c] = `[finalOut[c]]
         end
         
         local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
-        table.insert(statOut, quote var [packedSymbol] = array(finalOut) end)
-        return {finalOut, `[packedSymbol], statOut, inputs.cond}
+        addstat(bb, quote var [packedSymbol] = array(finalOut) end)
+        return {finalOut, `[packedSymbol], inputs.cond}
       end
 
       for c=1,node.type:channels() do
@@ -1057,65 +1189,38 @@ function darkroom.terracompiler.codegen(
             assert(false)
           end
 
-        elseif node.kind=="assert" then
-          local expr = inputs["expr"][c]
-
-          if darkroom.debug then
-            local cond = inputs["cond"][c]
-            local printval = inputs["printval"][c]
-      
-            if node.printval.type==darkroom.type.float(32) then
-              for i = 1,V do
-              table.insert(stat,quote if cond[i-1]==false then 
-                               cstdio.printf("ASSERT FAILED, value %f line %d x:%d y:%d\n",printval[i-1],[node:linenumber()],xsymb,ysymb);
-                             cstdlib.exit(1); 
-                                      end end)
-              end
-            elseif node.printval.type==darkroom.type.int(32) then
-              for i = 1,V do
-              table.insert(stat,quote if cond[i-1]==false then 
-                               cstdio.printf("ASSERT FAILED, value %d file %s line %d x:%d y:%d\n",printval[i-1],[node:filename()],[node:linenumber()],xsymb,ysymb);
-                             cstdlib.exit(1); 
-                                      end end)
-            end
-            else
-              assert(false)
-            end
-          end
-
-          out = expr
         elseif node.kind=="gather" then
           local inpX = inputs["x"][1] -- should be scalar
           local inpY = inputs["y"][1] -- should be scalar
 
-          assert(node.input.kind=="load")
-          assert(darkroom.kernelGraph.isKernelGraph(node.input.from) or type(node.input.from)=="number")
+          assert(node._input.kind=="load")
+          assert(darkroom.kernelGraph.isKernelGraph(node._input.from) or type(node._input.from)=="number")
 
           local relX, relY
-          if type(node.input.relX)=="number" then 
-            relX = node.input.relX 
+          if type(node._input.relX)=="number" then 
+            relX = node._input.relX 
           else
-            relX = node.input.relX:codegen()
+            relX = node._input.relX:codegen()
           end
           
-          if type(node.input.relY)=="number" then 
-            relY = node.input.relY 
+          if type(node._input.relY)=="number" then 
+            relY = node._input.relY 
           else
-            relY = node.input.relY:codegen()
+            relY = node._input.relY:codegen()
           end
 
-          out = `[inputImages[kernelNode][node.input.from][c]:get(loopid, true, `inpX+relX, `inpY+relY,  V, validLeft, validRight)]
+          out = `[inputImages[kernelNode][node._input.from][c]:get(loopid, true, `inpX+relX, `inpY+relY,  V, validLeft, validRight)]
 
           if debug then
             out = quote
               for i = 0,V do
-                if inpX[i] > node.maxX or inpX[i] < -node.maxX then
-                  cstdio.printf("error, gathered outside of stencil X %d (max %d)\n",inpX[i], node.maxX)
+                if inpX[i] > node.maxX or inpX[i] < node.minX then
+                  cstdio.printf("error, gathered outside of stencil X %d (min %d max %d)\n",inpX[i], node.minX, node.maxX)
                   orionAssert(false,"gathered outside of stencil")
                 end
                 
-                if inpY[i] > node.maxY or inpY[i] < -node.maxY then
-                  cstdio.printf("error, gathered outside of stencil Y %d (max %d)\n",inpY[i], node.maxY)
+                if inpY[i] > node.maxY or inpY[i] < node.minY then
+                  cstdio.printf("error, gathered outside of stencil Y %d (min %d max %d)\n",inpY[i], node.minY, node.maxY)
                   orionAssert(false,"gathered outside of stencil")
                 end
               end
@@ -1127,17 +1232,17 @@ function darkroom.terracompiler.codegen(
         elseif node.kind=="array" then
           out = inputs["expr"..c][1]
         elseif node.kind=="index" then
-          if node.index:eval(1):area()==1 then
-            out = inputs["expr"][node.index:eval(1):min(1)+1]
+          if node.index:eval(1,inkernel):area()==1 then
+            out = inputs["expr"][node.index:eval(1,inkernel):min(1)+1]
           else
             local cg = node.index:codegen()
             out = `[packedSymbol["expr"]][cg]
           end
         elseif node.kind=="mapreducevar" then
-          if mapreducevarSymbols[node.id]==nil then
-            mapreducevarSymbols[node.id] = symbol(int,node.variable)
+          if mapreducevarSymbols[node.mapreduceNode]==nil then
+            mapreducevarSymbols[node.mapreduceNode] = symbol(int,node.variable)
           end
-          out = `[mapreducevarSymbols[node.id]]
+          out = `[mapreducevarSymbols[node.mapreduceNode]]
         elseif node.kind=="reduce" then
     
           local list = node:map("expr",function(v,i) return inputs["expr"..i][c] end)
@@ -1181,10 +1286,11 @@ function darkroom.terracompiler.codegen(
         out = `[darkroom.type.toTerraType(node.type:baseType(),false,V)](out)
 
         -- only make a statement if necessary
-        if node:parentCount(inkernel)==1 then
+        if false and node:parentCount(inkernel)==1 then
           finalOut[c] = out
         else
-          table.insert(stat,quote var [resultSymbol] = out end)
+          local bb = node:calculateMinBB(inkernel)
+          addstat(bb, quote var [resultSymbol] = out end )
           finalOut[c] = `[resultSymbol]
         end
 
@@ -1192,13 +1298,14 @@ function darkroom.terracompiler.codegen(
 
       -- if this is an array and we index into it, pack it into a terra array
       local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
-      table.insert(stat,quote var [packedSymbol] = array(finalOut) end)
+      local bb = node:calculateMinBB(inkernel)
+      addstat(bb, quote var [packedSymbol] = array(finalOut) end )
 
       for c=0,node.type:channels()-1 do
         finalOut[c+1] = `[packedSymbol][c]
       end
       
-      return {finalOut, `[packedSymbol], stat}
+      return {finalOut, `[packedSymbol]}
     end)
 
   for k,v in ipairs(res[1]) do assert(terralib.isquote(res[1][k])) end
@@ -1207,14 +1314,19 @@ function darkroom.terracompiler.codegen(
     print("terracompiler.codegen astNodes:",inkernel:S("*"):count()," statements:",#res[3],inkernel:name())
   end
 
-  return res[1],res[3],res[4]
+  return res[1], stat[darkroom.typedAST._topbb], res[3]
 end
 
 -- user is expected to allocate an image that is padded to the (vector size)*(stripCount)
 function stripWidth(options, scaleN1, scaleD1)
   assert(type(scaleN1)=="number")
   assert(type(scaleD1)=="number")
-  return math.floor((upToNearest(options.V*options.stripcount,options.width) / options.stripcount) * ratioToScale(scaleN1,scaleD1))
+  local res = math.floor((upToNearest(options.V*options.stripcount,options.width) / options.stripcount) * ratioToScale(scaleN1,scaleD1))
+
+  -- in the case of pyramids, the strip width for all scales must have V as a factor.
+  -- This is hard in general, b/c you might have 3 as a scale factor for ex.
+  assert(res % options.V == 0) -- strips had better have V as a factor, or sets will be unaligned
+  return res
 end
 
 
@@ -1250,9 +1362,9 @@ function neededStencil( interior, kernelGraph, kernelNode, largestScaleY, shifts
           s = s:unionWith(Stencil.new():add(0,shifts[kernelNode],0))
         end
       elseif node.kernel.kind=="crop" and interior==false then -- on the interior of strips, crops have no effect
-        s = s:unionWith(node.kernel:stencil(kernelNode):scale(1,clockrate,1):sum(Stencil.new():add(0,node.kernel.shiftY,0)))
+        s = s:unionWith(node.kernel:stencil(kernelNode, node.kernel):scale(1,clockrate,1):sum(Stencil.new():add(0,node.kernel.shiftY,0)))
       else
-        s = s:unionWith(node.kernel:stencil(kernelNode):scale(1,clockrate,1):sum(neededStencil( interior, kernelGraph, node, largestScaleY, shifts):scale(downsampleStrideX,1,1):downToNearestY(upsampleStrideY)))
+        s = s:unionWith(node.kernel:stencil(kernelNode, node.kernel):scale(1,clockrate,1):sum(neededStencil( interior, kernelGraph, node, largestScaleY, shifts):scale(downsampleStrideX,1,1):downToNearestY(upsampleStrideY)))
       end
     end
 
@@ -1595,15 +1707,17 @@ function darkroom.terracompiler.allocateImageWrappers(
   local outputs = {} -- kernelGraphNode->output wrapper
   local linebufferSize = 0
 
-  local function channelPointer(c,ptr,ty)
-    return `[&ty](ptr)+[options.width*options.height]*c
+  local function channelPointer(c,ptr,ty,width,height)
+    -- always round the width up so that aligned stores work
+    return `[&ty](ptr)+[upToNearest(options.V, width)*height]*c
   end
 
   local inputWrappers = {}
   local function getInputWrapper(id,type)
     if inputWrappers[id]==nil then
       inputWrappers[id] = {}
-      for c = 1,type:channels() do inputWrappers[id][c] = newImageWrapper( channelPointer(c-1,inputImageSymbolMap[id], type:baseType():toTerraType()), type:baseType(), options.width, options.debug ,1,1,1,1, largestScaleY, false) end
+      -- we don't actually care about the alignment of inputs b/c we do unaligned loads
+      for c = 1,type:channels() do inputWrappers[id][c] = newImageWrapper( channelPointer(c-1,inputImageSymbolMap[id], type:baseType():toTerraType(), options.width, options.height), type:baseType(), options.width, options.debug ,1,1,1,1, largestScaleY, false) end
       setmetatable(inputWrappers[id],pointwiseDispatchMT)
     end
     return inputWrappers[id]
@@ -1637,7 +1751,11 @@ function darkroom.terracompiler.allocateImageWrappers(
         -- make the output
         if parentIsOutput(n)~=nil then
           outputs[n] = {}
-          for c=1,n.kernel.type:channels() do outputs[n][c] = newImageWrapper( channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType()), n.kernel.type:baseType(), upToNearest(options.V, imageSize(options.width,n.kernel.scaleN1,n.kernel.scaleD1)), options.debug, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, largestScaleY, n.kernel.kind=="filter") end
+          for c=1,n.kernel.type:channels() do 
+            local W = imageSize(options.width,n.kernel.scaleN1,n.kernel.scaleD1)
+            local H = imageSize(options.height,n.kernel.scaleN2,n.kernel.scaleD2)
+            outputs[n][c] = newImageWrapper( channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType(),W,H), n.kernel.type:baseType(), upToNearest(options.V, W), options.debug, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, largestScaleY, n.kernel.kind=="filter") 
+          end
           setmetatable(outputs[n],pointwiseDispatchMT)
         else
           outputs[n] = {}
@@ -1654,7 +1772,8 @@ function darkroom.terracompiler.allocateImageWrappers(
               n.kernel.scaleD1,
               n.kernel.scaleN2, 
               n.kernel.scaleD2,
-              largestScaleY)
+              largestScaleY,
+              options.V)
 
             linebufferSize = linebufferSize + outputs[n][c]:allocateSize()
           end

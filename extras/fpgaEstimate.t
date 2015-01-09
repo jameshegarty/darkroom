@@ -133,7 +133,7 @@ function binopToCost(op,type, lhsType, rhsType)
   local t={}
 --  t["binop"..op] = 1
   if op==">>" or op=="<<" then
-  elseif op=="+" or op=="sum" or op=="-" or op==">" or op=="<" or op=="<=" or op==">=" then
+  elseif op=="+" or op=="sum" or op=="-" or op==">" or op=="<" or op=="<=" or op==">=" or op=="floorDivide" then
     t.luts = type:sizeof()*8
   elseif op=="max" or op=="min" then
     t.luts = type:sizeof()*(8+(8/2))
@@ -141,7 +141,7 @@ function binopToCost(op,type, lhsType, rhsType)
     t.dsps = 1
   elseif op=="pow" then
     t.luts = (type:sizeof()*8)*(type:sizeof()*8)
-  elseif op=="and" or op=="==" or op=="or"  then
+  elseif op=="and" or op=="==" or op=="or" or op=="~=" then
     t.luts = type:sizeof()*(8/2)
   elseif op=="dot" then
     assert(lhsType:isArray())
@@ -189,7 +189,7 @@ function estimate(kernelGraph, imageWidth)
       local consumers = {}
       for v,_ in node:parents(kernelGraph) do
         if v.kernel~=nil then
-          table.insert(consumers, v.kernel:stencil(node))
+          table.insert(consumers, v.kernel:stencil(node,v.kernel))
         end
       end
 

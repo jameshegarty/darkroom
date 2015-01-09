@@ -15,7 +15,7 @@ Add the Darkroom language definition to your lua path environment variable. Add 
 
     export DR=[path to darkroom root]
     export TERRADIR=[path to terra root]
-    export LUA_PATH="$LUA_PATH;$DR/?.t;$DR/src/?.t;$DR/extras/?.t;$TERRADIR/tests/lib/?.t"
+    export LUA_PATH="$LUA_PATH;./?.lua;./?.t;$DR/?.t;$DR/src/?.t;$DR/extras/?.t;$TERRADIR/tests/lib/?.t"
 
 Darkroom and Terra are tested to work on Linux and Mac OS X. Other platforms are unlikely to work.
 
@@ -25,9 +25,9 @@ Running Darkroom
 Darkroom includes a number of example image processing pipelines that can be used to test that Darkroom is correctly installed.
 
     cd darkroom/examples
-    terra fixedcampipe.t
+    terra campipe.t
 
-Which should write `darkroom/examples/out/fixedcampipe.bmp`.
+Which should write `darkroom/examples/out/campipe.bmp`.
 
 Darkroom also contains a test suite which you can run to make sure there isn't any strangeness on your platform:
 
@@ -217,7 +217,7 @@ Supported reduce operators are: `sum min max argmin argmax`
 
 > Tip: Notice that an important feature of our map-reduce operator is that it doesn't imply an order for the reduction operator (it's associative). Darkroom exploits this to reduce the expression in the order that has the highest performance. While you could write out a similar expression by hand, Darkroom's operators aren't associative and commutative, and it's possible you will choose an inefficient order.
 
-`sum min max` evaluate to the type of the `[expression]`. `argmin argmax` return the variable values that attained the highest or lowest expression value, and the extremal value itself. They evalute to the type `int[N+1]`, where N is the number of variables. The last channel (channel N) contains the extremal value.
+`sum min max` evaluate to the type of the `[expression]`. `argmin argmax` return the variable values that attained the highest or lowest expression value, and the extremal value itself. They evalute to the type `int[N+1]`, where N is the number of variables. The last channel (channel N) contains the extremal value. If multiple variable values evaluate to the same extremal value, then the lowest variable value will be chosen.
 
 Metaprogramming
 ---------------
@@ -389,26 +389,31 @@ A typical use of this functionality would be to implement 'tone mapping', which 
 
 Compile takes a lua array of input image functions (returned from `darkroom.input`), an array of outputs to generate, and array of tap inputs, the width and height of the output, and compile options. `darkroom.compile` returns a terra function with this type signature:
 
-  compiledPipeline( input0 : &opaque, input1 : &opaque, ... output1 : &opaque, output2 : &opaque, taps : TapStruct )
+  compiledPipeline( input0 : &opaque, input1 : &opaque, ... output1 : &opaque, output2 : &opaque, taps : &TapStruct )
 
-Where inputs, outputs, and taps are in the same order as passed to `darkroom.compile`, and `TapStruct` is a struct with entries in the same order and types as the `tapsArray`. All input and output images must be pointers stored in 'darkroom format'. First, the data must match the type of the darkroom input or output. Second, the stride of the input must be `width` rounded up to the nearest vector width `V` passed in the compile options. For example if `width=63` and `V=4` then the stride must be 64. Finally, multi-channel images must be in struct of array form (i.e. all red pixels come before all blue pixels etc).
+Where inputs, outputs, and taps are in the same order as passed to `darkroom.compile`, and `TapStruct` is a struct with entries in the same order and types as the `tapsArray`. All output images are returned in 'darkroom format'. The data returned matches the type of the darkroom image. In addition, the stride of the output is the `width` rounded up to the nearest vector width `V` passed in the compile options. For example if `width=63` and `V=4` then the stride returned will be 64. Finally, multi-channel images are returned in struct of array form (i.e. all red pixels come before all blue pixels etc). For inputs, the data must be passed in struct of array form, but the stride should equal the output image width (padding the stride to the vector size is not required).
 
 For convenience, you can use [extras/darkroomSimple.t](#extrasdarkroomsimplet), which provides an abstraction on top of this that doesn't require loading images, or use the [extras/image.t](#extrasimaget) class:
+
+    import "darkroom"
+    terralib.require("image")
 
     -- define and compile the pipelne
     inp = darkroom.input( uint8[3] )
     tap = darkroom.tap( uint8 )
     im out(x,y) [uint8](inp[0]/tap + inp[1]/tap + inp[2]/tap) end
-    terraPipe = darkroom.compile( {inp}, {out}, {tap}, 128, 128 )
+    terraPipe = darkroom.compile( {inp}, {out}, {tap}, 128, 64 )
+    struct TapStruct {tap:uint8;}
 
     terra loadAndRun()
       var inp : Image
       inp:load("myfile.bmp"):toDarkroomFormat()
 
       var out : Image
-      out:allocateDarkroomFormat( 128, 128, 4, 1, 8, false, false )
+      out:allocateDarkroomFormat( 128, 64, 4, 1, 8, false, false )
 
-      terraPipe( inp.data, out.data, {3} ) -- run pipeline
+      var tapStruct = TapStruct {3}
+      terraPipe( inp.data, out.data, &tapStruct ) -- run pipeline
 
       out:fromDarkroomFormat()
       out:save("myoutput.bmp")

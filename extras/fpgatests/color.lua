@@ -7,4 +7,4 @@ else
    color = darkroom.input(uint8[3])
 end
 
-test({{im(x,y) color+[uint8](10) end,"uart"}},{{color,"uart","color.bmp"}})
+test(im(x,y) color+[uint8](10) end,{{color,"color"}})

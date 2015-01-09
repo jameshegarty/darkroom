@@ -3,6 +3,7 @@ fpga = terralib.require("fpga")
 fpgaEstimate = terralib.require("fpgaEstimate")
 darkroomSimple = terralib.require("darkroomSimple")
 terralib.require("image")
+terralib.require("darkroomDebug")
 
 if arg[1]=="cpu" then
   testinput = darkroomSimple.load(arg[2])
@@ -32,22 +33,57 @@ function test(inast, inputList)
     io.output("out/"..arg[0]..".perlineest.txt")
     io.write(pl)
     io.close()
-  elseif arg[1]=="build" then
-    local hwinputs = inputList
-    if hwinputs==nil then hwinputs={{testinput,"uart","frame_128.bmp"}} end
-    local hwoutputs = inast
-    if darkroom.ast.isAST(hwoutputs) then
-      hwoutputs = {{inast,"uart"}}
+  elseif arg[1]=="builduart" or arg[1]=="buildaxi" or arg[1]=="buildsim" then
+
+    local s = ""
+    local hwinputs = nil
+    local hwoutputs = nil
+    local opt
+    if arg[1]=="builduart" then
+      hwinputs = inputList
+      if hwinputs==nil then hwinputs={{testinput,"uart","frame_128.bmp"}} end
+      hwoutputs = inast
+      if darkroom.ast.isAST(hwoutputs) then
+        hwoutputs = {{inast,"uart"}}
+      end
+      s = ".uart"
+      opt = fpga.util.deviceToOptions(arg[3])
+    elseif arg[1]=="buildsim" then
+      hwinputs = inputList
+      if hwinputs==nil then 
+         hwinputs={{testinput,"sim","frame_128.raw"}} 
+      else
+         for k,v in pairs(inputList) do
+            hwinputs[k] = {v[1],"sim",v[2]..".raw"}
+         end
+      end
+      hwoutputs = inast
+      if darkroom.ast.isAST(hwoutputs) then
+        hwoutputs = {{inast,"sim"}}
+      end
+      
+      s = ".sim"
+      opt = fpga.util.deviceToOptions(arg[3])
+    elseif arg[1]=="buildaxi" then
+      print("BUILDAXI")
+      hwinputs = inputList
+      if hwinputs==nil then hwinputs={{testinput,"axi","frame_128.raw"}} end
+      hwoutputs = inast
+      if darkroom.ast.isAST(hwoutputs) then
+        hwoutputs = {{inast,"axi"}}
+      end
+      
+      s = ".axi"
+      opt = fpga.util.deviceToOptions(arg[3])
     end
 
-    local v, metadata = fpga.compile(hwinputs, hwoutputs, 128, 64, fpga.util.deviceToOptions(arg[3]))
-    local s = string.sub(arg[0],1,#arg[0]-4)
+    local v, metadata = fpga.compile(hwinputs, hwoutputs, 128, 64, opt)
+    s = string.sub(arg[0],1,#arg[0]-4)..s
     io.output("out/"..s..".v")
     io.write(v)
     io.close()
-
+    
     fpga.util.writeMetadata("out/"..s..".metadata.lua", metadata)
-
   else
     local cpuinast
     if darkroom.ast.isAST(inast) then 

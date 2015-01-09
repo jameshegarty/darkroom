@@ -43,17 +43,17 @@ function darkroom.frontEnd(ast, options)
 
   if options.callbackAST~=nil then options.callbackAST(ast) end
 
-  local typedAST, largestScaleX, largestScaleY = darkroom.typedAST.astToTypedAST( ast, options )
+  local typedAST, largestScaleX, largestScaleY, smallestScaleX, smallestScaleY = darkroom.typedAST.astToTypedAST( ast, options )
   if options.callbackTypedAST~=nil then options.callbackTypedAST(typedAST) end
 
   -- optimize
   local optimizedTypedAST = darkroom.optimize.optimize(typedAST, options)
 
   -- determine the set of nodes to make scheduling decisions on
-  local kernelGraph = darkroom.kernelGraph.typedASTToKernelGraph(optimizedTypedAST, options)
+  local kernelGraph, largestEffectiveCycles = darkroom.kernelGraph.typedASTToKernelGraph(optimizedTypedAST, options)
   if options.callbackKernelGraph~=nil then options.callbackKernelGraph(kernelGraph) end
 
-  return kernelGraph, largestScaleY
+  return kernelGraph, largestScaleY, smallestScaleX, smallestScaleY, largestEffectiveCycles
 end
 
 function darkroom.backEnd( kernelGraph, inputImages, taps, largestScaleY, options )
@@ -112,7 +112,9 @@ function darkroom.compile(inputImageFunctions, outputImageFunctions, tapInputs, 
   checkinput(tapInputs,"tap inputs to","tap image functions",0)
 
   if type(inputWidth)~="number" then darkroom.error("forth argument to darkroom.compile must be image width") end
+  if inputWidth<=0 then darkroom.error("image width must be >0") end
   if type(inputHeight)~="number" then darkroom.error("fifth argument to darkroom.compile must be image width") end
+  if inputHeight<=0 then darkroom.error("image height must be >0") end
 
   if type(options)~="table" and options~=nil then darkroom.error("sixth argument to darkroom.compile must be options table or nil") end
 

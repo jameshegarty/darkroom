@@ -105,3 +105,16 @@ function downsampleGaussianFloat(inp)
     map i=-2,2 j=-2,2 reduce(sum) inp(x*2+i,y*2+j)*gaussianKernel[(j+2)*5+(i+2)] end
   end
 end
+
+-- sums to 256
+local intGaussianKernel={1,4,7,4,1,
+                         4,15,24,15,4,
+                         7,24,36,24,7,
+                         4,15,24,15,4,
+                         1,4,7,4,1} 
+
+function downsampleGaussianUint8(inp)
+  return im(x,y)
+  map i=-2,2 j=-2,2 reduce(sum) [uint8]([uint16](inp(x*2+i,y*2+j))*[uint16](intGaussianKernel[(j+2)*5+(i+2)])>>[uint16](8)) end
+  end
+end
