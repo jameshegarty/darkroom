@@ -67,7 +67,7 @@ function test(inast)
 
   local cores = tonumber(arg[2]) or 1
   local corest = ""
-  if arg[2] then corest="."..arg[2] end
+  if arg[2] then corest=".c"..arg[2] end
 
   local tprog = darkroomSimple.compile(inast,{debug=true, verbose=true, printruntime=true, cores=cores})
 
