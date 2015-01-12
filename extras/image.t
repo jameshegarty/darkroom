@@ -1425,34 +1425,39 @@ terra Image:SOAAOS(toAOS : bool)
     if self.sparse and self.SOA and toAOS then
       var fieldOffset = (self.stride*self.height*bytes)
       var cnt = @[&uint](self.data)
-      var dstPtr = dst
+      var dstPtr : &uint8 = dst
       @[&uint](dstPtr) = cnt
       dstPtr = dstPtr + 4
-      for c=1,self.channels do 
+
+      for c=0,self.channels do 
         orionAssert(@[&uint]([&uint8](self.data)+fieldOffset*c)==cnt, "SOAAOS mismatched count")
       end
 
-      var src = [&uint8](self.data)+4
+      var src : &uint8 = [&uint8](self.data)+4 -- skip over count
 
       for item=0,cnt do
         var x = @[&int](src)
         var y = @([&int](src)+1)
-        for c=1,self.channels do 
+
+        @[&int](dstPtr) = x
+        @([&int](dstPtr)+1) = y
+
+        for c=1,self.channels do [&uint8](self.data)
           orionAssert(@[&uint](src + fieldOffset*c)==x, "SOAAOS mismatched x")
           orionAssert(@[&uint](src + fieldOffset*c + 4)==y, "SOAAOS mismatched y")
         end
 
-        @[&int](dstPtr) = x
-        @([&int](dstPtr)+1) = y
-        dstPtr = dstPtr + 8
+        dstPtr = dstPtr + 8 -- skip x,y
         src = src + 8
 
-        for c=0,self.channels do 
-          for b=0,bytes do
+        for b=0,bytes do
+          for c=0,self.channels do 
             @dstPtr = @[&uint](src + fieldOffset*c)
-            dstPtr = dstPtr + 1; src = src + 1;
+            dstPtr = dstPtr + 1; 
           end
+          src = src + 1;
         end
+
       end
     elseif self.sparse and self.SOA==false and toAOS==false then
       orionAssert(false,"unsupported operation")

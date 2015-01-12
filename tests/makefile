@@ -42,7 +42,9 @@ out/%.lua.csv.correct.txt : out/%.lua.csv
 	test ! -s out/$*.diff && touch $@
 
 out/%.lua.c4.csv.correct.txt : out/%.lua.c4.csv
-	diff out/$*.lua.c4.csv gold/$*.lua.csv > out/$*.diff
+	sort out/$*.lua.c4.csv > out/$*.lua.c4.csv.sort
+	sort gold/$*.lua.csv > out/$*.lua.c4.csv.gold.sort
+	diff out/$*.lua.c4.csv.sort out/$*.lua.c4.csv.gold.sort > out/$*.diff
 	test ! -s out/$*.diff && touch $@
 
 out/coverage.%.txt : out/bug.lua.yml

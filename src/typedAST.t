@@ -927,6 +927,10 @@ function darkroom.typedAST._toTypedAST(inast)
         ast.cond = inputs.cond[1]
         ast.expr = inputs.expr[1]
         ast.type = ast.expr.type
+
+        if ast.cond.type:isBool()==false then
+          darkroom.error("condition of filter must be a scalar boolean", origast:linenumber(), origast:offset(), origast:filename())
+        end
       elseif ast.kind=="iterationvar" then
         ast.type = darkroom.type.int(32)
         ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate

@@ -556,7 +556,6 @@ function ImageWrapperFunctions:set( loopid, value, V, notFiltered )
           end
         end
       end
-
     end
   else
     table.insert(res,quote terralib.attrstore([&vector(self.orionType:toTerraType(),V)]([self.data[loopid]]),value,{nontemporal=true}) end)
@@ -1034,23 +1033,37 @@ function darkroom.terracompiler.codegen(
         local exprbb = node.expr:calculateMinBB(inkernel)
         local condbb = node.cond:calculateMinBB(inkernel)
 
+        local cond = `[inputs.cond[1]][0]
+        for v=1,V-1 do cond = `[cond] or [inputs.cond[1]][v] end
+
+        local decl = {}
+        local res = {}
+        local notFiltered = {}
         for c = 1, node.type:channels() do
+          -- Shenanigans: cond is always a scalar boolean, but when we call :set
+          -- on the image, we use this array. And if we are filtering multichannel
+          -- stuff, the way that we dispatch functions expects this to 
+          -- be an array of the same size.
+          table.insert(notFiltered, inputs.cond[1])
+
           table.insert(finalOut, symbol(darkroom.type.toTerraType(node.type:baseType(),false,V),"filteredOut"))
-          local cond = `[inputs.cond[1]][0]
-          for v=1,V-1 do cond = `[cond] or [inputs.cond[1]][v] end
-          addstat(bb,quote
-                         var [finalOut[c]] = 0
-                         [stat[condbb]];
-                         if cond then
-                           [stat[exprbb]];
-                           [finalOut[c]] = [inputs.expr[c]];
-                         end end,{stat[condbb],stat[exprbb]})
-           finalOut[c] = `[finalOut[c]]
+          table.insert(decl,quote var [finalOut[c]] = 0 end)
+          table.insert(res,quote [finalOut[c]] = [inputs.expr[c]]; end)
+          finalOut[c] = `[finalOut[c]]
         end
+
+        addstat(bb,quote
+                  [decl]
+                  [stat[condbb]];
+                  if cond then
+                    [stat[exprbb]];
+                    [res]
+                  end end,{stat[condbb],stat[exprbb]})
         
         local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
         addstat(bb, quote var [packedSymbol] = array(finalOut) end)
-        return {finalOut, `[packedSymbol], inputs.cond}
+
+        return {finalOut, `[packedSymbol], notFiltered}
       end
 
       for c=1,node.type:channels() do
@@ -1775,9 +1788,9 @@ function darkroom.terracompiler.allocateImageWrappers(
             local W = imageSize(options.width,n.kernel.scaleN1,n.kernel.scaleD1)
             local H = imageSize(options.height,n.kernel.scaleN2,n.kernel.scaleD2)
             outputs[n][c] = newImageWrapper( 
-              channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType(),W,H,n.kernel.kind=="filter"), 
+              channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType(),W,H), 
               n.kernel.type:baseType(), upToNearest(options.V, W), options.debug, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, largestScaleY, n.kernel.kind=="filter",
-              channelPointer(c-1,outputImageMainThreadSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType(),W,H,n.kernel.kind=="filter")) 
+              channelPointer(c-1,outputImageMainThreadSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType(),W,H)) 
           end
           setmetatable(outputs[n],pointwiseDispatchMT)
         else
