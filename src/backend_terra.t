@@ -981,6 +981,8 @@ function darkroom.terracompiler.codegen(
           return {finalOut, `[packedSymbol]}
 
         elseif node.reduceop=="none" then
+          assert(node["varlow1"]==0)
+          assert(node["varhigh1"]>=0)
           local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
           addstat(bb, quote 
                          var [packedSymbol]

@@ -137,3 +137,15 @@ io.write(v)
 io.close()
 
 fpga.util.writeMetadata("out/"..s..".sim.metadata.lua", metadata)
+
+------------------
+local opt = fpga.util.deviceToOptions(arg[1])
+opt.stripWidth=128
+opt.stripHeight=64
+local v, metadata = fpga.compile({{sensor,"axi","300d.raw"}},{{campipeline,"axi"}}, 128, 64, opt)
+
+io.output("out/demosaic.axi.v")
+io.write(v)
+io.close()
+
+fpga.util.writeMetadata("out/demosaic.axi.metadata.lua", metadata)
