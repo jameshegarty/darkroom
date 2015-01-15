@@ -1,3 +1,4 @@
+local systolic = require("systolic")
 local modules = {}
 
 function modules.reduce(compilerState, op, cnt, datatype, argminVars)
@@ -454,6 +455,73 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
   table.insert(t,"endmodule\n\n")
 
   return name, t
+end
+
+function modules.linebuffer(maxDelayX, maxDelayY, datatype, stripWidth)
+  assert(type(maxDelayX)=="number")
+  assert(type(maxDelayY)=="number")
+  assert(darkroom.type.isType(datatype))
+
+  local O = {}
+  local Oflat = {}
+  local OR = {}
+  local BRAM = {}
+  local writeAddr = systolic.reg("writeAddr", uint16, 0)
+  local readAddr = systolic.reg("readAddr", uint16, 0)
+
+  local lb = systolic.module("Linebuffer_"..numToVarname(maxDelayX).."delayX_"..numToVarname(maxDelayY).."delayY_"..datatype:sizeof().."bpp_"..stripWidth.."w_"..lbCnt)
+  lbCnt = lbCnt + 1
+  lb:add(writeAddr)
+  lb:add(readAddr)
+
+  for y=-maxDelayY,0 do
+    O[y] = {}
+    OR[y] = {}
+    for x=-maxDelayX,0 do
+      O[y][x] = systolic.output("out_x"..numToVarname(x).."_y"..numToVarname(y), datatype)
+      table.insert(Oflat, O[y][x])
+      OR[y][x] = systolic.reg("lb_x"..numToVarname(x).."_y"..numToVarname(y), datatype)
+      lb:add(OR[y][x])
+    end
+    if y<-maxDelayY then
+      BRAM[y] = systolic.bram(datatype)
+      lb:add(BRAM[y])
+    end
+  end
+
+  do -- store
+    local I = systolic.input("in",datatype)
+    local storeFn = lb:addFunction("store",{I},{})
+    storeFn:addAssign(writeAddr,writeAddr+1)
+
+    for y=-maxDelayY,0 do
+      for x=-maxDelayX,0 do
+        if x==0 and y==0 then
+          storeFn:addAssign(OR[y][x],I)
+        elseif x==0 then
+          local evicted = storeFn:bramWriteAndReturnOriginal(BRAM[y+1])
+          storeFn:addAssign(OR[y][x],evicted)
+        else
+          storeFn:addAssign(OR[y][x],OR[y][x+1])
+        end
+      end
+    end
+  end
+
+  do -- load
+    local strideX = systolic.input("strideX",uint8)
+    local loadFn = lb:addFunction("load",{strideX},Oflat)
+    loadFn:addAssign(readAddr, readAddr+strideX)
+    loadFn:addAssert(writeAddr==readAddr)
+
+    for y=-maxDelayY,0 do
+      for x=-maxDelayX,0 do
+        loadFn:addAssign(O[y][x],OR[y][x])
+      end
+    end
+  end
+
+  return lb
 end
 
 local function fixedBram(conf)

@@ -100,8 +100,10 @@ function shift(graph, shifts, largestScaleY, HWWidth)
           function(n)
             local tx = n.translate1:eval(1,kernelGraphNode.kernel)
             local ty = n.translate2:eval(1,kernelGraphNode.kernel)
+            local dsStride1, usStride1 = calculateStride(n.expr.scaleN1, n.expr.scaleD1, n.scaleN1, n.scaleD1)
+            local dsStride2, usStride2 = calculateStride(n.expr.scaleN2, n.expr.scaleD2, n.scaleN2, n.scaleD2)
             if tx:area()==1 and ty:area()==1 and tx:min(1)==0 and ty:min(1)==0 
-              and (n.scaleN1==1 or n.scaleN1==0) and (n.scaleN2==1 or n.scaleN2==0) and (n.scaleD1==1 or n.scaleD1==0) and (n.scaleD2==1 or n.scaleD2==0) then
+              and dsStride1==1 and usStride1==1 and dsStride2==1 and usStride2==1 then
               -- noop
               -- it's actually important that we detect this case, b/c the loop invariant code motion algorithm
               -- will expect nodes that are translated by 0 to be identical, so if we go and make a copy here it's a problem

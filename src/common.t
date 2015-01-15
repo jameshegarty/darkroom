@@ -97,6 +97,31 @@ function appendSet(dest,src)
   end
 end
 
+function joinSet(dest,src)
+  local t = {}
+
+  for k,v in pairs(dest) do
+    t[k]=v
+  end
+
+  for k,v in pairs(src) do
+    if t[k]~=nil then
+      print("duplicate",k)
+      assert(false)
+    end
+    t[k]=v
+  end
+
+  return t
+end
+
+function joinTables(A,B)
+  local T = {}
+  for k,v in ipairs(A) do table.insert(T,v) end
+  for k,v in ipairs(B) do table.insert(T,v) end
+  return T
+end
+
 function keycount(t)
   assert(type(t)=="table")
   local tot = 0

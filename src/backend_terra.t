@@ -222,6 +222,9 @@ function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightS
   return setmetatable(tab,LineBufferWrapperMT)
 end
 
+function LineBufferWrapperFunctions:declareMainThread()
+  return quote end
+end
 
 function LineBufferWrapperFunctions:declare( loopid, xStripRelative, y, clock, core, stripId, options, scaleN1, scaleD1, scaleN2, scaleD2,linebufferBase )
   assert(type(loopid)=="number")
@@ -454,7 +457,7 @@ function isImageWrapper(b) return getmetatable(b)==ImageWrapperMT end
 
 -- tab.terraType should be the base type of the data stored in this image
 -- ie, if it's a floating point image, tab.terraType should be float
-function newImageWrapper( basePtr, orionType, stride, debug, scaleN1, scaleD1, scaleN2, scaleD2, largestScaleY, sparse )
+function newImageWrapper( basePtr, orionType, stride, debug, scaleN1, scaleD1, scaleN2, scaleD2, largestScaleY, sparse, mainThreadBasePtr )
   assert(darkroom.type.isType(orionType))
   assert(type(stride)=="number")
   assert(type(debug) == "boolean")
@@ -465,7 +468,7 @@ function newImageWrapper( basePtr, orionType, stride, debug, scaleN1, scaleD1, s
   assert(type(largestScaleY)=="number")
   assert(type(sparse)=="boolean")
 
-  local tab = {data={},basePtr=basePtr,orionType=orionType, stride=stride, debug=debug, scaleN1=scaleN1, scaleD1=scaleD1, scaleN2=scaleN2, scaleD2=scaleD2, largestScaleY=largestScaleY, downsampleStrideX={}, downsampleStrideY={}, upsampleStrideX={}, upsampleStrideY={}, readerPosX={}, readerPosY={}, sparse=sparse, posX={}, posY={}}
+  local tab = {data={},basePtr=basePtr,orionType=orionType, stride=stride, debug=debug, scaleN1=scaleN1, scaleD1=scaleD1, scaleN2=scaleN2, scaleD2=scaleD2, largestScaleY=largestScaleY, downsampleStrideX={}, downsampleStrideY={}, upsampleStrideX={}, upsampleStrideY={}, readerPosX={}, readerPosY={}, sparse=sparse, posX={}, posY={}, mainThreadBasePtr = mainThreadBasePtr}
 
   return setmetatable(tab,ImageWrapperMT)
 end
@@ -486,17 +489,42 @@ function ImageWrapperFunctions:declare( loopid, xStripRelative, y, clock, core, 
   local x = `[stripLeft( stripId, options, self.scaleN1, self.scaleD1)]+[scaledAbsolute(xStripRelative, self.upsampleStrideX[loopid], self.downsampleStrideX[loopid])]
   y = `floorDivide(y,[looprate(self.scaleN2,self.scaleD2,self.largestScaleY)])
 
-  if self.data[loopid]==nil then self.data[loopid] = symbol(&(self.orionType:toTerraType())) end
+  if self.data[loopid]==nil then self.data[loopid] = symbol(&(self.orionType:toTerraType()),"data") end
 
   local res = {}
   if self.sparse then 
     self.posX[loopid] = symbol(int, "sparsePosX")
     self.posY[loopid] = symbol(int, "sparsePosY")
-    return quote var [self.posX[loopid]] = x; var [self.posY[loopid]] = y; @[&uint](self.basePtr) = 0; var [self.data[loopid]] =  [&self.orionType:toTerraType()]([&int]([self.basePtr])+1) end
+    return quote var [self.posX[loopid]] = x; var [self.posY[loopid]] = y; var [self.data[loopid]] =  [&self.orionType:toTerraType()]([&int]([self.basePtr])+1) end
   else
     return quote var [self.data[loopid]] =  [&self.orionType:toTerraType()]([self.basePtr] + y*[self.stride] + x) end
   end
 end
+
+function ImageWrapperFunctions:declareMainThread()
+  if self.sparse then
+    -- we need to initialize the count once, before any of the threads run
+    return quote @[&uint](self.mainThreadBasePtr) = 0; end
+  end
+  return quote end
+end
+
+local atomicStack = terralib.includecstring [[
+#include <stdio.h>
+
+void add(unsigned int* basePtr, unsigned char* dataPtr, unsigned char* data, int dataLen){
+  // basePtr holds the count of items. This starts at 0. We atomically reserve
+  // a slot in the stack, and then write to it.
+  // TODO: a better way to do this would be to keep a local (1k?) stack per thread,
+  // and only do an atomic when this stack filled. This would cut down on the number
+  // of atomic accesses.
+
+  unsigned int reservedBasePtr = __sync_fetch_and_add(basePtr,1);
+  for(int i=0; i<dataLen; i++){
+    *(dataPtr+reservedBasePtr*dataLen+i) = data[i];
+  }
+}
+                                             ]]
 
 function ImageWrapperFunctions:set( loopid, value, V, notFiltered )
   assert(terralib.isquote(value))
@@ -516,15 +544,15 @@ function ImageWrapperFunctions:set( loopid, value, V, notFiltered )
 
   if self.sparse then
     if terralib.isquote(notFiltered) then
+      local datalen = terralib.sizeof(int)*2+self.orionType:sizeof()
       return quote 
         for v=0,V do
           if notFiltered[v] then
-            @[&uint]([self.basePtr]) = @[&uint]([self.basePtr]) + 1
-            @[&int]([self.data[loopid]]) = [self.posX[loopid]]+v;
-            @([&int]([self.data[loopid]])+1) = [self.posY[loopid]];
-            [self.data[loopid]] = [&self.orionType:toTerraType()]([&int]([self.data[loopid]])+2)
-            @([self.data[loopid]]) = value[v];
-            [self.data[loopid]] = [self.data[loopid]] + 1;
+            var dataPacket : uint8[datalen]
+            @[&int](&dataPacket) = [self.posX[loopid]]+v;
+            @([&int](&dataPacket)+1) = [self.posY[loopid]];
+            @([&self.orionType:toTerraType()]([&int](&dataPacket)+2)) = value[v]
+            atomicStack.add([&uint32](self.basePtr), [&uint8]([self.data[loopid]]), dataPacket, datalen)
           end
         end
       end
@@ -1007,23 +1035,37 @@ function darkroom.terracompiler.codegen(
         local exprbb = node.expr:calculateMinBB(inkernel)
         local condbb = node.cond:calculateMinBB(inkernel)
 
+        local cond = `[inputs.cond[1]][0]
+        for v=1,V-1 do cond = `[cond] or [inputs.cond[1]][v] end
+
+        local decl = {}
+        local res = {}
+        local notFiltered = {}
         for c = 1, node.type:channels() do
+          -- Shenanigans: cond is always a scalar boolean, but when we call :set
+          -- on the image, we use this array. And if we are filtering multichannel
+          -- stuff, the way that we dispatch functions expects this to 
+          -- be an array of the same size.
+          table.insert(notFiltered, inputs.cond[1])
+
           table.insert(finalOut, symbol(darkroom.type.toTerraType(node.type:baseType(),false,V),"filteredOut"))
-          local cond = `[inputs.cond[c]][0]
-          for v=1,V-1 do cond = `[cond] or [inputs.cond[c]][v] end
-          addstat(bb,quote
-                         var [finalOut[c]] = 0
-                         [stat[condbb]];
-                         if cond then
-                           [stat[exprbb]];
-                           [finalOut[c]] = [inputs.expr[c]];
-                         end end,{stat[condbb],stat[exprbb]})
-           finalOut[c] = `[finalOut[c]]
+          table.insert(decl,quote var [finalOut[c]] = 0 end)
+          table.insert(res,quote [finalOut[c]] = [inputs.expr[c]]; end)
+          finalOut[c] = `[finalOut[c]]
         end
+
+        addstat(bb,quote
+                  [decl]
+                  [stat[condbb]];
+                  if cond then
+                    [stat[exprbb]];
+                    [res]
+                  end end,{stat[condbb],stat[exprbb]})
         
         local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
         addstat(bb, quote var [packedSymbol] = array(finalOut) end)
-        return {finalOut, `[packedSymbol], inputs.cond}
+
+        return {finalOut, `[packedSymbol], notFiltered}
       end
 
       for c=1,node.type:channels() do
@@ -1589,38 +1631,28 @@ return
 end
 
 -- codegen all the code that runs per thread (and preamble)
-function darkroom.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, shifts, largestScaleY, options)
+function darkroom.terracompiler.codegenThread(
+    kernelGraph, 
+    input,
+    inputArgs,
+    inputWrappers, 
+    outputWrappers, 
+    declareInputImages,
+    declareOutputImages,
+    demarshalCount,
+    linebufferSize,
+    TapStruct, 
+    shifts, 
+    largestScaleY, 
+    options)
+
   assert(darkroom.kernelGraph.isKernelGraph(kernelGraph))
-  assert(type(inputs)=="table")
   assert(type(shifts)=="table")
   assert(type(largestScaleY)=="number")
   assert(type(options)=="table")
 
   local core = symbol(int, "core")
   local clock = symbol(int, "clock")
-  local input = symbol(&opaque)
-  local inputArgs = `[&&opaque](&([&int8](input)[4]))
-
-  -- generate code to deserialize the input image array from the input argument
-  local inputImageSymbolMap = {}
-  local declareInputImages = {}
-  local demarshalCount = 0
-  for k,v in pairs(inputs) do
-    inputImageSymbolMap[v.expr.from] = symbol(&(v.expr.type:toTerraType()),"inputImage")
-    table.insert(declareInputImages,quote var [inputImageSymbolMap[v.expr.from]] = [&(v.expr.type:toTerraType())](inputArgs[demarshalCount]) end)
-    demarshalCount = demarshalCount + 1
-  end
-
-  local outputImageSymbolMap = {}
-  local declareOutputImages = {}
-  kernelGraph:map("child",function(v,k)
-    outputImageSymbolMap["child"..k] = symbol(&(v.kernel.type:toTerraType()),"outputImage")
-    table.insert(declareOutputImages,quote var [outputImageSymbolMap["child"..k]] = [&(v.kernel.type:toTerraType())](inputArgs[demarshalCount]) end)
-    demarshalCount = demarshalCount + 1
-  end)
-
-  -- add the input lists and output to the kernelGraph
-  local inputs, outputs, linebufferSize = darkroom.terracompiler.allocateImageWrappers(kernelGraph, inputImageSymbolMap, outputImageSymbolMap, shifts, largestScaleY,options)
 
   local loopCode = {}
   assert(options.stripcount % options.cores == 0)
@@ -1635,8 +1667,8 @@ function darkroom.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, sh
     core,
     strip,
     kernelGraph,
-    inputs,
-    outputs,
+    inputWrappers,
+    outputWrappers,
     taps,
     TapStruct,
     clock, 
@@ -1696,6 +1728,7 @@ function darkroom.terracompiler.allocateImageWrappers(
     kernelGraph, 
     inputImageSymbolMap, 
     outputImageSymbolMap, 
+    outputImageMainThreadSymbolMap,
     shifts,
     largestScaleY,
     options)
@@ -1709,9 +1742,9 @@ function darkroom.terracompiler.allocateImageWrappers(
   local outputs = {} -- kernelGraphNode->output wrapper
   local linebufferSize = 0
 
-  local function channelPointer(c,ptr,ty)
+  local function channelPointer(c,ptr,ty,width,height)
     -- always round the width up so that aligned stores work
-    return `[&ty](ptr)+[upToNearest(options.V, options.width)*options.height]*c
+    return `[&ty](ptr)+[upToNearest(options.V, width)*height]*c
   end
 
   local inputWrappers = {}
@@ -1719,7 +1752,7 @@ function darkroom.terracompiler.allocateImageWrappers(
     if inputWrappers[id]==nil then
       inputWrappers[id] = {}
       -- we don't actually care about the alignment of inputs b/c we do unaligned loads
-      for c = 1,type:channels() do inputWrappers[id][c] = newImageWrapper( channelPointer(c-1,inputImageSymbolMap[id], type:baseType():toTerraType()), type:baseType(), options.width, options.debug ,1,1,1,1, largestScaleY, false) end
+      for c = 1,type:channels() do inputWrappers[id][c] = newImageWrapper( channelPointer(c-1,inputImageSymbolMap[id], type:baseType():toTerraType(), options.width, options.height), type:baseType(), options.width, options.debug ,1,1,1,1, largestScaleY, false) end
       setmetatable(inputWrappers[id],pointwiseDispatchMT)
     end
     return inputWrappers[id]
@@ -1753,7 +1786,14 @@ function darkroom.terracompiler.allocateImageWrappers(
         -- make the output
         if parentIsOutput(n)~=nil then
           outputs[n] = {}
-          for c=1,n.kernel.type:channels() do outputs[n][c] = newImageWrapper( channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType()), n.kernel.type:baseType(), upToNearest(options.V, imageSize(options.width,n.kernel.scaleN1,n.kernel.scaleD1)), options.debug, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, largestScaleY, n.kernel.kind=="filter") end
+          for c=1,n.kernel.type:channels() do 
+            local W = imageSize(options.width,n.kernel.scaleN1,n.kernel.scaleD1)
+            local H = imageSize(options.height,n.kernel.scaleN2,n.kernel.scaleD2)
+            outputs[n][c] = newImageWrapper( 
+              channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType(),W,H), 
+              n.kernel.type:baseType(), upToNearest(options.V, W), options.debug, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, largestScaleY, n.kernel.kind=="filter",
+              channelPointer(c-1,outputImageMainThreadSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType(),W,H)) 
+          end
           setmetatable(outputs[n],pointwiseDispatchMT)
         else
           outputs[n] = {}
@@ -1814,9 +1854,11 @@ function darkroom.terracompiler.compile(
   end
 
   local outputImageSymbolTable = {}
+  local outputImageMainThreadSymbolMap = {}
   local marshalOutputs = {}
   kernelGraph:map("child",function(v,k)
-    table.insert(outputImageSymbolTable, symbol(&opaque)) 
+    table.insert(outputImageSymbolTable, symbol(&opaque,"basePtr")) 
+    outputImageMainThreadSymbolMap["child"..k] = outputImageSymbolTable[#outputImageSymbolTable]
     table.insert(marshalOutputs, quote @stripStorePtr = [outputImageSymbolTable[#outputImageSymbolTable]]; stripStorePtr = stripStorePtr + 1 end)
     marshalBytes = marshalBytes + terralib.sizeof(&opaque)
   end)
@@ -1832,7 +1874,50 @@ function darkroom.terracompiler.compile(
   end
   marshalBytes = marshalBytes + terralib.sizeof(TapStruct)
 
-  local threadCode = darkroom.terracompiler.codegenThread( kernelGraph, inputImages, TapStruct, shifts, largestScaleY, options )
+  -- generate code to deserialize the input image array from the input argument
+  local input = symbol(&opaque)
+  local inputArgs = `[&&opaque](&([&int8](input)[4]))
+  local inputImageSymbolMap = {}
+  local declareInputImages = {}
+  local demarshalCount = 0
+  for k,v in pairs(inputImages) do
+    inputImageSymbolMap[v.expr.from] = symbol(&(v.expr.type:toTerraType()),"inputImage")
+    table.insert(declareInputImages,quote var [inputImageSymbolMap[v.expr.from]] = [&(v.expr.type:toTerraType())](inputArgs[demarshalCount]) end)
+    demarshalCount = demarshalCount + 1
+  end
+
+  local outputImageSymbolMap = {}
+  local declareOutputImages = {}
+  kernelGraph:map("child",function(v,k)
+    outputImageSymbolMap["child"..k] = symbol(&(v.kernel.type:toTerraType()),"outputImage")
+    table.insert(declareOutputImages,quote var [outputImageSymbolMap["child"..k]] = [&(v.kernel.type:toTerraType())](inputArgs[demarshalCount]) end)
+    demarshalCount = demarshalCount + 1
+  end)
+
+  -- add the input lists and output to the kernelGraph
+  local inputWrappers, outputWrappers, linebufferSize = darkroom.terracompiler.allocateImageWrappers(kernelGraph, inputImageSymbolMap, outputImageSymbolMap, outputImageMainThreadSymbolMap, shifts, largestScaleY,options)
+
+  local mainThreadDeclarations = {}
+  kernelGraph:S("*"):traverse(
+    function(n)
+      if outputWrappers[n]~=nil then
+        table.insert( mainThreadDeclarations, outputWrappers[n]:declareMainThread()) 
+      end
+    end)
+
+  local threadCode, outputs = darkroom.terracompiler.codegenThread( 
+    kernelGraph, 
+    input, inputArgs,
+    inputWrappers, outputWrappers, 
+    declareInputImages,
+    declareOutputImages,
+    demarshalCount,
+    linebufferSize,
+    TapStruct, 
+    shifts, 
+    largestScaleY, 
+    options )
+
 --  threadCode:printpretty(false)
 
   local fin = terra([inputImageSymbolTable], [outputImageSymbolTable], tapsIn : &opaque)
@@ -1844,7 +1929,8 @@ function darkroom.terracompiler.compile(
     
     for l=0, options.looptimes do
       -- launch the kernel for each strip
-      
+      [mainThreadDeclarations]
+
       if options.cores==1 then
         -- don't launch a thread to save thread launch overhead
         @([&int32](&stripStore)) = 0 -- core ID
