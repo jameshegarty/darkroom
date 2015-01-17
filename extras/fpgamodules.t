@@ -66,6 +66,10 @@ function modules.reduce(compilerState, op, cnt, datatype, argminVars)
         local a = "partial"..l.."_"..(i*2)
         local b = "partial"..l.."_"..(i*2+1)
         table.insert(clockedLogic, n.." <= ("..a..">="..b..")?("..a.."):("..b..");\n")
+      elseif op=="min" then
+        local a = "partial"..l.."_"..(i*2)
+        local b = "partial"..l.."_"..(i*2+1)
+        table.insert(clockedLogic, n.." <= ("..a.."<="..b..")?("..a.."):("..b..");\n")
       elseif op=="argmin" then
         local a = "partial"..l.."_"..(i*2)
         local b = "partial"..l.."_"..(i*2+1)
@@ -1660,7 +1664,7 @@ reg [15:0] cycleCnt = 0;
 reg processStarted = 0;
 wire pipelineValidOut;
 
-Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInputD),.out(pipelineOutput),.inValid(validInD),.outValid(pipelineValidOut));
+Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInputD),.out(pipelineOutput),.validInNextCycle(validIn),.validOut(pipelineValidOut));
 
 assign validOut = pipelineValidOut && (cycleCnt >= PIPE_DELAY+]=]..(outputShift)..[=[) && (cycleCnt < PIPE_DELAY+]=]..(outputShift+totalData)..[=[);
 

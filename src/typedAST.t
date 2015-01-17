@@ -811,7 +811,7 @@ function darkroom.typedAST._toTypedAST(inast)
         for _,v in pairs({"minX","maxX","minY","maxY"}) do
           local res = ast[v]:eval(1,darkroom.typedAST.new({}):copyMetadataFrom(origast))
           if res:area()~=1 then
-            darkroom.error("Argument "..v.." to gather must be a constant",ast:linenumber(),ast:offset(),ast:filename())
+            darkroom.error("Argument "..v.." to gather must be a constant",origast:linenumber(),origast:offset(),origast:filename())
           end
           ast[v] = res:min(1)
         end
@@ -829,15 +829,19 @@ function darkroom.typedAST._toTypedAST(inast)
         ast.x = inputs.x[1]
 
         for _,v in pairs({"rowWidth","columnStartX","columnEndX","columnStartY","columnEndY"}) do
+          if ast[v]==nil then 
+            darkroom.error("Argument "..v.." to gatherColumn missing",origast:linenumber(),origast:offset(),origast:filename())
+          end
+
           local res = ast[v]:eval(1,darkroom.typedAST.new({}):copyMetadataFrom(origast))
           if res:area()~=1 then
-            darkroom.error("Argument "..v.." to gatherColumn must be a constant",ast:linenumber(),ast:offset(),ast:filename())
+            darkroom.error("Argument "..v.." to gatherColumn must be a constant",origast:linenumber(),origast:offset(),origast:filename())
           end
           ast[v] = res:min(1)
         end
 
         if ast.columnStartY>ast.columnEndY then
-          darkroom.error("gatherColumn startY should not be larger than endY",ast:linenumber(),ast:offset(),ast:filename())
+          darkroom.error("gatherColumn startY should not be larger than endY",origast:linenumber(),origast:offset(),origast:filename())
         end
 
         if ast.type:isArray() then
@@ -910,6 +914,12 @@ function darkroom.typedAST._toTypedAST(inast)
 
         if ast.reduceop=="sum" or ast.reduceop=="max" or ast.reduceop=="min" then
           ast.type = inputs.expr[1].type
+        elseif ast.reduceop=="none" then
+          if ast.iterationSpaceLow~=0 or ast.iterationSpaceHigh<=0 then
+            darkroom.error("Pure iterate can only have range 0 to N", origast:linenumber(), origast:offset(), origast:filename())
+          end
+
+          ast.type = darkroom.type.array(inputs.expr[1].type,ast.iterationSpaceHigh-ast.iterationSpaceLow+1)
         else
           darkroom.error("Unknown reduce operator '"..ast.reduceop.."'")
         end

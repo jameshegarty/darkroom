@@ -73,11 +73,21 @@ o.uartClock=9600
 local v, metadata = fpga.compile({{leftI,"uart","left0224_sm.bmp"},{rightI,"uart","right0224_sm.bmp"}},{{vectors,"uart",darkroom.type.uint(8)}}, 300,20, o)
 
 local s = string.sub(arg[0],1,#arg[0]-2)
-io.output("out/"..s..".v")
+io.output("out/"..s..".uart.v")
 io.write(v)
 io.close()
 
-fpga.util.writeMetadata("out/"..s..".metadata.lua", metadata)
+fpga.util.writeMetadata("out/"..s..".uart.metadata.lua", metadata)
+
+------------------
+local v, metadata = fpga.compile({{leftI,"axi","left0224_sm.bmp"},{rightI,"axi","right0224_sm.bmp"}},{{vectors,"axi"}}, 300,20, o)
+
+local s = string.sub(arg[0],1,#arg[0]-2)
+io.output("out/"..s..".axi.v")
+io.write(v)
+io.close()
+
+fpga.util.writeMetadata("out/"..s..".axi.metadata.lua", metadata)
 
 ------------------
 local opt = fpga.util.deviceToOptions(arg[1])

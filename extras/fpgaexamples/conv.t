@@ -45,3 +45,25 @@ io.close()
 
 metadata.inputFile = "frame_128.bmp"
 fpga.util.writeMetadata("out/"..s..".metadata.lua", metadata)
+
+------------------
+local v, metadata = fpga.compile({{sensor,"axi","frame_128.bmp"}},{{res,"axi"}}, 128, 64, o)
+
+local s = string.sub(arg[0],1,#arg[0]-2)
+io.output("out/"..s..".axi.v")
+io.write(v)
+io.close()
+
+fpga.util.writeMetadata("out/"..s..".axi.metadata.lua", metadata)
+
+------------------
+local opt = fpga.util.deviceToOptions(arg[1])
+opt.stripWidth=128
+opt.stripHeight=64
+local v, metadata = fpga.compile({{sensor,"sim","frame_128.raw"}},{{res,"sim"}}, 128, 64, o)
+
+io.output("out/conv.sim.v")
+io.write(v)
+io.close()
+
+fpga.util.writeMetadata("out/conv.sim.metadata.lua", metadata)
