@@ -9,7 +9,7 @@ local function checkPrim(n)
   end
 end
 
-Depth = 18
+Depth = 25
 Width = 20
 MaxFanout = 20
 local function generateRandomRouting()
@@ -63,6 +63,11 @@ local function findInout(node, inout, R, d, w, input)
 end
 
 local function evalPlacement(node, root, R, d, w)
+  assert(darkroom.typedAST.isTypedAST(node.n))
+  assert(darkroom.typedAST.isTypedAST(root))
+  assert(d>=0 and d<Depth)
+  assert(w>=0 and w<Width)
+
   local benefit = 0
 
   if R[d][w].placed[node]~=nil then return -1000 end  
@@ -97,9 +102,10 @@ end
 
 local function placeNode(node, root, R)
   local d = depth(node.n, root)
-  
-  local count = math.ceil(node.n:parentCount(root)/MaxFanout)
-  for c=1,count do
+
+--  local count = math.ceil(node.n:parentCount(root)/MaxFanout)
+
+--  for c=1,count do
     local bestPlace = 0
     local bestPlacements = {}
 
@@ -119,7 +125,7 @@ local function placeNode(node, root, R)
     local w = bestPlacements[math.random(#bestPlacements)]
 
     R[d][w].placed[node] = 1
-  end
+--  end
 end
 
 local function placeGroups(groups, max, root, R)
@@ -135,22 +141,59 @@ local function placeGroups(groups, max, root, R)
   end
 end
 
+local function inputChan(thisnode, inputnode)
+  assert(type(thisnode.chan)=="number")
+  assert(darkroom.typedAST.isTypedAST(inputnode))
+
+  if thisnode.n.type:channels()==inputnode.type:channels() then
+    return chan(inputnode, thisnode.chan)
+  elseif thisnode.n.type:channels()>1 and inputnode.type:channels()==1 then
+    return chan(inputnode, 1)
+  elseif thisnode.n.kind=="index" then
+    assert(thisnode.n.index.kind=="value")
+    return chan(inputnode, thisnode.n.index.value+1)
+  else
+    print("input",inputnode.type:channels(), inputnode.kind)
+    print("this",thisnode.n.type:channels(),thisnode.n.kind)
+    print(thisnode.n:linenumber())
+    assert(false)
+  end
+end
+
+local function parentChan(thisnode, parentnode)
+  assert(type(thisnode.chan)=="number")
+  assert(darkroom.typedAST.isTypedAST(parentnode))
+
+  if thisnode.n.type:channels()==parentnode.type:channels() then
+    return chan(parentnode, thisnode.chan)
+  elseif parentnode.type:channels()>1 and thisnode.n.type:channels()==1 then
+    return chan(parentnode, 1)
+  elseif parentnode.kind=="index" then
+    return chan(parentnode,1)
+  else
+    print("parent",parentnode.type:channels(), parentnode.kind)
+    print("this",thisnode.n.type:channels(),thisnode.n.kind)
+    assert(false)
+  end
+end
+
 local function countInout(n,R,d,w,root)
   local cnt = 0
+  local pcnt = 0
   for k,nn in n.n:inputs() do
-    local b = findInout(n,chan(nn,n.chan),R,d,w,true)
+    local b = findInout(n,inputChan(n,nn,k),R,d,w,true)
     if b then cnt=cnt+1 end
 --    if b==false then allInout=false end
   end
   
   for nn,_ in n.n:parents(root) do
-    local b = findInout(n,chan(nn,n.chan),R,d,w,false)
-    if b then cnt=cnt+1 end
+    local b = findInout(n,parentChan(n,nn),R,d,w,false)
+    if b then cnt=cnt+1; pcnt = pcnt + 1 end
 --    if b then anyInout=true end
 --    if b==false then allInout=false end
   end
 
-  return cnt
+  return cnt, pcnt
 end
 
 local function verify(R, root)
@@ -169,13 +212,15 @@ local function verify(R, root)
       for n,_ in pairs(R[d][w].placed) do
         --local anyInout = false
         --local allInout = true
-        local ioc = countInout(n,R,d,w,root)
+        local ioc, pcnt = countInout(n,R,d,w,root)
         local cnt = n.n:inputCount()+n.n:parentCount(root)
 
         if ioc==cnt then correctInout = correctInout + 1 end
-        if ioc>0 and ioc<cnt then partialInout = partialInout + 1 end
+        if ioc>0 and ioc<cnt then partialInout = partialInout + 1 
+          print("PARTIAL","kind",n.n.kind,ioc,"inpcnt",ioc-pcnt,"parentcnt",pcnt,"expectedinp",n.n:inputCount(),"expectedp",n.n:parentCount(root))
+        end
         if ioc==0 then missingInout = missingInout + 1 
-        print("MISSING",n.n:inputCount(),n.n:parentCount(root),n.n.kind) end
+        print("MISSING","inputcnt",n.n:inputCount(),"outputcnt",n.n:parentCount(root),n.n.kind) end
 
         pcount = pcount + 1
       end
@@ -196,10 +241,20 @@ local function verify(R, root)
   print("correctInout:", correctInout)
 end
 
-local function printR(R)
+local function printR(R,root)
   for d=0,Depth do
     for w=0,Width-1 do
       local c = keycount(R[d][w].placed)
+
+      if false then
+        c = 0
+        for n,_ in pairs(R[d][w].placed) do
+          local ioc = countInout(n,R,d,w,root)
+          local cnt = n.n:inputCount()+n.n:parentCount(root)
+          if ioc==0 then c=c+1 end
+        end
+      end
+
       if c==0 then 
         io.write(".")
       else
@@ -242,6 +297,8 @@ local function retime(kernel)
       for k,v in n:inputs() do
         local d = depth(v,kernel)-depth(n,kernel)-1
         res[k] = getrt(inputs[k],d)
+        assert(res[k].type==inputs[k].type)
+        assert(res[k].type==v.type)
       end
       return darkroom.typedAST.new(res):copyMetadataFrom(n)
     end)
@@ -264,7 +321,7 @@ local function place(kernel, R)
       local constraintGroups = {}
 
       if node.kernel~=nil then
-        print("\n\nPlace",node:name())
+        print("\n\nPlace",node:name(),"cnt",node.kernel)
         local kernel = retime(node.kernel)
         kernel:visitEach(
           function(n)
@@ -281,7 +338,7 @@ local function place(kernel, R)
 
         placeGroups(constraintGroups, maxConstraints, kernel, R)
         verify(R, kernel)
-        printR(R)
+        printR(R, kernel)
       end
     end)
 end
@@ -433,7 +490,7 @@ function darkroom.compile(inputImageFunctions, outputImageFunctions, tapInputs, 
     hist(node,"adddepth")
     local R = generateRandomRouting()
     place(node,R)
-    linearplace(node)
+--    linearplace(node)
   end
   local res =  origCompile(inputImageFunctions, outputImageFunctions, tapInputs, inputWidth, inputHeight, options)
 
