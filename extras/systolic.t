@@ -7,7 +7,7 @@ local binopToVerilog={["+"]="+",["*"]="*",["<<"]="<<<",[">>"]=">>>",["pow"]="**"
 
 function systolic.module(name)
   assert(type(name)=="string")
-  local t = {name=name,regs={},callsites={},functions={}}
+  local t = {name=name,regs={},functions={}}
   return setmetatable(t,systolicModuleMT)
 end
 
@@ -23,25 +23,25 @@ function systolicModuleFunctions:getInstance(instname,callsites)
   local t = {}
   table.insert(t,self.name.." "..instname.."(.CLK(CLK)")
 
-  for k,v in pairs(callsites) do
-    local fn = self.functions[v[1]]
+  for fnname,v in pairs(callsites) do
+    assert(type(v)=="table")
+    local fn = self.functions[fnname]
     assert(fn~=nil)
 
-    assert(type(v[2]["valid"])=="string")
-    table.insert(t,", .C"..k.."_"..v[1].."_valid("..v[2]["valid"]..")")
+    for id,vv in pairs(v) do
+      assert(type(vv[1].valid)=="string")
+      table.insert(t,", .C"..id.."_"..fnname.."_valid("..vv[1].valid..")")
 
-    for _,inout in pairs(joinTables(fn.inputs,fn.outputs)) do
-      assert(inout.kind=="input" or inout.kind=="output")
-      local actual = v[2][inout.varname]
-      if actual==nil then actual = v[3][inout.varname] else assert(v[3][inout.varname]==nil) end
-      if type(actual)~="string" and type(actual)~="number" then
-        print("Error, missing input/output ",inout.varname," on function ",v[1])
-        for k,v in pairs(v[2]) do
-          print("INP",k,v)
+      for _,inout in pairs(joinTables(fn.inputs,fn.outputs)) do
+        assert(inout.kind=="input" or inout.kind=="output")
+        local actual = vv[1][inout.varname]
+        if actual==nil then actual = vv[2][inout.varname] else assert(vv[2][inout.varname]==nil) end
+        if type(actual)~="string" and type(actual)~="number" then
+          print("Error, missing input/output ",inout.varname," on function ",fnname)
         end
+        
+        table.insert(t,", .C"..id.."_"..inout.varname.."("..actual..")")
       end
-
-      table.insert(t,", .C"..k.."_"..inout.varname.."("..actual..")")
     end
   end
 
@@ -55,27 +55,34 @@ function systolicModuleFunctions:getDefinition(callsites)
 
   table.insert(t,"module "..self.name.."(input CLK")
   
-  local fnCallsites = {}
-  for k,v in pairs(callsites) do
-    fnCallsites[v[1]] = v
+  for fnname,v in pairs(callsites) do
 
-    local fn = self.functions[v[1]]
-    assert(fn~=nil)
-
-    table.insert(t,", input C"..k.."_"..v[1].."_valid")
-
-    for _,input in pairs(fn.inputs) do
-      table.insert(t,", input ["..(input.type:sizeof()*8-1)..":0] C"..k.."_"..input.varname)
-    end
-
-    for _,output in pairs(fn.outputs) do
-      table.insert(t,", output ["..(output.type:sizeof()*8-1)..":0] C"..k.."_"..output.varname)
+    for id,vv in pairs(v) do
+      local fn = self.functions[fnname]
+      assert(fn~=nil)
+      
+      table.insert(t,", input C"..id.."_"..fnname.."_valid")
+      
+      for _,input in pairs(fn.inputs) do
+        table.insert(t,", input ["..(input.type:sizeof()*8-1)..":0] C"..id.."_"..input.varname)
+      end
+      
+      for _,output in pairs(fn.outputs) do
+        table.insert(t,", output ["..(output.type:sizeof()*8-1)..":0] C"..id.."_"..output.varname)
+      end
     end
   end
-  table.insert(t,")\n")
+  table.insert(t,");\n")
+
+  table.insert(t," // state\n")
+  
+  for k,v in pairs(self.regs) do
+    assert(v.kind=="reg")
+    table.insert(t, declareReg(v.type, v.varname, v.initial))
+  end
 
   for k,v in pairs(self.functions) do
-    t=concat(t,v:getDefinition(callsites))
+    t=concat(t,v:getDefinition(callsites[v.name]))
   end
 
   table.insert(t,"endmodule\n\n")
@@ -103,7 +110,11 @@ end
 function systolicFunctionFunctions:getDelay()
   local maxd = 0
   for _,v in pairs(self.assignments) do
-    if v.retime[v.expr]>maxd then maxd = v.retime[v.expr] end
+    print("GETDELAY",v.dst.varname,v.retiming[v.expr])
+    if v.dst.kind=="output" and v.retiming[v.expr]>maxd then 
+
+      maxd = v.retiming[v.expr] 
+    end
   end
   return maxd
 end
@@ -131,7 +142,9 @@ function systolicFunctionFunctions:addAssign(dst,expr)
   table.insert(self.assignments,{dst=dst,expr=expr,retiming=retime(expr)})
 end
 
-local function codegen(ast)
+local function codegen(ast, callsiteId)
+  assert(type(callsiteId)=="number")
+
   local resDeclarations = {}
   local resClockedLogic = {}
 
@@ -150,6 +163,8 @@ local function codegen(ast)
         table.insert(resClockedLogic, n:name().." <= "..lhs..op..rhs..";\n")
 
         res = n:name()
+      elseif n.kind=="input" then
+        res = "C"..callsiteId.."_"..n.varname
       elseif n.kind=="input" or n.kind=="reg" then
         res = n.varname
       elseif n.kind=="value" then 
@@ -172,19 +187,41 @@ end
 
 function systolicFunctionFunctions:getDefinition(callsites)
   local t = {}
-  table.insert(t,"  // function: "..self.name.."\n")
 
-  local clocked = {}
-  for k,v in pairs(self.assignments) do
-    local decl, clk, res = codegen(v.expr)
-    t = concat(t,decl)
-    clocked = concat(clocked,clk)
-    table.insert(t, "assign "..v.dst.varname.." = "..res..";\n")
+  for id,v in pairs(callsites) do
+    local callsite = "C"..id.."_"
+    table.insert(t,"  // function: "..self.name.." callsite "..id.." delay "..self:getDelay().."\n")
+      
+    local clocked = {}
+    for k,v in pairs(self.assignments) do
+      local decl, clk, res = codegen(v.expr, id)
+      t = concat(t,decl)
+      clocked = concat(clocked,clk)
+      if v.dst.kind=="reg" then table.insert(t, declareWire(v.dst.type,callsite..v.dst.varname)) end
+      table.insert(t, "assign "..callsite..v.dst.varname.." = "..res..";\n")
+    end
+    
+    table.insert(t,"always @ (posedge CLK) begin\n")
+    t = concat(t, clocked)
+    table.insert(t,"end\n")
   end
 
-  table.insert(t,"always @ (posedge CLK) begin\n")
-  t = concat(t, clocked)
-  table.insert(t,"end\n")
+  table.insert(t," // merge: "..self.name.."\n")
+  for id,v in pairs(callsites) do
+    for k,v in pairs(self.assignments) do
+      if id==1 then
+        if v.dst.kind=="reg" then
+          table.insert(t, "always @ (posedge CLK) begin "..v.dst.varname.." <= C"..id.."_"..v.dst.varname.."; end\n")
+        elseif v.dst.kind=="output" then
+--          table.insert(t, "assign "..v.dst.varname.." = C"..id.."_"..v.dst.varname..";\n")
+        else
+          print("VDK",v.dst.kind)
+          assert(false)
+          --        table.insert(t, "assign "..v.dst.varname.." = C"..id.."_"..v.dst.varname..";\n")
+        end
+      end
+    end
+  end
 
   return t
 end

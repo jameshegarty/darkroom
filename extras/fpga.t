@@ -338,7 +338,7 @@ function fpga.codegenKernel(compilerState, kernelGraphNode, retiming, imageWidth
         inputs = inputs.."output gatherReadInNextCycleX_"..pointerToVarname(inputLinebuffer.key)..","
         inputs = inputs.."output gatherReadInNextCycleY_"..pointerToVarname(inputLinebuffer.key)..","
         inputs = inputs.."output gatherValidInNextCycle_"..pointerToVarname(inputLinebuffer.key)..","
-v
+
         for y=-inputLinebuffer.linebufferSizeY,0 do
           inputs = inputs.."input ["..(bytesPerPixel*8-1)..":0] in_gatherColumn_"..pointerToVarname(inputLinebuffer.key).."_x0_y"..numToVarname(y)..","
         end
@@ -1330,16 +1330,16 @@ function fpga.collectLinebuffers(kernelGraph, options, pipelineRetiming, largest
             end
           end
 
-          res.callsites = {}
+          res.callsites = {load={}}
           for v,_ in node:parents(kernelGraph) do
             if v.kernel~=nil and outputUsedAsRegular[v][node] then
               local loads = {}
               for x=-res.linebufferSizeX,0 do
                 for y=-res.linebufferSizeY,0 do
-                  loads["out_x"..numToVarname(x).."_y"..numToVarname(y)]="out_x"..numToVarname(x).."_y"..numToVarname(y)
+                  loads["out_x"..numToVarname(x).."_y"..numToVarname(y)]=node:name().."_to_"..v:name().."_x"..numToVarname(x).."_y"..numToVarname(y)
                 end
               end
-              table.insert(res.callsites,{"load",{["strideX"]=looprate(v.kernel.scaleN1, v.kernel.scaleD1, 1),["valid"]="readValid_"..v:name()},loads})
+              table.insert(res.callsites.load,{{["strideX"]=looprate(v.kernel.scaleN1, v.kernel.scaleD1, 1),["valid"]="readValid_"..v:name()},loads})
             end
           end
         end
@@ -1360,7 +1360,7 @@ function fpga.allocateLinebuffers(node, kernelGraph, outputLinebuffers, largestE
   for k,v in pairs(outputLinebuffers) do
     if v.kind=="regular" then
       local lbmodule = fpga.modules.linebuffer(v.linebufferSizeX, v.linebufferSizeY, node.kernel.type, v.effStripWidth, v.consumers, v.scale > 1 or largestEffectiveCycles>1, v.wasUpsampledY)
-      table.insert(v.callsites,{"store",{["in"]="kernelOut_"..node:name(),["valid"]="writeValid_"..node:name()},{}})
+      v.callsites.store={{{["in"]="kernelOut_"..node:name(),["valid"]="writeValid_"..node:name()},{}}}
       result = concat(result, lbmodule:getDefinition(v.callsites))
       pipeline = concat(pipeline,v.declarations)
       --table.insert(pipeline,lbname.." kernelBuffer_"..node:name().."(.CLK(CLK),"..v.lboutputs..".in(kernelOut_"..node:name().."),.readInNextCycleX(kernelRWValidOutNextCycleX_"..node:name().."),.readInNextCycleY(kernelRWValidOutNextCycleY_"..node:name().."),.writeInNextCycleX(kernelRWValidOutNextCycleX_"..node:name().."),.writeInNextCycleY(kernelRWValidOutNextCycleY_"..node:name().."),.readValidInNextCycle(kernelValidOutNextCycle_"..node:name().."),.writeValidInNextCycle(kernelValidOutNextCycle_"..node:name().."));\n")
