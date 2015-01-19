@@ -10,11 +10,12 @@ local function checkPrim(n)
 end
 
 Depth = 25
-Width = 40
-MaxFanout = 5
+Width = 30
+MaxFanout = 6
 AcceptBad = 0.5
 T = 0.5
 RandomLayout = true
+Effort = 20
 
 local function generateRandomRouting()
   local R = {}
@@ -157,7 +158,7 @@ local function bestPlaceInRow(node,R)
   return w
 end
 
-local function placeNode(node, root, R)
+local function placeNode(node, R)
   local w = bestPlaceInRow(node,R)
   R[node.depth][w].placed[node] = 1
 end
@@ -167,7 +168,7 @@ local function placeGroups(groups, max, root, R)
   while g>=0 do
     if groups[g]~=nil then
       for _,v in pairs(groups[g]) do
-        placeNode(v,root,R)
+        placeNode(v,R)
       end
     end
     g = g-1
@@ -210,26 +211,36 @@ local function parentChan(thisnode, parentnode)
   end
 end
 
-local function countInout(n,R,d,w)
+local function countInout(n,R,d,w, placedSet)
   assert(darkroom.typedAST.isTypedAST(n.orig))
+  assert(type(d)=="number")
+  assert(type(w)=="number")
+  assert(placedSet==nil or type(placedSet)=="table")
 
   local cnt = 0
   local pcnt = 0
+  local totalValid = 0
 
   for _,nn in pairs(n.inputs) do
-    local b = findInout(n,nn,R,d,w,true)
-    if b then cnt=cnt+1 end
+    if placedSet==nil or placedSet[nn] then
+      local b = findInout(n,nn,R,d,w,true)
+      if b then cnt=cnt+1 end
+      totalValid = totalValid + 1
+    end
   end
   
   for _,nn in pairs(n.outputs) do
-    local b = findInout(n,nn,R,d,w,false)
-    if b then cnt=cnt+1; pcnt = pcnt + 1 end
+    if placedSet==nil or placedSet[nn] then
+      local b = findInout(n,nn,R,d,w,false)
+      if b then cnt=cnt+1; pcnt = pcnt + 1 end
+      totalValid = totalValid + 1
+    end
   end
 
-  return cnt, pcnt
+  return cnt, pcnt, totalValid
 end
 
-local function verify(R, root)
+local function verify(R)
   local placedCells = 0
   local doublePlaced = 0
   local empty = 0
@@ -243,12 +254,13 @@ local function verify(R, root)
       local pcount = 0
 
       for n,_ in pairs(R[d][w].placed) do
-        local ioc, pcnt = countInout(n,R,d,w,root)
+        local ioc, pcnt = countInout(n,R,d,w)
         local cnt = #n.inputs+#n.outputs
 
         if ioc==cnt then correctInout = correctInout + 1 end
         if ioc>0 and ioc<cnt then partialInout = partialInout + 1 
           print("PARTIAL","kind",n.orig.kind,ioc,"inpcnt",ioc-pcnt,"parentcnt",pcnt,"expectedinp",#n.inputs,"expectedp",#n.outputs)
+          print("line",n.orig:linenumber())
         end
         if ioc==0 then missingInout = missingInout + 1 
         print("MISSING","inputcnt",#n.inputs,"outputcnt",#n.outputs,n.orig.kind) end
@@ -272,24 +284,24 @@ local function verify(R, root)
   print("correctInout:", correctInout)
 end
 
-local function printR(R,root)
+local function printR(R)
   for d=0,Depth do
     for w=0,Width-1 do
       local c = keycount(R[d][w].placed)
 
-      if false then
-        c = 0
-        for n,_ in pairs(R[d][w].placed) do
-          local ioc = countInout(n,R,d,w,root)
-          local cnt = n.n:inputCount()+n.n:parentCount(root)
-          if ioc==0 then c=c+1 end
-        end
-      end
-
       if c==0 then 
         io.write(".")
       else
-        io.write(c)
+        if true then
+          local c = 0
+          for n,_ in pairs(R[d][w].placed) do
+            local cc,_,tv = countInout(n,R,d,w)
+            c = c+ (tv-cc)
+          end
+          io.write(math.min(9,c))
+        else
+          io.write(c)
+        end
       end
     end
     io.write("\n")
@@ -366,8 +378,9 @@ local function retime(kernel)
   return res
 end
 
-local function rowcost(R, kernel, d)
+local function rowcost(R, d, placedSet)
   assert(d >=0 and d <= Depth)
+  assert(placedSet==nil or type(placedSet)=="table")
 
   local totalCost = 0
   local cost = {}
@@ -375,8 +388,9 @@ local function rowcost(R, kernel, d)
   for w=0,Width-1 do
 
     for n,_ in pairs(R[d][w].placed) do
-      local cnt = #n.inputs+#n.outputs
-      local ioc, pcnt = countInout(n,R,d,w,kernel)
+      assert(n.depth==d)
+--      local cnt = #n.inputs+#n.outputs
+      local ioc, pcnt, totalCnt = countInout(n,R,d,w, placedSet)
 
       if cost[w]~=nil then 
         cost[w] = cost[w]+100
@@ -384,7 +398,7 @@ local function rowcost(R, kernel, d)
         cost[w] = 0
       end
 
-      cost[w] = cost[w] + (cnt-ioc)
+      cost[w] = cost[w] + (totalCnt-ioc)
       totalCost = totalCost + cost[w]
       if cost[w]>0 then table.insert(nonzero,w) end
     end
@@ -392,13 +406,15 @@ local function rowcost(R, kernel, d)
   return totalCost, cost, nonzero
 end
 
-local function allcost(R, kernel)
+local function allcost(R, placedSet)
+  assert(placedSet==nil or type(placedSet)=="table")
+
   local totalCost = 0
   local cost = {}
   local nonzero = {}
   for d=0,Depth do
     local tc, _
-    tc, _, nonzero[d] = rowcost(R,kernel,d)
+    tc, _, nonzero[d] = rowcost(R,d, placedSet)
     totalCost = totalCost + tc
     cost[d] = tc
   end
@@ -463,8 +479,9 @@ local function chooseRandom(R,nonzeroCache)
   return d, w1, p1, w2, p2
 end
 
-local function evalCostDelta(R,kernel,costCache, d)
+local function evalCostDelta(R,costCache, d, placedSet)
   assert(type(d)=="number")
+
   local da = math.max(d-1,0)
   local db = math.min(Depth,d+1)
 
@@ -475,7 +492,7 @@ local function evalCostDelta(R,kernel,costCache, d)
   local newCostCache = {}
   local newNonzeroCache = {}
   for d=da,db do 
-    local tc, cc, nz = rowcost(R,kernel,d)
+    local tc, cc, nz = rowcost(R,d, placedSet)
     newCost = newCost + tc
     newCostCache[d] = tc
     newNonzeroCache[d] = nz
@@ -484,15 +501,18 @@ local function evalCostDelta(R,kernel,costCache, d)
   return newCost,oldCost, newCostCache, newNonzeroCache
 end
 
-local function anneal(R, kernel)
-  local totalCost, costCache, nonzeroCache = allcost(R,kernel)
+AnnealVerbose = false
+local function anneal(R, placedSet, maxRounds)
+  assert(placedSet==nil or type(placedSet)=="table")
+
+  local totalCost, costCache, nonzeroCache = allcost(R, placedSet)
   local bestCost = 1000000000
   print("Total Cost", totalCost)
   
   local i=0
   local round = 0
-  while totalCost>0 do
-    local d,w1,p1,w2,p2 = chooseRandom(R,nonzeroCache,kernel)
+  while totalCost>0 and (maxRounds==nil or round<maxRounds) do
+    local d,w1,p1,w2,p2 = chooseRandom(R,nonzeroCache)
 
     local w1orig = {}
     for k,v in pairs(R[d][w1].placed) do w1orig[k] = v end
@@ -500,7 +520,7 @@ local function anneal(R, kernel)
     for k,v in pairs(R[d][w2].placed) do w2orig[k] = v end
 
     swap(R,d,w1,p1,w2,p2)
-    local newCost,oldCost, cc, nz = evalCostDelta(R,kernel,costCache,d)
+    local newCost,oldCost, cc, nz = evalCostDelta(R,costCache,d, placedSet)
 
 --    if costDelta<0 or math.random()<AcceptBad then
     if newCost<oldCost or math.random()<math.exp(-(newCost-oldCost)/T) then
@@ -510,21 +530,21 @@ local function anneal(R, kernel)
         costCache[k] = cc[k]
         nonzeroCache[k] = nz[k]
       end
-      io.write("A")
+      if AnnealVerbose then io.write("A") end
     else
       R[d][w1].placed={}
       for k,v in pairs(w1orig) do R[d][w1].placed[k] = v end
       R[d][w2].placed={}
       for k,v in pairs(w2orig) do R[d][w2].placed[k] = v end
 
-      io.write("R")
+      if AnnealVerbose then io.write("R") end
     end
 
     i = i + 1
     if i==100 then
-      print("\ncost",totalCost,"round",round,"best",bestCost)
+      if AnnealVerbose then print("\ncost",totalCost,"round",round,"best",bestCost) end
 
-      local realcost = allcost(R,kernel)
+      local realcost = allcost(R, placedSet)
       assert(realcost == totalCost)
       i=0
       round = round + 1
@@ -532,11 +552,14 @@ local function anneal(R, kernel)
 
     if totalCost<bestCost then bestCost = totalCost end
   end
+
+  return totalCost, bestCost
 end
 
 local function flatten(kernel)
   local roots = {}
 
+  local totalCount = 0
   local toflat = {}
   kernel:visitEach(
     function(n)
@@ -545,16 +568,28 @@ local function flatten(kernel)
       for c=1, n.type:channels() do
         toflat[n] = toflat[n] or {}
         toflat[n][c] = {inputs={}, outputs={}, chan=c, orig=n, depth = depth(n,kernel)}
-        for k,v in n:inputs() do
-          local _,inp,chan = inputChan(chan(n,c),v)
-          assert(toflat[inp][chan]~=nil)
-          table.insert(toflat[n][c].inputs,toflat[inp][chan])
+        totalCount = totalCount + 1
+        if n.kind=="array" and false then
+          -- special case arrays
+          assert(n["expr"..c].type:channels()==1)
+          local inp = n["expr"..c]
+          assert(toflat[inp]~=nil)
+          assert(toflat[inp][1]~=nil)
+          table.insert(toflat[n][c].inputs,toflat[inp][1])
+          table.insert(toflat[inp][1].outputs, toflat[n][c])
+        else
+          for k,v in n:inputs() do
+            local _,inp,chan = inputChan(chan(n,c),v)
+            assert(toflat[inp][chan]~=nil)
+            table.insert(toflat[n][c].inputs,toflat[inp][chan])
+            table.insert(toflat[inp][chan].outputs, toflat[n][c])
+          end
         end
 
-        for v,_ in n:parents(kernel) do
-          local _,pnt,chan = parentChan(chan(n,c),v)
-          table.insert(toflat[n][c].outputs,{pnt,chan})
-        end
+--        for v,_ in n:parents(kernel) do
+--          local _,pnt,chan = parentChan(chan(n,c),v)
+--          table.insert(toflat[n][c].outputs,{pnt,chan})
+--        end
 
         if n:parentCount(kernel)==0 then
           table.insert(roots,toflat[n][c])
@@ -562,16 +597,36 @@ local function flatten(kernel)
        end      
     end)
 
+--  for k,v in pairs(toflat) do
+--    for kk,vv in pairs(v) do
+--      for kkk,vvv in pairs(toflat[k][kk].outputs) do
+--        assert(toflat[vvv[1]][vvv[2]]~=nil)
+--        toflat[k][kk].outputs[kkk] = toflat[vvv[1]][vvv[2]]
+--      end
+--    end
+--  end
+
   for k,v in pairs(toflat) do
-    for kk,vv in pairs(v) do
-      for kkk,vvv in pairs(toflat[k][kk].outputs) do
-        assert(toflat[vvv[1]][vvv[2]]~=nil)
-        toflat[k][kk].outputs[kkk] = toflat[vvv[1]][vvv[2]]
+    for kk,node in pairs(v) do
+      for k,v in pairs(node.inputs) do
+        local idx
+        for kk,vv in pairs(v.outputs) do
+          if vv==node then idx=kk end
+        end
+        assert(idx~=nil)
+      end
+
+      for k,v in pairs(node.outputs) do
+        local idx
+        for kk,vv in pairs(v.inputs) do
+          if vv==node then idx=kk end
+        end
+        assert(idx~=nil)
       end
     end
   end
 
-  return roots
+  return roots, totalCount
 end
 
 local function visitEach(Q,f)
@@ -614,12 +669,53 @@ local function place(kernel, R)
         print("maxConstraints",maxConstraints)
 
         placeGroups(constraintGroups, maxConstraints, kernel, R)
-        verify(R, kernel)
+        verify(R)
         printR(R, kernel)
-        anneal(R,kernel)
+        anneal(R)
         verify(R, kernel)
       end
     end)
+end
+
+local function treeify(node)
+  print("TREEIFY")
+  assert(#node.outputs>1)
+
+  local a = {inputs={}, outputs={}, chan=node.chan, depth=node.depth, orig=node.orig}
+  local b = {inputs={}, outputs={}, chan=node.chan, depth=node.depth, orig=node.orig}
+
+  for k,v in pairs(node.inputs) do
+    a.inputs[k] = v
+    b.inputs[k] = v
+
+    local idx
+    for kk,vv in pairs(v.outputs) do
+      if vv==node then idx=kk end
+    end
+    assert(idx~=nil)
+    table.remove(v.outputs,idx)
+    table.insert(v.outputs, a)
+    table.insert(v.outputs, b)
+  end
+
+  for k,v in pairs(node.outputs) do
+    local idx
+    for kk,vv in pairs(v.inputs) do
+      if vv==node then idx=kk end
+    end
+    assert(idx~=nil)
+    table.remove(v.inputs,idx)
+
+    if k>(#node.outputs/2) then
+      table.insert(b.outputs, v)
+      table.insert(v.inputs,b)
+    else
+      table.insert(a.outputs, v)
+      table.insert(v.inputs,a)
+    end
+  end
+
+  return {a,b}
 end
 
 local function placeSequential(kernel, R)
@@ -630,99 +726,40 @@ local function placeSequential(kernel, R)
       if node.kernel~=nil then
         print("\n\nPlace Sequential",node:name(),"cnt",node.kernel)
         local kernel = retime(node.kernel)
+        local Q, totalCnt = flatten(kernel)
+        local placedCnt = 1
+        local seen = {}
+        local placed = {}
 
-        kernel:S("*"):processReverse(
-          function(n)
-            
-          end)
-      end
-    end)
-end
+        while #Q>0 do
 
-local function findFirstFree(d,target,octopied)
-  octopied[d] = octopied[d] or {}
-  while octopied[d][target]~=nil do target=target+1 end
-  return target
-end
+--          if (cost>0 and #Q[1].outputs>4) or (math.random()<0.0 and #Q[1].outputs>1) then
+          if #Q[1].outputs>4 then
+            local newnodes = treeify(Q[1])
+            table.remove(Q,1)
+            totalCnt = totalCnt + #newnodes -1
+            for k,v in pairs(newnodes) do
+              table.insert(Q,1,v)
+            end
+          else
+            print("Place "..placedCnt.."/"..totalCnt)
+            placeNode(Q[1],R)
+            placed[Q[1]] = 1
+            placedCnt = placedCnt + 1
+            local cost, best = anneal(R,placed, Effort)
+            print("BEst",best)
+            printR(R)
 
-local function simpleLinearPlace(node, root, cache, octopied)
-  assert(darkroom.typedAST.isTypedAST(node))
+            for _,v in pairs(Q[1].inputs) do if seen[v]==nil then Q[#Q+1] = v; seen[v]=1 end end
+            table.remove(Q,1)
+          end
+        end
 
-  if cache[node]==nil then
-    local d = depth(node,root)
-    
-    local target = findFirstFree(d,0,octopied)
-    for n,_ in node:parents(root) do
-      local t = simpleLinearPlace(n,root,cache,octopied)
-      if t>target then target = findFirstFree(d,t,octopied) end
-    end
-
-    cache[node] = target
-    assert(octopied[d][target]==nil)
-    octopied[d][target] = node
-  end
-
-  return cache[node]
-end
-
-local function verifyLinear(kernel,cache)
-  local dists = {}
-  kernel:visitEach(
-    function(n)
-      local l = cache[n]
-      local maxl = 0
-      for k,v in n:inputs() do
-        local ll = cache[v]
-        assert(ll>=l)
-        if ll>maxl then maxl = ll end
-      end
-      dists[maxl] = dists[maxl] or 0
-      dists[maxl] = dists[maxl] + 1
-    end)
-
-  print("DISTS")
-  for k,v in pairs(dists) do
-    print(k,v)
-  end
-end
-
-local function drawLinear(octopied)
-  local cnt = 0
-  for d=0,#octopied do
-    local max = keycount(octopied[d])
-    for w=0,max do
-      if octopied[d][w]~=nil then
-        io.write("X")
-        cnt = cnt + 1
-      else
-        io.write(".")
-      end
-    end
-    io.write("\n")
-  end
-  print("total count",cnt)
-end
-
-local function linearplace(kernel, R)
-  kernel:visitEach(
-    function(node)
-      if node.kernel~=nil then
-
-        local kernel = retime(node.kernel)
-
-        print("\n\nPlace",node:name(),"nodecount",kernel:S("*"):count())
-
-        local linearPlaceCache = {}
-        local octopied = {}
-
-        kernel:visitEach(
-          function(n)
-            checkPrim(n)
-            simpleLinearPlace(n,kernel, linearPlaceCache, octopied)
-          end)
-
-        verifyLinear(kernel,linearPlaceCache)
-        drawLinear(octopied)
+        verify(R)
+        local L = AnnealVerbose
+        AnnealVerbose = true
+        anneal(R)
+        AnnealVerbose = L
       end
     end)
 end
@@ -784,8 +821,8 @@ function darkroom.compile(inputImageFunctions, outputImageFunctions, tapInputs, 
     hist(node,"muldepth")
     hist(node,"adddepth")
     local R = generateRandomRouting()
-    place(node,R)
---    linearplace(node)
+--    place(node,R)
+    placeSequential(node,R)
   end
   local res =  origCompile(inputImageFunctions, outputImageFunctions, tapInputs, inputWidth, inputHeight, options)
 
