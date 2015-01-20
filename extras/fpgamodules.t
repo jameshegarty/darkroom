@@ -647,7 +647,7 @@ function modules.sim(inputBytes, outputBytes, stripWidth, imageHeight, outputShi
   assert(type(outputBytes)=="number")
   assert(type(stripWidth)=="number")
 
-  local res = [=[`define EOF 32'hFFFF_FFFF
+  local res = {[=[`define EOF 32'hFFFF_FFFF
 module sim;
   integer c, r,fileout;
   reg     CLK;
@@ -662,32 +662,32 @@ module sim;
   integer realY = ]=]..(metadata.padMinY-1)..[=[;
   integer addr = -PIPE_DELAY+1-]=]..outputShift*metadata.cycles..[=[;
   integer addrT;
-]=]
+]=]}
 
   local i=1
   while metadata["inputFile"..i] do
-    res = res.."reg [10000:0] inputFilename"..i..";\n"
-    res = res.."integer file"..i..";\n"
+    table.insert(res, "reg [10000:0] inputFilename"..i..";\n")
+    table.insert(res,"integer file"..i..";\n")
     i = i + 1
   end
 
-res = res..[=[  reg [10000:0] outputFilename; 
+  table.insert( res, [=[  reg [10000:0] outputFilename; 
   reg [7:0] i = 0;
 
   Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInput),.out(pipelineOutput),.validInNextCycle(validInNextCycle),.validOut(validOut),.cycle(cycle));
 
   initial begin
-   $display("HELLO");]=]
+   $display("HELLO");]=])
 
    local i=1
    while metadata["inputFile"..i] do
-     res = res .. [=[$value$plusargs("inputFilename]=]..i..[=[=%s",inputFilename]=]..i..[=[);
-     ]=]
-     res = res .. [=[file]=]..i..[=[ = $fopen(inputFilename]=]..i..[=[,"r");
-     ]=]
+     table.insert( res, [=[$value$plusargs("inputFilename]=]..i..[=[=%s",inputFilename]=]..i..[=[);
+     ]=])
+     table.insert( res, [=[file]=]..i..[=[ = $fopen(inputFilename]=]..i..[=[,"r");
+     ]=])
      i = i + 1
    end
-res = res..[=[
+   table.insert( res, [=[
    $value$plusargs("outputFilename=%s",outputFilename);
 
    fileout = $fopen(outputFilename,"w");
@@ -719,19 +719,19 @@ res = res..[=[
      while (realX < ]=]..(stripWidth+metadata.padMaxX)..[=[) begin
 
          if ( realX>=0 && realX<]=]..stripWidth..[=[ && realY>=0 && realY <]=]..imageHeight..[=[ ) begin
-]=]
+]=])
 
 local i=1
 local bpos = 0
 while metadata["inputFile"..i] do
   for ch=0,metadata["inputBytes"..i]-1 do
-    res = res.."pipelineInput["..(bpos*8+7)..":"..(bpos*8).."] = $fgetc(file"..i..");\n"
+    table.insert( res, "pipelineInput["..(bpos*8+7)..":"..(bpos*8).."] = $fgetc(file"..i..");\n")
     bpos = bpos + 1
   end
   i=i+1
 end
          
-res = res..[=[       end else begin
+table.insert( res, [=[       end else begin
          pipelineInput = 0;
          end
 
@@ -804,7 +804,7 @@ res = res..[=[       end else begin
    $fclose(fileout);
   end // initial begin
 
-endmodule // sim        ]=]
+endmodule // sim        ]=])
 
 return res
 end

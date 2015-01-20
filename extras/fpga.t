@@ -1094,103 +1094,6 @@ local function chooseStrip(options, inputs, kernelGraph, imageWidth, imageHeight
   return upToNearest(smallestScaleX,BLOCKX), upToNearest(smallestScaleY,BLOCKY),0,0,0,0
 end
 
-local function liftMapreduce(kernelGraph, shifts)
-  local newShifts={}
-  local oldToNewRemap = {}
-
-  local function pointsTo(n,mrn)
-    local found = false
-    n:S("*"):process(function(nn)
-                       for k,v in pairs(nn) do
-                         if v==mrn then found=true; end
-                       end
-                     end)
-    return found
-  end
-
-  local res =  kernelGraph:S("*"):process(
-    function(node, orig)
-      if node.kernel~=nil then
-        local newNode = node:shallowcopy()
-        newNode.kernel = node.kernel:S("mapreduce"):process(
-          function(mapreduceNode)
-            local newMR = mapreduceNode:shallowcopy()
-            local liftedList = {}
-            local liftedCnt = 0
-            newMR.expr = mapreduceNode.expr:S(
-              function(n)
-                -- heuristic for what we lift
-                return (n.kind=="index" and pointsTo(n.index,mapreduceNode.__key)) or (n.kind=="load" and pointsTo(n,mapreduceNode.__key))
-              end):process(
-              function(n)
-                liftedCnt = liftedCnt + 1
-                liftedList["lifted"..liftedCnt] = n
-                newMR["typeLifted"..liftedCnt] = n.type
-                local nn = {kind="lifted",id=liftedCnt,type=n.type,liftedTarget = mapreduceNode.__key}
-                local mrnCnt = 1
-                n:S("mapreducevar"):process(function(mrv) nn["mapreduceNode"..mrnCnt]=mrv.mapreduceNode; mrnCnt = mrnCnt+1 end)
-                return darkroom.typedAST.new(nn):copyMetadataFrom(n)
-              end)
-            newMR["countLifted"] = liftedCnt
-            
-            -- funroll the lifted vars
-            local i = 1
-            while mapreduceNode["varname"..i]~=nil do
-              local liftedListNew = {}
-              for f=mapreduceNode["varlow"..i], mapreduceNode["varhigh"..i] do
-                for k,v in pairs(liftedList) do
-                  liftedListNew[k.."_"..mapreduceNode["varname"..i]..numToVarname(f)] = v:S("*"):process(
-                    function(anode)
-                      if anode.kind=="mapreducevar" then
-                        local MR = node.kernel:lookup(anode.mapreduceNode)
-                        if MR["varname"..anode.id]==mapreduceNode["varname"..i] then return darkroom.typedAST.new({kind="value",value=f,type=anode.type}):copyMetadataFrom(anode) end
-                      else
-                        local newAnode = anode:shallowcopy()
-                        local found = false
-                        for k,v in pairs(anode) do
-                          if darkroom.ast.isAST(v) then
-                            
-                            newAnode[k] = v:S("mapreducevar"):process(
-                              function(n)
-                                local MR = node.kernel:lookup(n.mapreduceNode)
-                                if MR["varname"..n.id]==mapreduceNode["varname"..i] then found=true;return darkroom.ast.new({kind="value",value=f,type=n.type}):copyMetadataFrom(n) end
-                              end)
-                          end
-                        end
-                        if found then return darkroom.typedAST.new(newAnode):copyMetadataFrom(anode) end
-                      end
-                    end)
-                end
-              end
-              liftedList = liftedListNew
-              i = i + 1
-            end
-            for k,v in pairs(liftedList) do
-              v:S("lifted"):process(function(n) print("Lifted things can't themselves contain lifted things!\n");assert(false) end)
-              newMR[k] = v
-            end
-
-            return darkroom.typedAST.new(newMR):copyMetadataFrom(mapreduceNode)
-          end)
-
-        newNode.kernel = newNode.kernel:S("load"):process(
-          function(n)
-            local nn = n:shallowcopy()
-            if type(nn.from)=="table" then nn.from = oldToNewRemap[nn.from] end
-            return darkroom.typedAST.new(nn):copyMetadataFrom(n)
-          end)
-        newShifts[newNode] = shifts[orig]
-        oldToNewRemap[orig] = newNode
-        return darkroom.kernelGraph.new(newNode):copyMetadataFrom(node.kernel)
-      else
-        oldToNewRemap[orig] = node
-        newShifts[node] = shifts[orig]
-      end
-    end)
-
-  return res, newShifts
-end
-
 local function parentIsOutput(node, kernelGraph)
   assert(type(kernelGraph)=="table")
   for v,k in node:parents(kernelGraph) do if v==kernelGraph then return true end end
@@ -1392,56 +1295,20 @@ function fpga.allocateLinebuffers(node, kernelGraph, outputLinebuffers, largestE
   return pipeline, result
 end
 
-function fpga.compile(inputs, outputs, imageWidth, imageHeight, options)
-  assert(#outputs==1)
-  assert(type(options)=="table" or options==nil)
-
-  local compilerState = {declaredReductionModules = {}}
-
-  if options.clockMhz==nil then options.clockMhz=32 end
-  if options.uartClock==nil then options.uartClock=57600 end
-
-  -- do the compile
-  local newnode = {kind="outputs"}
-  for k,v in ipairs(outputs) do
-    newnode["expr"..k] = v[1]
-  end
-  local ast = darkroom.ast.new(newnode):setLinenumber(0):setOffset(0):setFilename("null_outputs")
-
-  for k,v in ipairs(outputs) do
-    if v[1]:parentCount(ast)~=1 then
-      darkroom.error("Using image functions as both outputs and intermediates is not currently supported. Output #"..k)
-    end
-  end
-
-  local kernelGraph, _, smallestScaleX, smallestScaleY, largestEffectiveCycles = darkroom.frontEnd( ast, {} )
-
-  local padMinX, padMaxX, padMinY, padMaxY
-  options.stripWidth, options.stripHeight, padMinX, padMaxX, padMinY, padMaxY = chooseStrip(options,inputs,kernelGraph,imageWidth,imageHeight, smallestScaleX, smallestScaleY)
-  options.padMinX = padMinX -- used for valid bit calculation
-
-  local shifts = schedule(kernelGraph, 1, options.stripWidth)
-  kernelGraph, shifts = shift(kernelGraph, shifts, 1, options.stripWidth)
-
-  kernelGraph, shifts = liftMapreduce(kernelGraph, shifts)
+function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffectiveCycles, imageWidth, imageHeight )
+  assert(darkroom.kernelGraph.isKernelGraph(kernelGraph))
+  assert(type(largestEffectiveCycles)=="number")
+  assert(type(imageWidth)=="number")
+  assert(type(imageHeight)=="number")
 
   local totalInputBytes = 0
   for k,v in ipairs(inputs) do totalInputBytes = totalInputBytes + inputs[k][1].expr.type:sizeof() end
+
   local outputBytes = kernelGraph.child1.kernel.type:sizeof()
-  local outputChannels = kernelGraph.child1.kernel.type:channels()
-  print("INPUTBYTeS",totalInputBytes,"OUTPUTBYTES",outputBytes)
 
-  local maxStencil = calcMaxStencil(kernelGraph)
+  local compilerState = {declaredReductionModules = {}}
 
-  local shiftX, shiftY = delayToXY(shifts[kernelGraph.child1], options.stripWidth)
-  maxStencil = maxStencil:translate(shiftX,shiftY,0)
-  print("Max Stencil x="..maxStencil:min(1)..","..maxStencil:max(1).." y="..maxStencil:min(2)..","..maxStencil:max(2))
-
-
-  ------------------------------
-  local result = {}
-  table.insert(result, "`timescale 1ns / 10 ps\n")
-
+  local definitions = {}
   local pipeline = {[=[module Pipeline(
 input CLK, input[12:0] inX, input[12:0] inY,
 output [12:0] outX, output [12:0] outY,
@@ -1485,7 +1352,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
     function(node, inputArgs)
       if node.kernel~=nil then
         local verilogKernel = fpga.codegenKernel(compilerState, node, kernelRetiming[node], imageWidth, imageHeight, kernelGraph, pipelineRetiming, shifts[node], inputLinebuffers[node], outputUsedAsRegular, options, largestEffectiveCycles)
-        result = concat(result, verilogKernel)
+        definitions = concat(definitions, verilogKernel)
         
         local inputs = ""
         local inputXY = ""
@@ -1538,7 +1405,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
         
         local pipelineLB, resultLB = fpga.allocateLinebuffers(node, kernelGraph, outputLinebuffers[node], largestEffectiveCycles)
         pipeline = concat(pipeline,pipelineLB)
-        result = concat(result, resultLB)
+        definitions = concat(definitions, resultLB)
         return 0
       else
         local totalDelay = 0
@@ -1562,15 +1429,7 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
   assert(kernelGraph.kernel==nil)
   assert(kernelGraph:inputCount()==1)
 
---  totalDelay = pipelineRetiming[kernelGraph.child1] + shifts[kernelGraph.child1]
   totalDelay = pipelineRetiming[kernelGraph.child1]
-
-  local metadata = {minX = maxStencil:min(1), maxX=maxStencil:max(1), minY=maxStencil:min(2), maxY = maxStencil:max(2), outputShift = shifts[kernelGraph.child1], outputChannels = outputChannels, outputBytes = outputBytes, stripWidth = options.stripWidth, stripHeight=options.stripHeight, uartClock=options.uartClock, downsampleX=looprate(kernelGraph.child1.kernel.scaleN1,kernelGraph.child1.kernel.scaleD1,1), downsampleY=looprate(kernelGraph.child1.kernel.scaleN2,kernelGraph.child1.kernel.scaleD2,1), padMinX=padMinX, padMaxX=padMaxX, padMinY=padMinY, padMaxY=padMaxY, cycles = largestEffectiveCycles}
-
-  for k,v in ipairs(inputs) do
-    metadata["inputFile"..k] = v[3]
-    metadata["inputBytes"..k] = inputs[k][1].expr.type:sizeof()
-  end
 
   table.insert(pipeline, "assign out = kernelOut_"..kernelGraph.child1:name()..";\n")
   table.insert(pipeline, "assign outX = kernelOutX_"..kernelGraph.child1:name()..";\n")
@@ -1581,12 +1440,35 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
 
   table.insert(pipeline,"endmodule\n\n")
   table.insert(pipeline,"parameter PIPE_DELAY = "..(totalDelay)..";\n")
-  result = concat(result, pipeline)
+
+  return pipeline, definitions
+end
+
+function fpga.codegenHarness( inputs, outputs, kernelGraph, shifts, options, largestEffectiveCycles, padMinX, padMinY, padMaxX, padMaxY, imageWidth, imageHeight)
+  assert(type(padMaxY)=="number")
+
+  local maxStencil = calcMaxStencil(kernelGraph)
+
+  local shiftX, shiftY = delayToXY(shifts[kernelGraph.child1], options.stripWidth)
+  maxStencil = maxStencil:translate(shiftX,shiftY,0)
+
+  local totalInputBytes = 0
+  for k,v in ipairs(inputs) do totalInputBytes = totalInputBytes + inputs[k][1].expr.type:sizeof() end
+
+  local outputChannels = kernelGraph.child1.kernel.type:channels()
+  local outputBytes = kernelGraph.child1.kernel.type:sizeof()
+
+  local metadata = {minX = maxStencil:min(1), maxX=maxStencil:max(1), minY=maxStencil:min(2), maxY = maxStencil:max(2), outputShift = shifts[kernelGraph.child1], outputChannels = outputChannels, outputBytes = outputBytes, stripWidth = options.stripWidth, stripHeight=options.stripHeight, uartClock=options.uartClock, downsampleX=looprate(kernelGraph.child1.kernel.scaleN1,kernelGraph.child1.kernel.scaleD1,1), downsampleY=looprate(kernelGraph.child1.kernel.scaleN2,kernelGraph.child1.kernel.scaleD2,1), padMinX=padMinX, padMaxX=padMaxX, padMinY=padMinY, padMaxY=padMaxY, cycles = largestEffectiveCycles}
+
+  for k,v in ipairs(inputs) do
+    metadata["inputFile"..k] = v[3]
+    metadata["inputBytes"..k] = inputs[k][1].expr.type:sizeof()
+  end
 
   if outputs[1][2]=="vga" then
-    table.insert(result, fpga.modules.stageVGA())
+    return fpga.modules.stageVGA(), metadata
   elseif outputs[1][2]=="uart" then
-    table.insert(result, fpga.modules.stageUART(options, totalInputBytes, outputBytes, options.stripWidth, options.stripHeight))
+    return fpga.modules.stageUART(options, totalInputBytes, outputBytes, options.stripWidth, options.stripHeight), metadata
   elseif outputs[1][2]=="sim" then
     for k,v in ipairs(inputs) do
       if v[3]:find(".raw")==nil then darkroom.error("sim only supports raw files") end
@@ -1596,17 +1478,59 @@ output []=]..(outputBytes*8-1)..[=[:0] out);
     print(imageWidth,imageHeight,options.stripWidth, options.stripHeight)
     assert(imageWidth+metadata.padMaxX-metadata.padMinX==options.stripWidth)
     assert(imageHeight+metadata.padMaxY-metadata.padMinY==options.stripHeight)
-    table.insert(result, fpga.modules.sim(totalInputBytes, outputBytes, imageWidth, imageHeight, shifts[kernelGraph.child1], metadata))
+    return fpga.modules.sim(totalInputBytes, outputBytes, imageWidth, imageHeight, shifts[kernelGraph.child1], metadata), metadata
   elseif outputs[1][2]=="axi" then
     -- sim framework assumes this is the case
     print(imageWidth,imageHeight,options.stripWidth, options.stripHeight)
     assert(imageWidth+metadata.padMaxX-metadata.padMinX==options.stripWidth)
     assert(imageHeight+metadata.padMaxY-metadata.padMinY==options.stripHeight)
-    table.insert(result, fpga.modules.axi(totalInputBytes, outputBytes, imageWidth, shifts[kernelGraph.child1], metadata))
+    return fpga.modules.axi(totalInputBytes, outputBytes, imageWidth, shifts[kernelGraph.child1], metadata), metadata
   else
     print("unknown data source "..outputs[1][2])
     assert(false)
   end
+
+end
+
+function fpga.compile(inputs, outputs, imageWidth, imageHeight, options)
+  assert(#outputs==1)
+  assert(type(options)=="table" or options==nil)
+
+  if options.clockMhz==nil then options.clockMhz=32 end
+  if options.uartClock==nil then options.uartClock=57600 end
+
+  -- do the compile
+  local newnode = {kind="outputs"}
+  for k,v in ipairs(outputs) do
+    newnode["expr"..k] = v[1]
+  end
+  local ast = darkroom.ast.new(newnode):setLinenumber(0):setOffset(0):setFilename("null_outputs")
+
+  for k,v in ipairs(outputs) do
+    if v[1]:parentCount(ast)~=1 then
+      darkroom.error("Using image functions as both outputs and intermediates is not currently supported. Output #"..k)
+    end
+  end
+
+  local kernelGraph, _, smallestScaleX, smallestScaleY, largestEffectiveCycles = darkroom.frontEnd( ast, {} )
+
+  local padMinX, padMaxX, padMinY, padMaxY
+  options.stripWidth, options.stripHeight, padMinX, padMaxX, padMinY, padMaxY = chooseStrip(options,inputs,kernelGraph,imageWidth,imageHeight, smallestScaleX, smallestScaleY)
+  options.padMinX = padMinX -- used for valid bit calculation
+
+  local shifts = schedule(kernelGraph, 1, options.stripWidth)
+  kernelGraph, shifts = shift(kernelGraph, shifts, 1, options.stripWidth)
+
+  ------------------------------
+  local result = {}
+  table.insert(result, "`timescale 1ns / 10 ps\n")
+
+  local pipeline, pipelineDefinitions = fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffectiveCycles, imageWidth, imageHeight )
+  result = concat(result, pipelineDefinitions)
+  result = concat(result, pipeline)
+
+  local harness, metadata = fpga.codegenHarness( inputs, outputs, kernelGraph, shifts, options, largestEffectiveCycles, padMinX, padMinY, padMaxX, padMaxY, imageWidth, imageHeight )
+  result = concat(result, harness)
 
   return table.concat(result,""), metadata
 end
