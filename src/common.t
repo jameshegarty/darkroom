@@ -321,3 +321,11 @@ function ratioFactor(a,b)
   local g = gcd(a,b)
   return a/g, b/g
 end
+
+function map(t,f)
+  assert(type(t)=="table")
+  assert(type(f)=="function")
+  local res = {}
+  for k,v in pairs(t) do res[k] = f(v,k) end
+  return res
+end

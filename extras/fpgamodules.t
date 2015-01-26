@@ -1,5 +1,26 @@
-local systolic = require("systolic")
+systolic = require("systolic")
+statemachine = require("statemachine")
 local modules = {}
+
+__memoizedModules = {}
+function memoize(f)
+  return function(...)
+    __memoizedModules[f] = __memoizedModules[f] or {}
+    local t = index(__memoizedModules[f],{...})
+    if t~=nil then return t end
+    local t = __memoizedModules[f]
+    local res = f(...)
+    for i,v in ipairs({...}) do 
+      assert(type(v)=="number" or darkroom.types.isType(v))
+      if i==#{...} then
+        t[v] = res
+      else
+        t = t[v] or {}
+      end
+    end
+    return res
+  end
+end
 
 function modules.reduce(compilerState, op, cnt, datatype, argminVars)
   assert(type(op)=="string")
@@ -523,6 +544,46 @@ function modules.linebuffer(maxDelayX, maxDelayY, datatype, stripWidth)
 
   return lb
 end
+
+function modules.fifo(ty)
+  assert(darkroom.types.isType(ty))
+
+  local fifo = systolic.module("fifo")
+  local writeAddr = fifo:add(systolic.reg("count", uint16, 0))
+  local readAddr = fifo:add(systolic.reg("count", uint16, 0))
+  local rams = map( range( ty:channels() ), map( range(ty:baseType():sizeof()), function(v) return fifo:add(ty:sizeof()*8) end ))
+
+  -- pushBack
+  local input = systolic.input("input", ty)
+  local pushBack = fifo:addFunction("pushBack",{input},{})
+  pushBack:addAssert( writeAddr - readAddr < 128, "attempting to push to a full fifo" )
+  pushBack:addAssign( writeAddr, writeAddr + 1)
+  for c=1,ty:channels() do
+    for s=1,ty:baseType():sizeof() do
+      pushBack:writeRam128( rams[c][s], writeAddr, select( ty:channels() > 1, input[c][s], input[s] ) )
+    end
+  end
+
+  -- popFront
+  local out = systolic.output("output", ty)
+  local popFront = fifo:addFunction("pushBack",{},{out})
+  popFront:addAssert( writeAddr ~= readAddr, "attempting to pop from an empty fifo" )
+  popFront:addAssign( readAddr, readAddr + 1)
+  popFront:addAssign( out, systolic.array( map( range(ty:channels()), function(c)
+    return systolic.cast(systolic.array(map( range(ty:baseType():sizeof()), 
+      function(b) 
+       return popFront:readRam128(rams[c][b], readAddr)
+      end)),ty:baseType()) end)))
+
+
+  -- ready
+  local readyres = systolic.output("isReady", darkroom.bool() )
+  local ready = fifo:addFunction("ready",{},{readyres})
+  ready:addAssign(readyres, count > 0 )
+
+  return fifo
+end
+modules.fifo = memoize(modules.fifo)
 
 local function fixedBram(conf)
   local A = "A"

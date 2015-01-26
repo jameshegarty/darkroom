@@ -5,6 +5,68 @@ systolicModuleMT={__index=systolicModuleFunctions}
 
 local binopToVerilog={["+"]="+",["*"]="*",["<<"]="<<<",[">>"]=">>>",["pow"]="**",["=="]="==",["and"]="&",["-"]="-",["<"]="<",[">"]=">",["<="]="<=",[">="]=">="}
 
+local binopToVerilogBoolean={["=="]="==",["and"]="&&",["~="]="!="}
+
+function concat(t1,t2)
+    for i=1,#t1 do
+      if type(t1[i])~="string" then
+        print(t1[i])
+        assert(false)
+      end
+    end
+
+    for i=1,#t2 do
+      assert(type(t2[i])=="string")
+      t1[#t1+1] = t2[i]
+    end
+    return t1
+end
+
+function declareReg(type, name, initial, comment)
+  if comment==nil then comment="" end
+
+  if initial==nil or initial=="" then 
+    initial=""
+  else
+    initial = " = "..initial
+  end
+
+  if type:isBool() then
+    return "reg "..name..initial..";"..comment.."\n"
+  else
+    return "reg ["..(type:sizeof()*8-1)..":0] "..name..initial..";"..comment.."\n"
+ end
+end
+
+function declareWire(ty, name, str, comment)
+  assert(type(str)=="string" or str==nil)
+
+  if comment==nil then comment="" end
+
+  if str == nil or str=="" then
+    str = ""
+  else
+    str = " = "..str
+  end
+
+  if ty:isBool() then
+    return "wire "..name..str..";"..comment.."\n"
+  else
+    return "wire ["..(ty:sizeof()*8-1)..":0] "..name..str..";"..comment.."\n"
+  end
+end
+
+function numToVarname(x)
+  if x>0 then return x end
+  if x==0 then return "0" end
+  return "m"..math.abs(x)
+end
+
+function pointerToVarname(x)
+  assert(type(x)=="table")
+  return tostring(x):sub(10)
+end
+
 function systolic.module(name)
   assert(type(name)=="string")
   local t = {name=name,regs={},functions={}}
@@ -14,6 +76,43 @@ end
 function systolicModuleFunctions:add(inst)
   if inst.kind=="reg" then
     table.insert(self.regs,inst)
+  else
+    assert(false)
+  end
+end
+
+function valueToVerilogLL(value,signed,bits)
+  assert(type(value)=="number")
+
+  if signed then
+    if value==0 then
+      return bits.."'d0"
+    elseif value<0 then
+      return "-"..bits.."'d"..math.abs(value)
+    else
+      return bits.."'d"..value
+    end
+  else
+    assert(value>=0)
+    return bits.."'d"..math.abs(value)
+  end
+end
+
+function valueToVerilog(value,ty)
+
+  if ty:isInt() then
+    assert(type(value)=="number")
+    if value==0 then
+      return (ty:sizeof()*8).."'d0"
+    elseif value<0 then
+      return "-"..(ty:sizeof()*8).."'d"..math.abs(value)
+    else
+      return (ty:sizeof()*8).."'d"..value
+    end
+  elseif ty:isUint() then
+    assert(type(value)=="number")
+    assert(value>=0)
+    return (ty:sizeof()*8).."'d"..value
   else
     assert(false)
   end
@@ -93,6 +192,15 @@ end
 systolicFunctionFunctions = {}
 systolicFunctionMT={__index=systolicFunctionFunctions}
 
+function systolic.pureFunction(name, inputs, outputs)
+  map( inputs, function(v) assert(v.kind=="input") end )
+  map( outputs, function(v) assert(v.kind=="output") end )
+
+  local t = {name=name, inputs=inputs, outputs=outputs, assignments={}, asserts={}, pure=true}
+
+  return setmetatable(t,systolicFunctionMT)
+end
+
 function systolicModuleFunctions:addFunction(name, inputs, outputs)
 
   assert(type(inputs)=="table")
@@ -143,6 +251,7 @@ function systolicFunctionFunctions:addAssign(dst,expr)
 end
 
 local function codegen(ast, callsiteId)
+  assert(systolicAST.isSystolicAST(ast))
   assert(type(callsiteId)=="number")
 
   local resDeclarations = {}
@@ -151,6 +260,117 @@ local function codegen(ast, callsiteId)
   local finalOut = ast:visitEach(
     function(n, inputs)
       local res
+      for c=1,n.type:channels() do
+        local res
+        local resDeclarations = {}
+        local resClockedLogic = {}
+
+        if n.kind=="binop" then
+          table.insert(resDeclarations, declareReg( n.type:baseType(), n:cname(c) ))
+
+          if n.op=="<" or n.op==">" or n.op=="<=" or n.op==">=" then
+            if n.type:baseType():isBool() and n.lhs.type:baseType():isInt() and n.rhs.type:baseType():isInt() then
+              table.insert(resClockedLogic, n:name().."_c"..c.." <= ($signed("..inputs.lhs[c]..")"..n.op.."$signed("..inputs.rhs[c].."));\n")
+            elseif n.type:baseType():isBool() and n.lhs.type:baseType():isUint() and n.rhs.type:baseType():isUint() then
+              table.insert(resClockedLogic, n:name().."_c"..c.." <= (("..inputs.lhs[c]..")"..n.op.."("..inputs.rhs[c].."));\n")
+            else
+              print( n.type:baseType():isBool() , n.lhs.type:baseType():isInt() , n.rhs.type:baseType():isInt(),n.type:baseType():isBool() , n.lhs.type:baseType():isUint() , n.rhs.type:baseType():isUint())
+              assert(false)
+            end
+          elseif n.type:isBool() then
+            local op = binopToVerilogBoolean[n.op]
+            if type(op)~="string" then print("OP_BOOLEAN",n.op); assert(false) end
+            table.insert(resClockedLogic, n:name().."_c"..c.." <= "..inputs.lhs[c]..op..inputs.rhs[c]..";\n")
+          else
+            local op = binopToVerilog[n.op]
+            if type(op)~="string" then print("OP",n.op); assert(false) end
+            local lhs = inputs.lhs[c]
+            if n.lhs.type:baseType():isInt() then lhs = "$signed("..lhs..")" end
+            local rhs = inputs.rhs[c]
+            if n.rhs.type:baseType():isInt() then rhs = "$signed("..rhs..")" end
+            table.insert(resClockedLogic, n:name().."_c"..c.." <= "..lhs..op..rhs..";\n")
+          end
+
+          res = n:name().."_c"..c
+        elseif n.kind=="unary" then
+          if n.op=="abs" then
+            if n.type:baseType():isInt() then
+              table.insert(resDeclarations, declareReg( n.type:baseType(), n:cname(c) ))
+              table.insert(resClockedLogic, n:cname(c).." <= ("..inputs.expr[c].."["..(n.type:baseType():sizeof()*8-1).."])?(-"..inputs.expr[c].."):("..inputs.expr[c].."); //abs\n")
+              res = n:cname(c)
+            else
+              return inputs.expr[c] -- must be unsigned
+            end
+          elseif n.op=="-" then
+            assert(n.type:baseType():isInt())
+            table.insert(resDeclarations, declareReg(n.type:baseType(),n:cname(c)))
+            table.insert(resClockedLogic, n:cname(c).." <= -"..inputs.expr[c].."; // unary sub\n")
+            res = n:cname(c)
+          else
+            print(n.op)
+            assert(false)
+          end
+        elseif n.kind=="select" or n.kind=="vectorSelect" then
+          table.insert(resDeclarations,declareReg( n.type:baseType(), n:cname(c), "", " // "..n.kind.." result" ))
+          local condC = 1
+          if n.kind=="vectorSelect" then condC=c end
+
+          table.insert(resClockedLogic, n:cname(c).." <= ("..inputs.cond[condC]..")?("..inputs.a[c].."):("..inputs.b[c].."); // "..n.kind.."\n")
+          res = n:cname(c)
+        elseif n.kind=="cast" then
+          local expr
+          local cmt = " // cast "..n.expr.type:str().." to "..n.type:str()
+          if n.type:isArray() and n.expr.type:isArray()==false then
+            expr = inputs["expr"][1] -- broadcast
+            cmt = " // broadcast "..n.expr.type:str().." to "..n.type:str()
+          else
+            expr = inputs["expr"][c]
+          end
+
+          if n.type:isInt() and n.expr.type:isInt() and n.type:sizeof()>n.expr.type:sizeof() then
+            -- must sign extend
+            expr = "{ {"..(8*(n.type:sizeof()-n.expr.type:sizeof())).."{"..expr.."["..(n.expr.type:sizeof()*8-1).."]}},"..expr.."["..(n.expr.type:sizeof()*8-1)..":0]}"
+          end
+          
+          table.insert(resDeclarations, declareWire(n.type:baseType(), n:cname(c), "",cmt))
+          table.insert(resDeclarations, "assign "..n:cname(c).." = "..expr..";"..cmt.."\n")
+          res = n:cname(c)
+        elseif n.kind=="value" then
+          local v
+          if type(n.value)=="table" then 
+            v = valueToVerilog(n.value[c], n.type:baseType()) 
+          else
+            v = valueToVerilog(n.value, n.type:baseType())
+          end
+          table.insert(resDeclarations,declareWire(n.type:baseType(), n:cname(c), v, " //value" ))
+          res = n:cname(c)
+        elseif n.kind=="array" then
+          res = inputs["expr"..c][1]
+        elseif n.kind=="index" then
+          if n.index:eval(1,kernel):bbArea()==1 then
+            res = inputs["expr"][n.index:eval(1,kernel):min(1)+1]
+          else
+            for k,v in pairs(n) do print(k,v) end
+            local range = n.index:eval(1,kernel)
+            -- synth a reduction tree to select the element we want
+            local rname, rmod = fpga.modules.reduce(compilerState, "valid", range:bbArea(), n.type)
+            result = concat(rmod, result)
+            table.insert(resDeclarations, declareWire(n.type, n:cname(c),"", "// index result"))
+            local str = rname.." indexreduce_"..n:cname(c).."(.CLK(CLK),.out("..n:cname(c)..")"
+            for i=range:min(1), range:max(1) do
+              local idx = i-range:min(1)
+              str = str..",.partial_"..idx.."("..inputs["expr"][i+1]..")"
+              str = str..",.partial_valid_"..idx.."("..n.index:codegenHW(kernel).." == "..valueToVerilogLL(i,true,32)..")"
+            end
+            table.insert(resDeclarations,str..");\n")
+            res = n:cname(c)
+          end
+        else
+          print(n.kind)
+          assert(false)
+        end
+      end
+--[=[
       if n.kind=="binop" then
         table.insert(resDeclarations, declareReg( n.type:baseType(), n:name() ))
         
@@ -176,6 +396,7 @@ local function codegen(ast, callsiteId)
         assert(false)
       end
       return res
+  ]=]
     end)
 
   return resDeclarations, resClockedLogic, finalOut
@@ -246,6 +467,16 @@ systolicASTFunctions = {}
 setmetatable(systolicASTFunctions,{__index=IRFunctions})
 systolicASTMT={__index=systolicASTFunctions,__add=function(l,r) return binop(l,r,"+") end}
 
+-- ops
+function systolic.index(t,x,y)
+  assert(systolicAST.isSystolicAST(t))
+  assert(systolicAST.isSystolicAST(x))
+  assert(systolicAST.isSystolicAST(y))
+  assert(darkroom.type.isArray(t.type))
+  return systolicAST.new({kind="index", expr=t, indexX = x, indexY = y})
+end
+
+
 function systolicASTFunctions:internalDelay()
   if self.kind=="binop" then
     return 1
@@ -255,6 +486,17 @@ function systolicASTFunctions:internalDelay()
     print(self.kind)
     assert(false)
   end
+end
+
+systolicAST = {}
+function systolicAST.isSystolicAST(ast)
+  return getmetatable(ast)==systolicASTMT
+end
+
+function systolicAST.new(tab)
+  assert(type(tab)=="table")
+  darkroom.IR.new(tab)
+  return setmetatable(tab,systolicASTMT)
 end
 
 function systolic.reg( name, ty, initial )
