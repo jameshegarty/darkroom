@@ -329,3 +329,4 @@ function map(t,f)
   for k,v in pairs(t) do res[k] = f(v,k) end
   return res
 end
+

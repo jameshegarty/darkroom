@@ -65,7 +65,7 @@ function typedASTFunctions:calculateBB(root)
     darkroom.typedAST._calculateBBCache[root][self]=setmetatable({}, {__mode=CTABMODE})
 
     if self.kind=="mapreducevar" then
-      local MR = root:lookup(self.mapreduceNode)
+      local MR = root:lookup(self.mapreduceNodeKey)
 
       local dep = MR.expr:bbDependencies(root)
       assert(keycount(dep)==1)
@@ -170,26 +170,6 @@ function typedASTFunctions:calculateMinBB(root)
   end
 end
 
--- some nodes we never actually use
-darkroom.typedAST._codegenedCache=setmetatable({}, {__mode=CTABMODE})
-function typedASTFunctions:codegened(root)
-  if darkroom.typedAST._codegenedCache[root] == nil then
-    darkroom.typedAST._codegenedCache[root] = setmetatable({}, {__mode=CTABMODE})
-  end
-
-  if darkroom.typedAST._codegenedCache[root][self]==nil then
-    darkroom.typedAST._codegenedCache[root][self]=false
-    for pn,k in self:parents(root) do
-      if k:sub(1,1)~="_" and pn:codegened(root) then darkroom.typedAST._codegenedCache[root][self]=true; end
-    end
-    if self:parentCount(root)==0 then
-      darkroom.typedAST._codegenedCache[root][self] = true
-    end
-  end
-
-  return darkroom.typedAST._codegenedCache[root][self]
-end
-
 function darkroom.typedAST.checkConstantExpr(expr, coord)
 
   -- no x+x allowed
@@ -224,10 +204,9 @@ end
 
 -- take the ast input that's an offset expr for coord 'coord'
 -- and convert it into a translate,scale. returns nil if there was an error.
-function darkroom.typedAST.synthOffset(ast,coord)
-  -- note that we don't typecheck these expressions! we keep them as ASTs,
-  -- because they aren't really part of the language
-  assert(darkroom.ast.isAST(ast))
+function darkroom.typedAST.synthOffset(ast, zeroedarg, coord)
+  assert(darkroom.typedAST.isTypedAST(ast))
+  assert(darkroom.typedAST.isTypedAST(zeroedarg))
 
   -- first check that there isn't anything in the expression that's definitely not allowed...
   if darkroom.typedAST.checkConstantExpr(ast,coord)==false then
@@ -260,25 +239,11 @@ return nil
 
   -- cheap hack, since the path from the position to the root is just a bunch of adds,
   -- we can get the translation by setting the position to 0
-  local translate = ast:S("position"):process(
-    function(n) 
-      if n.kind=="position" then
-        return darkroom.ast.new({kind="value",value=0}):copyMetadataFrom(n)
-      end
-    end)
+  local translate = zeroedarg
   assert(translate:S("position"):count()==0)
+  translate:S("*"):process(function(n) assert(type(n.constLow)=="number"); assert(darkroom.type.isType(n.type)) end)
 
-  return translate:optimize(), multN, multD
-end
-
--- the translate operator can take a few different arguments as translations
--- it can contain binary + ops, and mapreduce vars. This evaluates all possible
--- index values to find the correct stencil for those situations
-function darkroom.typedAST.transformArea( t1, t2, typedASTRoot)
-  assert(darkroom.typedAST.isTypedAST(typedASTRoot))
-  if type(t1)=="number" then t1=darkroom.ast.new({kind="value",value=t1}):setLinenumber(0):setOffset(0):setFilename("nullTA") end
-  if type(t2)=="number" then t2=darkroom.ast.new({kind="value",value=t2}):setLinenumber(0):setOffset(0):setFilename("nullTA") end
-  return t1:eval(1,typedASTRoot):sum(t2:eval(2,typedASTRoot))
+  return translate, multN, multD
 end
 
 -- returns the stencil with (0,0,0) at the origin
@@ -324,20 +289,18 @@ function typedASTFunctions:stencil(input, typedASTRoot)
   elseif self.kind=="tapLUTLookup" then
     return self.index:stencil(input, typedASTRoot)
   elseif self.kind=="load" then
-    local s = Stencil.new()
-    if input==nil or input==self.from then s = darkroom.typedAST.transformArea( self.relX, self.relY, typedASTRoot) end
-    return s
-  elseif self.kind=="gather" then
-    --if input~=nil then assert(false) end
-    assert(self._input.kind=="load")
-
-    local s = self.x:stencil(input, typedASTRoot):unionWith(self.y:stencil(input, typedASTRoot))
-    if input~=nil and self._input.from~=input then
-      return s -- not the input we're interested in
+    if type(self.relX.constLow)~="number" or type(self.relY.constLow)~="number" then
+      -- this is a gather
+      -- make sure to count the accesses that happen in the address calculation
+      local s = self.relX:stencil(input, typedASTRoot):unionWith(self.relY:stencil(input, typedASTRoot))
+      if input~=nil and self.from~=input then
+        return s -- not the input we're interested in
+      end
+      return Stencil.new():add(self.minX.constLow,self.minY.constLow,0):add(self.maxX.constLow,self.maxY.constLow,0):unionWith(s)
     else
-      -- note the kind of nasty hack we're doing here: gathers read from loads, and loads can be shifted.
-      -- so we need to shift this the same as the load
-      return darkroom.typedAST.transformArea(self._input.relX, self._input.relY, typedASTRoot):sum( Stencil.new():add(self.minX,self.minY,0):add(self.maxX,self.maxY,0)):unionWith(s)
+      local s = Stencil.new()
+      if input==nil or input==self.from then s = Stencil.newSquare( self.relX.constLow, self.relX.constHigh, self.relY.constLow, self.relY.constHigh ) end
+      return s
     end
   elseif self.kind=="array" then
     local exprsize = self:arraySize("expr")
@@ -360,7 +323,7 @@ function typedASTFunctions:stencil(input, typedASTRoot)
   elseif self.kind=="crop" then
     return self.expr:stencil(input, typedASTRoot)
   elseif self.kind=="transformBaked" then
-    return self.expr:stencil(input, typedASTRoot):sum(darkroom.typedAST.transformArea(self.translate1,self.translate2, typedASTRoot))
+    return self.expr:stencil(input, typedASTRoot):sum(Stencil.newSquare( self.translate1.constLow, self.translate1.constHigh, self.translate2.constLow, self.translate2.constHigh))
   elseif self.kind=="mapreduce" then
     local s = Stencil.new()
     -- HW: if this has lifted values, include their stencil
@@ -386,7 +349,6 @@ function typedASTFunctions:stencil(input, typedASTRoot)
     return Stencil.new()
   elseif self.kind=="iterateload" then
     return Stencil.new()
---    return self._expr:stencil(input, typedASTRoot)
   elseif self.kind=="gatherColumn" then
     assert(self._input.kind=="load")
 
@@ -413,24 +375,6 @@ end
 function typedASTFunctions:irType()
   return "typedAST"
 end
-
--- get this node's value at compile time.
--- if can't be determined, return nil
-function typedASTFunctions:eval()
-  if self.kind=="value" then
-    return self.value
-  elseif self.kind=="unary" then
-    if self.op=="-" then return -(self.expr:eval()) else
-      assert(false)
-    end
-  else
-    print("could not convert to a constant"..self.kind)
-    assert(false)
-  end
-
-  return nil
-end
-
 
 function darkroom.typedAST._toTypedAST(inast)
 
@@ -473,6 +417,7 @@ function darkroom.typedAST._toTypedAST(inast)
           darkroom.error("Internal error, couldn't convert "..tostring(ast.value).." to orion type", origast:linenumber(), origast:offset(), origast:filename() )
         end
         ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
+        ast.constLow = ast.value; ast.constHigh = ast.value
       elseif ast.kind=="unary" then
         ast.expr = inputs["expr"][1]
         
@@ -482,6 +427,10 @@ function darkroom.typedAST._toTypedAST(inast)
           end
           
           ast.type = ast.expr.type
+          if type(ast.expr.constLow)=="number" then 
+            ast.constLow = -ast.expr.constLow; ast.constHigh = -ast.expr.constHigh; 
+            if ast.constLow > ast.constHigh then ast.constLow, ast.constHigh = ast.constHigh, ast.constLow end
+          end
         elseif ast.op=="floor" or ast.op=="ceil" then
           ast.type = darkroom.type.float(32)
         elseif ast.op=="abs" then
@@ -529,11 +478,29 @@ function darkroom.typedAST._toTypedAST(inast)
         local lhs = inputs["lhs"][1]
         local rhs = inputs["rhs"][1]
         
-        if lhs.type==nil then print("ST"..to_string(lhs)) end
-        
         assert(lhs.type~=nil)
         assert(rhs.type~=nil)
         
+        if type(lhs.constLow)=="number" and type(rhs.constLow)=="number" then
+          local function applyop(lhslow, lhshigh, rhslow, rhshigh, op)
+            local a = op(lhslow,rhslow)
+            local b = op(lhslow,rhshigh)
+            local c = op(lhshigh,rhslow)
+            local d = op(lhshigh,rhshigh)
+            return math.min(a,b,c,d), math.max(a,b,c,d)
+          end
+
+          if ast.op=="+" then
+            ast.constLow, ast.constHigh = applyop( lhs.constLow, lhs.constHigh, rhs.constLow, rhs.constHigh, function(l,r) return l+r end)
+          elseif ast.op=="-" then
+            ast.constLow, ast.constHigh = applyop( lhs.constLow, lhs.constHigh, rhs.constLow, rhs.constHigh, function(l,r) return l-r end)
+          elseif ast.op=="*" then
+            ast.constLow, ast.constHigh = applyop( lhs.constLow, lhs.constHigh, rhs.constLow, rhs.constHigh, function(l,r) return l*r end)
+          elseif ast.op=="/" then
+            ast.constLow, ast.constHigh = applyop( lhs.constLow, lhs.constHigh, rhs.constLow, rhs.constHigh, function(l,r) return l/r end)
+          end
+        end
+
         local thistype, lhscast, rhscast = darkroom.type.meet( lhs.type, rhs.type, ast.op, origast )
         
         if thistype==nil then
@@ -609,21 +576,17 @@ function darkroom.typedAST._toTypedAST(inast)
         end
         
         ast.expr = expr
+        ast.index = inputs.index[1]
 
-        if darkroom.typedAST.checkConstantExpr(origast["index"])==false then
-          darkroom.error("index must be a constant expression",origast:linenumber(), origast:offset(), origast:filename())
+        if ast.index.constLow==nil then
+          darkroom.error( "index must be a constant expression", origast:linenumber(), origast:offset(), origast:filename() )
         end
 
-        local range = origast["index"]:eval(1,inast)
-
-        if range:min(1)<0 or range:max(1) >= darkroom.type.arrayLength(expr.type) then
-          darkroom.error("index value out of range. It is ["..range:min(1)..","..range:max(1).."] but should be within [0,"..(darkroom.type.arrayLength(expr.type)-1).."]",origast:linenumber(), origast:offset(), origast:filename())
+        if ast.index.constLow<0 or ast.index.constHigh >= darkroom.type.arrayLength(expr.type) then
+          darkroom.error( "index value out of range. It is ["..ast.index.constLow..","..ast.index.constHigh.."] but should be within [0,"..(darkroom.type.arrayLength(expr.type)-1).."]", origast:linenumber(), origast:offset(), origast:filename() )
         end
 
-        ast.index = origast["index"]
-        ast._indexTAST = inputs.index[1] -- used to track references
         ast.type = darkroom.type.astArrayOver(expr)
-        
       elseif ast.kind=="transform" then
         ast.expr = inputs["expr"][1]
         
@@ -644,11 +607,15 @@ function darkroom.typedAST._toTypedAST(inast)
         local i=1
         while ast["arg"..i] do
           -- if we got here we can assume it's valid
-          local translate,multN, multD=darkroom.typedAST.synthOffset( origast["arg"..i], darkroom.dimToCoord[i])
+          local translate, multN, multD = darkroom.typedAST.synthOffset( inputs["arg"..i][1], inputs["zeroedarg"..i][1], darkroom.dimToCoord[i])
 
           if translate==nil then
             darkroom.error("Error, non-stencil access pattern", origast:linenumber(), origast:offset(), origast:filename())
           end
+
+          assert(type(translate.constLow)=="number")
+          assert(type(translate.constHigh)=="number")
+          assert(translate.type:isInt() or translate.type:isUint())
 
           newtrans["translate"..i]=translate
           newtrans["scaleN"..i]=multD*ast.expr["scaleN"..i]
@@ -751,6 +718,19 @@ function darkroom.typedAST._toTypedAST(inast)
       elseif ast.kind=="mapreducevar" then
         ast.type = darkroom.type.int(32)
         ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
+
+        if type(inputs.low[1].constLow)~="number" or inputs.low[1].constLow~=inputs.low[1].constHigh then
+          darkroom.error("Map reduce var range low must be a constant",origast:linenumber(),origast:offset(), origast:filename())
+        end
+
+        if type(inputs.high[1].constLow)~="number" or inputs.high[1].constLow~=inputs.high[1].constHigh then
+          darkroom.error("Map reduce var range low must be a constant",origast:linenumber(),origast:offset(), origast:filename())
+        end
+
+        ast.low = inputs.low[1]
+        ast.high = inputs.high[1]
+        ast.constLow = inputs.low[1].constLow
+        ast.constHigh = inputs.high[1].constLow
       elseif ast.kind=="iterateload" then
         ast.type = inputs._expr[1].type
 --        ast._expr = inputs._expr[1] -- we keep this around to make the stencil, kernelGraph, and code motion stuff work correctly
@@ -809,11 +789,11 @@ function darkroom.typedAST._toTypedAST(inast)
         ast.y = inputs.y[1]
 
         for _,v in pairs({"minX","maxX","minY","maxY"}) do
-          local res = ast[v]:eval(1,darkroom.typedAST.new({}):copyMetadataFrom(origast))
-          if res:area()~=1 then
-            darkroom.error("Argument "..v.." to gather must be a constant",origast:linenumber(),origast:offset(),origast:filename())
+          local res = inputs[v][1]
+          if type(res.constLow)~="number" or res.constLow~=res.constHigh then
+            darkroom.error("Argument "..v.." to gather must be a constant", origast:linenumber(), origast:offset(), origast:filename())
           end
-          ast[v] = res:min(1)
+          ast[v] = res
         end
 
         if darkroom.type.isInt(ast.x.type)==false then
@@ -853,24 +833,13 @@ function darkroom.typedAST._toTypedAST(inast)
       elseif ast.kind=="load" then
         -- already has a type
         ast.scaleN1=1; ast.scaleD1=1; ast.scaleN2=1; ast.scaleD2=1;
+        assert(inputs.relX~=nil)
+        assert(inputs.relY~=nil)
+        ast.relX = inputs.relX[1]
+        ast.relY = inputs.relY[1]
       elseif ast.kind=="mapreduce" then
 
-        local i = 1
-        while ast["varname"..i] do
-          ast["varlow"..i] = ast["varlow"..i]:eval(1,darkroom.typedAST.new({}):copyMetadataFrom(origast))
-          if ast["varlow"..i]:area()~=1 then 
-            darkroom.error("map reduce variable range must be a constant",ast:linenumber(),ast:offset(),ast:filename())
-          end
-          ast["varlow"..i] = ast["varlow"..i]:min(1)
-
-          ast["varhigh"..i] = ast["varhigh"..i]:eval(1,darkroom.typedAST.new({}):copyMetadataFrom(origast))
-          if ast["varhigh"..i]:area()~=1 then 
-            darkroom.error("map reduce variable range must be a constant",ast:linenumber(),ast:offset(),ast:filename())
-          end
-          ast["varhigh"..i] = ast["varhigh"..i]:min(1)
-
-          i = i + 1
-        end
+        origast:map("varnode", function(n,i) ast["varnode"..i] = inputs["varnode"..i][1] end)
 
         if ast.reduceop=="sum" or ast.reduceop=="max" or ast.reduceop=="min" then
           ast.type = inputs.expr[1].type
@@ -885,7 +854,7 @@ function darkroom.typedAST._toTypedAST(inast)
             darkroom.error("Pure map can only be one dimensional", origast:linenumber(), origast:offset(), origast:filename())
           end
 
-          if ast.varlow1~=0 then
+          if ast.varnode1.low.constLow~=0 or ast.varnode1.low.constLow~=ast.varnode1.low.constHigh or ast.varnode1.high.constLow~=ast.varnode1.high.constHigh then
             darkroom.error("Pure map can only have range 0 to N", origast:linenumber(), origast:offset(), origast:filename())
           end
 
@@ -893,7 +862,7 @@ function darkroom.typedAST._toTypedAST(inast)
             darkroom.error("pure map can only be applied to scalar quantities", origast:linenumber(), origast:offset(), origast:filename())
           end
 
-          ast.type = darkroom.type.array(inputs.expr[1].type,ast.varhigh1+1)
+          ast.type = darkroom.type.array(inputs.expr[1].type,ast.varnode1.high.constLow+1)
         else
           darkroom.error("Unknown reduce operator '"..ast.reduceop.."'")
         end
@@ -952,6 +921,7 @@ function darkroom.typedAST._toTypedAST(inast)
       if darkroom.type.isType(ast.type)==false then print(ast.kind) end
       ast = darkroom.typedAST.new(ast):copyMetadataFrom(origast)
       assert(darkroom.type.isType(ast.type))
+      if type(ast.constLow)=="number" then assert(ast.constLow<=ast.constHigh) end
 
       -- rules for finding the largest scale:
       -- (1/1), (2/1), (4/1) => 4 (even if they have common factors, largest number is chosen)

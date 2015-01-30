@@ -19,6 +19,16 @@ function Stencil.new()
   return setmetatable(ns, StencilMT)
 end
 
+function Stencil.newSquare(minX,maxX,minY,maxY)
+  assert(type(minX)=="number")
+  assert(type(maxX)=="number")
+  assert(type(minY)=="number")
+  assert(type(maxY)=="number")
+  assert(maxX>=minX)
+  assert(maxY>=minY)
+  return Stencil.new():add(minX,minY,0):add(maxX,maxY,0)
+end
+
 -- return a 'deep copy' of this stencil
 -- note, this is not actually a deep copy, b/c we want to keep the key pointers the same
 function Stencil:copy()

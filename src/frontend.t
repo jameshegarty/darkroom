@@ -597,8 +597,9 @@ function darkroom.compileTimeProcess(imfunc, envfn)
 
       local i,vars,varnode = 1,{},{}
       while inp["varname"..i] do 
-        newNode["__varid"..i] = {}
-        newNode["varnode"..i] = darkroom.ast.new({kind="mapreducevar", id = i, mapreduceNode = newNode["__varid"..i], mapreduceNodeKey = newNode.__key}):copyMetadataFrom(inp)
+        newNode["varnode"..i] = darkroom.ast.new({kind="mapreducevar", id = i, low = newNode["varlow"..i], high = newNode["varhigh"..i],  mapreduceNodeKey = newNode.__key, varname=newNode["varname"..i]}):copyMetadataFrom(inp)
+        newNode["varlow"..i] = nil
+        newNode["varhigh"..i] = nil
         vars[inp["varname"..i]] = 1
         varnode[inp["varname"..i]] = newNode["varnode"..i]
         i=i+1 
@@ -747,6 +748,10 @@ function darkroom.compileTimeProcess(imfunc, envfn)
             darkroom.error("At least two arguments must be specified when transforming.",
                         inp:linenumber(),inp:offset())
           end
+
+          -- hack: b/c of our wacky syntax, we remove the 'x' or 'y' early so
+          -- that this will turn into a constant expr for the offset
+          inp:map("arg", function(n,i) newnode["zeroedarg"..i] = n:S("position"):process( function(v) return darkroom.ast.new({kind="value",value=0}):copyMetadataFrom(v) end) end)
 
           return darkroom.ast.new(newnode):copyMetadataFrom(inp)
         else

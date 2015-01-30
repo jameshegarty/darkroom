@@ -4,8 +4,9 @@ function darkroom.input( imtype )
   imtype = darkroom.type.fromTerraType(imtype)
 
   assert(darkroom.type.isType(imtype))
-
-  local res  = darkroom.ast.new({kind="load", type = imtype, relX=0, relY=0, from=darkroom._inputCount} ):setLinenumber(0):setOffset(0):setFilename("null_special")
+  
+  local zero = darkroom.ast.new({kind="value", value=0}):setLinenumber(0):setOffset(0):setFilename("null_special")
+  local res  = darkroom.ast.new({kind="load", type = imtype, relX=zero, relY=zero, from=darkroom._inputCount} ):setLinenumber(0):setOffset(0):setFilename("null_special")
   res:setName("cropSpecial"..(darkroom._inputCount).."Node")
   darkroom._inputCount = darkroom._inputCount + 1
 

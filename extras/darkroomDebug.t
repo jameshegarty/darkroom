@@ -296,18 +296,19 @@ function astPrintPrettys(root)
   elseif self.kind=="value" then
     out=tostring(self.value)
   elseif self.kind=="load" then
-    out="_load_"..self.from.."("..self.relX..","..self.relY..")"
+    out="_load_"..self.from.."("..inputs.relX..","..inputs.relY..")"
   elseif self.kind=="iterate" then
     out="iterate "..self.iteratorName.."="..inputs.iterationSpaceLow..","..inputs.iterationSpaceHigh.." reduce("..self.reduceop..") "..inputs.expr.." end"
   elseif self.kind=="mapreduce" then
     local vars,i = "",1
     while self["varname"..i] do
-      vars = vars.."_mr_"..self["varname"..i]..tostring(self["__varid"..i]).."="..inputs["varlow"..i]..","..inputs["varhigh"..i].." "
+      local varnode = self["varnode"..i]
+      vars = vars.."_mr_"..self["varname"..i].."="..astPrintPrettys(varnode.low)..","..astPrintPrettys(varnode.high).." "
       i=i+1
     end
     out="map "..vars.." reduce("..self.reduceop..") "..inputs.expr.." end"
   elseif self.kind=="mapreducevar" then
-    out="_mr_"..tostring(self.mapreduceNode).."_"..self.id
+    out="_mr_"..self.varname
   elseif self.kind=="iterationvar" then
     out="_itervar_"..self.varname
   elseif self.kind=="iterateload" then
@@ -581,7 +582,7 @@ function typedASTPrintPrettys(root)
     local i=1
     while self["translate"..i] do
       -- translate is either a number or an AST
-      out = out..darkroom.dimToCoord[i].."*("..(self["scaleD"..i]*self.expr["scaleN"..i]).."/"..(self["scaleN"..i]*self.expr["scaleD"..i])..")+"..astPrintPrettys(self["translate"..i], root, assignments)
+      out = out..darkroom.dimToCoord[i].."*("..(self["scaleD"..i]*self.expr["scaleN"..i]).."/"..(self["scaleN"..i]*self.expr["scaleD"..i])..")+"..inputs["translate"..i]
       if self["translate"..(i+1)] then out = out.."," end
       i=i+1
     end
@@ -629,7 +630,7 @@ function typedASTPrintPrettys(root)
 
     out = out..")"
   elseif self.kind=="index" then
-    out = out.."("..inputs.expr..")["..astPrintPrettys(self.index).."]"
+    out = out.."("..inputs.expr..")["..inputs.index.."]"
   elseif self.kind=="gather" then
     out = "gather(\ninput = "..inputs._input..",\n"
     out = out.."x = "..inputs.x..",\n"
@@ -638,11 +639,11 @@ function typedASTPrintPrettys(root)
   elseif self.kind=="load" then
     local n = self.from
     if type(self.from)=="table" then n=self.from:name() end
-    out = "load_from_"..n.."("..astPrintPrettys(self.relX)..","..astPrintPrettys(self.relY)..")"
+    out = "load_from_"..n.."("..inputs.relX..","..inputs.relY..")"
   elseif self.kind=="mapreduce" then
     local vars,i = "",1
     while self["varname"..i] do
-      vars = vars.."_mr_"..self["varname"..i]..tostring(self["__varid"..i]).."="..self["varlow"..i]..","..self["varhigh"..i].." "
+      vars = vars.."_mr_"..self["varname"..i].."="..typedASTPrintPrettys(self["varnode"..i].low)..","..typedASTPrintPrettys(self["varnode"..i].high).." "
       i=i+1
     end
 
@@ -654,7 +655,7 @@ function typedASTPrintPrettys(root)
 
     out = "map "..vars.." reduce("..self.reduceop..") "..inputs.expr.." end"
   elseif self.kind=="mapreducevar" then
-    out = "_mr_"..tostring(self.mapreduceNode).."_"..self.id
+    out = "_mr_"..self.varname
   elseif self.kind=="iterationvar" then
     out = "_itervar_"..self.varname
   elseif self.kind=="gatherColumn" then
