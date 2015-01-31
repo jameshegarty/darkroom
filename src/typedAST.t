@@ -422,7 +422,7 @@ function darkroom.typedAST._toTypedAST(inast)
         ast.expr = inputs["expr"][1]
         
         if ast.op=="-" then
-          if darkroom.type.astIsUint(ast.expr) then
+          if ast.expr.type:isUint() then
             darkroom.warning("You're negating a uint, this is probably not what you want to do!", origast:linenumber(), origast:offset(), origast:filename())
           end
           
@@ -458,13 +458,13 @@ function darkroom.typedAST._toTypedAST(inast)
           elseif ast.expr.type==darkroom.type.float(64) then
             ast.type = darkroom.type.float(64)
           else
-            darkroom.error("sin, cos, arctan, ln and exp only work on floating point types, not "..ast.expr.type:str(),origast:linenumber(),origast:offset(),origast:filename())
+            darkroom.error("sin, cos, arctan, ln and exp only work on floating point types, not "..ast.expr.type:str(), origast:linenumber(), origast:offset(), origast:filename() )
           end
         elseif ast.op=="arrayAnd" then
-          if darkroom.type.isArray(ast.expr.type) and darkroom.type.isBool(darkroom.type.arrayOver(ast.expr.type)) then
+          if ast.expr.type:isArray() and ast.expr.type:arrayOver():isBool() then
             ast.type = darkroom.type.bool()
           else
-            darkroom.error("vectorAnd only works on arrays of bools",origast:linenumber(), origast:offset())
+            darkroom.error("vectorAnd only works on arrays of bools", origast:linenumber(), origast:offset(), origast:filename() )
           end
         elseif ast.op=="print" then
           ast.type = ast.expr.type
@@ -525,17 +525,18 @@ function darkroom.typedAST._toTypedAST(inast)
         local b = inputs["b"][1]
 
         if ast.kind=="vectorSelect" then
-          if darkroom.type.arrayOver(cond.type)~=darkroom.type.bool() then
-            darkroom.error("Error, condition of vectorSelect must be array of booleans. ",origast:linenumber(),origast:offset())
+          if cond.type:arrayOver()~=darkroom.type.bool() then
+            print("IB",cond.type:arrayOver())
+            darkroom.error("Error, condition of vectorSelect must be array of booleans. ", origast:linenumber(), origast:offset(), origast:filename() )
             return nil
           end
 
-          if darkroom.type.isArray(cond.type)==false or
-            darkroom.type.isArray(a.type)==false or
-            darkroom.type.isArray(b.type)==false or
-            darkroom.type.arrayLength(a.type)~=darkroom.type.arrayLength(b.type) or
-            darkroom.type.arrayLength(cond.type)~=darkroom.type.arrayLength(a.type) then
-            darkroom.error("Error, all arguments to vectorSelect must be arrays of the same length",origast:linenumber(),origast:offset())
+          if cond.type:isArray()==false or
+            a.type:isArray()==false or
+            b.type:isArray()==false or
+            a.type:arrayLength()~=b.type:arrayLength() or
+            cond.type:arrayLength()~=a.type:arrayLength() then
+            darkroom.error("Error, all arguments to vectorSelect must be arrays of the same length", origast:linenumber(), origast:offset(), origast:filename() )
             return nil            
           end
         else
@@ -544,14 +545,14 @@ function darkroom.typedAST._toTypedAST(inast)
             return nil
           end
 
-          if darkroom.type.isArray(a.type)~=darkroom.type.isArray(b.type) then
+          if a.type:isArray()~=b.type:isArray() then
             darkroom.error("Error, if any results of select are arrays, all results must be arrays",origast:linenumber(),origast:offset())
             return nil
           end
           
-          if darkroom.type.isArray(a.type) and
-            darkroom.type.arrayLength(a.type)~=darkroom.type.arrayLength(b.type) then
-            darkroom.error("Error, array arguments to select must be the same length",origast:linenumber(),origast:offset())
+          if a.type:isArray() and
+            a.type:arrayLength()~=b.type:arrayLength() then
+            darkroom.error("Error, array arguments to select must be the same length", origast:linenumber(), origast:offset(), origast:filename() )
             return nil
           end
         end
@@ -569,7 +570,7 @@ function darkroom.typedAST._toTypedAST(inast)
       elseif ast.kind=="index" then
         local expr = inputs["expr"][1]
         
-        if darkroom.type.isArray(expr.type)==false then
+        if expr.type:isArray()==false then
           expr.type:print()
           darkroom.error("Error, you can only index into an array type!",origast:linenumber(),origast:offset(), origast:filename())
           os.exit()
@@ -582,11 +583,11 @@ function darkroom.typedAST._toTypedAST(inast)
           darkroom.error( "index must be a constant expression", origast:linenumber(), origast:offset(), origast:filename() )
         end
 
-        if ast.index.constLow<0 or ast.index.constHigh >= darkroom.type.arrayLength(expr.type) then
+        if ast.index.constLow<0 or ast.index.constHigh >= expr.type:channels() then
           darkroom.error( "index value out of range. It is ["..ast.index.constLow..","..ast.index.constHigh.."] but should be within [0,"..(darkroom.type.arrayLength(expr.type)-1).."]", origast:linenumber(), origast:offset(), origast:filename() )
         end
 
-        ast.type = darkroom.type.astArrayOver(expr)
+        ast.type = expr.type:arrayOver()
       elseif ast.kind=="transform" then
         ast.expr = inputs["expr"][1]
         
@@ -646,17 +647,17 @@ function darkroom.typedAST._toTypedAST(inast)
         local mtype = ast.expr1.type
         local atype, btype
         
-        if darkroom.type.isArray(mtype) then
-          darkroom.error("You can't have nested arrays (index 0 of vector)",origast:linenumber(),origast:offset(),origast:filename())
+        if mtype:isArray() then
+          darkroom.error("You can't have nested arrays (index 0 of vector)", origast:linenumber(), origast:offset(), origast:filename() )
         end
         
         local cnt = 2
         while ast["expr"..cnt] do
-          if darkroom.type.isArray(ast["expr"..cnt].type) then
+          if ast["expr"..cnt].type:isArray() then
             darkroom.error("You can't have nested arrays (index "..(i-1).." of vector)")
           end
           
-          mtype, atype, btype = darkroom.type.meet( mtype, ast["expr"..cnt].type, "array", origast)
+          mtype, atype, btype = darkroom.type.meet( mtype, ast["expr"..cnt].type, "array", origast )
           
           if mtype==nil then
             darkroom.error("meet error")      
@@ -744,9 +745,7 @@ function darkroom.typedAST._toTypedAST(inast)
         -- tapLUTs should be tagged with type already
         assert(darkroom.type.isType(ast.type))
         
-        if darkroom.type.isUint(ast.index.type)==false and
-          darkroom.type.isInt(ast.index.type)==false then
-          
+        if ast.index.type:isUint()==false and ast.index.type:isInt()==false then
           darkroom.error("Error, index into tapLUT must be integer", origast:linenumber(), origast:offset(), origast:filename())
           return nil
         end
@@ -796,11 +795,11 @@ function darkroom.typedAST._toTypedAST(inast)
           ast[v] = res
         end
 
-        if darkroom.type.isInt(ast.x.type)==false then
+        if ast.x.type:isInt()==false then
           darkroom.error("Error, x argument to gather must be int but is "..ast.x.type:str(), origast:linenumber(), origast:offset())
         end
 
-        if darkroom.type.isInt(ast.y.type)==false then
+        if ast.y.type:isInt()==false then
           darkroom.error("Error, y argument to gather must be int but is "..ast.y.type:str(), origast:linenumber(), origast:offset())
         end
       elseif ast.kind=="gatherColumn" then

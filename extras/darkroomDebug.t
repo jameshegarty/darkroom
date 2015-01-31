@@ -344,7 +344,7 @@ function astPrintPrettys(root)
   elseif self.kind=="crop" then
     out = "crop("..inputs.expr..", shiftY=" .. self.shiftY .. ")"
   elseif self.kind=="cast" then
-    out = "cast("..inputs.expr..","..self.type:str()..")"
+    out = "cast("..inputs.expr..","..tostring(self.type)..")"
   elseif self.kind=="type" then
     out = self.type:str()
   elseif self.kind=="let" then
@@ -527,7 +527,7 @@ function typedASTPrintPrettys(root)
   local res = root:visitEach(
     function( self, inputs )
 
-  local out = "["..darkroom.type.typeToString(self.type).."]"
+  local out = "["..tostring(self.type).."]"
 
   if self.kind=="func" then
     local i=1

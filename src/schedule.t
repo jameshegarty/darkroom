@@ -164,12 +164,14 @@ function shift(graph, shifts, largestScaleY, HWWidth)
 
                   sy = sy / looprate(inputKernel.kernel.scaleN2,inputKernel.kernel.scaleD2,1)
                   assert(sy==math.floor(sy)) -- only powers of 2 supported
+                  sy = darkroom.typedAST.new({kind="value",value=sy,type=r.relY.type,constLow=sy,constHigh=sy}):copyMetadataFrom(nn)
 
                   sx = sx / looprate(inputKernel.kernel.scaleN1,inputKernel.kernel.scaleD1,1)
                   assert(sx==math.floor(sx)) -- only powers of 2 supported
+                  sx = darkroom.typedAST.new({kind="value",value=sx,type=r.relY.type,constLow=sx,constHigh=sx}):copyMetadataFrom(nn)
 
-                  r.relY = synthRel(r.relY, sy):optimize()
-                  r.relX = synthRel(r.relX, sx):optimize()
+                  r.relY = synthRel(r.relY, sy)
+                  r.relX = synthRel(r.relX, sx)
                   if r.maxX~=nil then
                     r.maxX = synthRel(r.maxX, sx)
                     r.minX = synthRel(r.minX, sx)

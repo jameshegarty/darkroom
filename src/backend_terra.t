@@ -635,7 +635,7 @@ function darkroom.terracompiler.symbol(_type,pointer,vectorN)
   assert(darkroom.type.isType(_type))
   assert(vectorN==nil or type(vectorN)=="number")
   
-  return symbol(darkroom.type.toTerraType(_type,pointer,vectorN))
+  return symbol(_type:toTerraType(pointer,vectorN))
 end
 
 function darkroom.terracompiler.vectorizeBinaryPointwise(func,lhs,rhs,V)
@@ -914,7 +914,7 @@ function darkroom.terracompiler.codegen(
           local finalOut = {}
 
           for c = 1, node.type:channels() do
-            local sum = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V), node.reduceop)
+            local sum = symbol(node.type:baseType():toTerraType(false,V), node.reduceop)
 
             local out
             if node.reduceop=="sum" then
@@ -940,7 +940,7 @@ function darkroom.terracompiler.codegen(
             table.insert(finalOut, sum)
           end
 
-          local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
+          local packedSymbol = symbol(node.type:baseType():toTerraType(false,V)[node.type:channels()],"pack")
           addstat(bb, quote var [packedSymbol] = array(finalOut) end)
           for c=0,node.type:channels()-1 do finalOut[c+1] = `[packedSymbol][c] end
           codegenResult[node] = finalOut
@@ -951,7 +951,7 @@ function darkroom.terracompiler.codegen(
           -- (they are the mapreducevars that yield the smallest value)
 
           local set = symbol(bool, "set")
-          local value = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V), node.reduceop.."Value")
+          local value = symbol(node.type:baseType():toTerraType(false,V), node.reduceop.."Value")
           local results = {}
           local declareResults = {}
           local assign = {}
@@ -994,7 +994,7 @@ function darkroom.terracompiler.codegen(
           end
 
           addstat(bb, quote var [set] = false; var [value] = 0; declareResults; out end,{statexprbb})
-          local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
+          local packedSymbol = symbol(node.type:baseType():toTerraType(false,V)[node.type:channels()],"pack")
           
           table.insert(results, value) -- last value returned is the extremal value
           addstat(bb, quote var [packedSymbol] = array(results) end)
@@ -1006,7 +1006,7 @@ function darkroom.terracompiler.codegen(
         elseif node.reduceop=="none" then
           assert(node.varnode1.low.constLow==0)
           assert(node.varnode1.high.constLow>=0)
-          local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
+          local packedSymbol = symbol(node.type:baseType():toTerraType(false,V)[node.type:channels()],"pack")
           addstat(bb, quote 
                          var [packedSymbol]
                          for [mapreducevarSymbols[node.varnode1]]=[codegenResult[node.varnode1.low][1]][0],[codegenResult[node.varnode1.high][1]][0]+1 do 
@@ -1044,7 +1044,7 @@ function darkroom.terracompiler.codegen(
           -- be an array of the same size.
           table.insert(notFiltered, inputs.cond[1])
 
-          table.insert(finalOut, symbol(darkroom.type.toTerraType(node.type:baseType(),false,V),"filteredOut"))
+          table.insert(finalOut, symbol(node.type:baseType():toTerraType(false,V),"filteredOut"))
           table.insert(decl,quote var [finalOut[c]] = 0 end)
           table.insert(res,quote [finalOut[c]] = [inputs.expr[c]]; end)
           finalOut[c] = `[finalOut[c]]
@@ -1058,7 +1058,7 @@ function darkroom.terracompiler.codegen(
                     [res]
                   end end,{stat[condbb],stat[exprbb]})
         
-        local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
+        local packedSymbol = symbol(node.type:baseType():toTerraType(false,V)[node.type:channels()],"pack")
         addstat(bb, quote var [packedSymbol] = array(finalOut) end)
 
         codegenResult[node] = finalOut
@@ -1170,7 +1170,7 @@ function darkroom.terracompiler.codegen(
             val = node.value[c]
           end
 
-          out = `[darkroom.type.toTerraType(node.type:baseType(),false,V)](val)
+          out = `[node.type:baseType():toTerraType(false,V)](val)
         elseif node.kind=="tap" then
           -- kind of a cheap hack to save threading around some state
           local entry
@@ -1199,7 +1199,7 @@ function darkroom.terracompiler.codegen(
             assert(false)
           end
 
-          local ttype = darkroom.type.toTerraType(node.type:baseType(),false, V)
+          local ttype = node.type:baseType():toTerraType(false, V)
 
           local expr
           if node.type:isArray() and node.expr.type:isArray()==false then
@@ -1292,7 +1292,7 @@ function darkroom.terracompiler.codegen(
         assert(terralib.isquote(out))
 
         -- make absolutely sure that we end up with the type we expect
-        out = `[darkroom.type.toTerraType(node.type:baseType(),false,V)](out)
+        out = `[node.type:baseType():toTerraType(false,V)](out)
 
         -- only make a statement if necessary
         if false and node:parentCount(inkernel)==1 then
@@ -1306,7 +1306,7 @@ function darkroom.terracompiler.codegen(
       end
 
       -- if this is an array and we index into it, pack it into a terra array
-      local packedSymbol = symbol(darkroom.type.toTerraType(node.type:baseType(),false,V)[node.type:channels()],"pack")
+      local packedSymbol = symbol(node.type:baseType():toTerraType(false,V)[node.type:channels()],"pack")
       local bb = node:calculateMinBB(inkernel)
       addstat(bb, quote var [packedSymbol] = array(finalOut) end )
 

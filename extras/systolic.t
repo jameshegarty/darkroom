@@ -7,21 +7,6 @@ local binopToVerilog={["+"]="+",["*"]="*",["<<"]="<<<",[">>"]=">>>",["pow"]="**"
 
 local binopToVerilogBoolean={["=="]="==",["and"]="&&",["~="]="!="}
 
-function concat(t1,t2)
-    for i=1,#t1 do
-      if type(t1[i])~="string" then
-        print(t1[i])
-        assert(false)
-      end
-    end
-
-    for i=1,#t2 do
-      assert(type(t2[i])=="string")
-      t1[#t1+1] = t2[i]
-    end
-    return t1
-end
-
 function declareReg(type, name, initial, comment)
   if comment==nil then comment="" end
 

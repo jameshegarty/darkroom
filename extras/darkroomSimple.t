@@ -165,11 +165,11 @@ function orionSimple.tapLUT(ty, value)
 
   orionSimple.taps[r.id+1] = r
 
-  if darkroom.type.arrayLength(r.type)~=#value then
+  if r.type:channels()~=#value then
     darkroom.error("Number of elements in tap value doesn't match type")
   end
 
-  orionSimple.tapInputs[r.id+1] = `arrayof([darkroom.type.arrayOver(r.type):toTerraType()],value)
+  orionSimple.tapInputs[r.id+1] = `arrayof([r.type:arrayOver():toTerraType()],value)
 
   return r
 end

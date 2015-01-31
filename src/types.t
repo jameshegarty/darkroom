@@ -1,7 +1,21 @@
-
 darkroom.type={}
 TypeFunctions = {}
-TypeMT = {__index=TypeFunctions}
+TypeMT = {__index=TypeFunctions, __tostring=function(ty)
+  if ty.type=="bool" then
+    return "bool"
+  elseif ty.type=="int" then
+    return "int"..ty.precision
+  elseif ty.type=="uint" then
+    return "uint"..ty.precision
+  elseif ty.type=="float" then
+    return "float"..ty.precision
+  elseif ty.type=="array" then
+    return tostring(ty.over).."["..table.concat(ty.size,",").."]"
+  end
+
+  print("Error, typeToString input doesn't appear to be a type")
+  os.exit()
+end}
 
 darkroom.type._bool=setmetatable({type="bool"}, TypeMT)
 
@@ -27,14 +41,30 @@ function darkroom.type.float(prec)
 end
 
 darkroom.type._array={}
+darkroom.type._arraySize={}
+-- the last index of size is the innermost size
+-- {3,4} means 3 arrays of size 4. [x,y] where x in [0,2], y is in [0,3]
+-- But we store this in darkroom.type._array in the opposite order to be unambiguous
 function darkroom.type.array(_type,size)
-  assert(type(size)=="number")
+  if type(size)=="number" then size={size} end
+  assert(type(size)=="table")
+  map(size, function(n) assert(type(n)=="number" and n>1) end)
   assert(getmetatable(_type)==TypeMT)
-  assert(darkroom.type.isArray(_type)==false)
 
-  darkroom.type._array[_type] = darkroom.type._array[_type] or {}
-  darkroom.type._array[_type][size] = darkroom.type._array[_type][size] or setmetatable({type="array", over=_type, size=size},TypeMT)
-  return darkroom.type._array[_type][size]
+  local ty = _type
+  if _type.type=="array" then 
+    size = concat(size,_type.size) 
+    ty = _type.type
+  end
+  assert(ty:isArray()==false)
+
+  -- we uniqify the size array
+  darkroom.type._arraySize[#size] = darkroom.type._arraySize[#size] or {}
+  size = deepsetweak(darkroom.type._arraySize[#size], size, size)
+
+  darkroom.type._array[ty] = darkroom.type._array[ty] or {}
+  darkroom.type._array[ty][size] = darkroom.type._array[ty][size] or setmetatable({type="array", over=ty, size=size},TypeMT)
+  return darkroom.type._array[ty][size]
 end
 
 function darkroom.type.fromTerraType(ty, linenumber, offset, filename)
@@ -120,170 +150,170 @@ function darkroom.type.meet( a, b, op, ast)
 
   local treatedAsBinops = {["select"]=1, ["vectorSelect"]=1,["array"]=1, ["mapreducevar"]=1, ["dot"]=1, ["min"]=1, ["max"]=1}
 
-    if darkroom.type.isArray(a) and darkroom.type.isArray(b) then
-      if darkroom.type.arrayLength(a)~=darkroom.type.arrayLength(b) then
-        print("Type error, array length mismatch")
-        return nil
-      end
-      
-      if op=="dot" then
-        local rettype,at,bt = darkroom.type.meet(a.over,b.over,op,ast)
-        local convtypea = darkroom.type.array(at,darkroom.type.arrayLength(a))
-        local convtypeb = darkroom.type.array(bt,darkroom.type.arrayLength(a))
-        return rettype, convtypea, convtypeb
-      elseif darkroom.cmpops[op] then
-        -- cmp ops are elementwise
-        local rettype,at,bt = darkroom.type.meet(a.over,b.over,op,ast)
-        local convtypea = darkroom.type.array(at,darkroom.type.arrayLength(a))
-        local convtypeb = darkroom.type.array(bt,darkroom.type.arrayLength(a))
-
-        local thistype = darkroom.type.array(darkroom.type.bool(), darkroom.type.arrayLength(a))
-        return thistype, convtypea, convtypeb
-      elseif darkroom.binops[op] or treatedAsBinops[op] then
-        -- do it pointwise
-        local thistype = darkroom.type.array(darkroom.type.meet(a.over,b.over,op,ast),darkroom.type.arrayLength(a))
-        return thistype, thistype, thistype
-      elseif op=="pow" then
-        local thistype = darkroom.type.array(darkroom.type.float(32),darkroom.type.arrayLength(a))
-        return thistype, thistype, thistype
-      else
-        print("OP",op)
-        assert(false)
-      end
-      
-    elseif a.type=="int" and b.type=="int" then
-      local prec = math.max(a.precision,b.precision)
-      local thistype = darkroom.type.int(prec)
-
-      if darkroom.cmpops[op] then
-        return darkroom.type.bool(), thistype, thistype
-      elseif darkroom.binops[op] or treatedAsBinops[op] then
-        return thistype, thistype, thistype
-      elseif op=="pow" then
-        local thistype = darkroom.type.float(32)
-        return thistype, thistype, thistype
-      else
-        print("OP",op)
-        assert(false)
-      end
-    elseif a.type=="uint" and b.type=="uint" then
-      local prec = math.max(a.precision,b.precision)
-      local thistype = darkroom.type.uint(prec)
-
-      if darkroom.cmpops[op] then
-        return darkroom.type.bool(), thistype, thistype
-      elseif darkroom.binops[op] or treatedAsBinops[op] then
-        return thistype, thistype, thistype
-      elseif op=="pow" then
-        local thistype = darkroom.type.float(32)
-        return thistype, thistype, thistype
-      else
-        print("OP2",op)
-        assert(false)
-      end
-    elseif (a.type=="uint" and b.type=="int") or (a.type=="int" and b.type=="uint") then
-
-      local ut = a
-      local t = b
-      if a.type=="int" then ut,t = t,ut end
-      
-      local prec
-      if ut.precision==t.precision and t.precision < 64 then
-        prec = t.precision * 2
-      elseif ut.precision<t.precision then
-        prec = math.max(a.precision,b.precision)
-      else
-        darkroom.error("Can't meet a "..ut:str().." and a "..t:str(),ast:linenumber(),ast:offset(),ast:filename())
-      end
-      
-      local thistype = darkroom.type.int(prec)
-      
-      if darkroom.cmpops[op] then
-        return darkroom.type.bool(), thistype, thistype
-      elseif darkroom.binops[op] or treatedAsBinops[op] then
-        return thistype, thistype, thistype
-      elseif op=="pow" then
-        return thistype, thistype, thistype
-      else
-        print( "operation " .. op .. " is not implemented for aType:" .. a.type .. " bType:" .. b.type .. " " )
-        assert(false)
-      end
-      
-    elseif (a.type=="float" and (b.type=="uint" or b.type=="int")) or 
-      ((a.type=="uint" or a.type=="int") and b.type=="float") then
-
-      local thistype
-      local ftype = a
-      local itype = b
-      if b.type=="float" then ftype,itype=itype,ftype end
-      
-      if ftype.precision==32 and itype.precision<32 then
-        thistype = darkroom.type.float(32)
-      elseif ftype.precision==32 and itype.precision==32 then
-        thistype = darkroom.type.float(32)
-      elseif ftype.precision==64 and itype.precision<64 then
-        thistype = darkroom.type.float(64)
-      else
-        assert(false) -- NYI
-      end
-
-      if darkroom.cmpops[op] then
-        return darkroom.type.bool(), thistype, thistype
-      elseif darkroom.intbinops[op] then
-        darkroom.error("Passing a float to an integer binary op "..op,ast:linenumber(),ast:offset())
-      elseif darkroom.binops[op] or treatedAsBinops[op] then
-        return thistype, thistype, thistype
-      elseif op=="pow" then
-        local thistype = darkroom.type.float(32)
-        return thistype, thistype, thistype
-      else
-        print("OP4",op)
-        assert(false)
-      end
-
-    elseif a.type=="float" and b.type=="float" then
-
-      local prec = math.max(a.precision,b.precision)
-      local thistype = darkroom.type.float(prec)
-
-      if darkroom.cmpops[op] then
-        return darkroom.type.bool(), thistype, thistype
-      elseif darkroom.intbinops[op] then
-        darkroom.error("Passing a float to an integer binary op "..op,ast:linenumber(),ast:offset())
-      elseif darkroom.binops[op] or treatedAsBinops[op] then
-        return thistype, thistype, thistype
-      elseif op=="pow" then
-        local thistype = darkroom.type.float(32)
-        return thistype, thistype, thistype
-      else
-        print("OP3",op)
-        assert(false)
-      end
-
-    elseif a.type=="bool" and b.type=="bool" then
-      -- you can combine two bools into an array of bools
-      if darkroom.boolops[op]==nil and op~="array" then
-        print("Internal error, attempting to meet two booleans on a non-boolean op: "..op,ast:linenumber(),ast:offset())
-        return nil
-      end
-      
-      local thistype = darkroom.type.bool()
-      return thistype, thistype, thistype
-    elseif darkroom.type.isArray(a) and darkroom.type.isArray(b)==false then
-      -- we take scalar constants and duplicate them out to meet the other arguments array length
-      local thistype, lhstype, rhstype = darkroom.type.meet(a,darkroom.type.array(b,darkroom.type.arrayLength(a)),op,ast)
-      return thistype, lhstype, rhstype
-    elseif darkroom.type.isArray(a)==false and darkroom.type.isArray(b) then
-      local thistype, lhstype, rhstype = darkroom.type.meet(darkroom.type.array(a,darkroom.type.arrayLength(b)),b,op,ast)
-      return thistype, lhstype, rhstype
-    else
-      print("Type error, meet not implemented for "..darkroom.type.typeToString(a).." and "..darkroom.type.typeToString(b),"line",ast:linenumber(),ast:filename())
-      print(ast.op)
-      assert(false)
-      --os.exit()
+  if a:isArray() and b:isArray() then
+    if a:arrayLength() ~= b:arrayLength() then
+      print("Type error, array length mismatch")
+      return nil
     end
     
+    if op=="dot" then
+      local rettype,at,bt = darkroom.type.meet(a.over,b.over,op,ast)
+      local convtypea = darkroom.type.array( at, a:arrayLength() )
+      local convtypeb = darkroom.type.array( bt, a:arrayLength() )
+      return rettype, convtypea, convtypeb
+    elseif darkroom.cmpops[op] then
+      -- cmp ops are elementwise
+      local rettype,at,bt = darkroom.type.meet(a.over,b.over,op,ast)
+      local convtypea = darkroom.type.array( at, a:arrayLength() )
+      local convtypeb = darkroom.type.array( bt, a:arrayLength() )
+      
+      local thistype = darkroom.type.array( darkroom.type.bool(), a:arrayLength() )
+      return thistype, convtypea, convtypeb
+    elseif darkroom.binops[op] or treatedAsBinops[op] then
+      -- do it pointwise
+      local thistype = darkroom.type.array( darkroom.type.meet(a.over,b.over,op,ast), a:arrayLength() )
+      return thistype, thistype, thistype
+    elseif op=="pow" then
+      local thistype = darkroom.type.array(darkroom.type.float(32), a:arrayLength() )
+      return thistype, thistype, thistype
+    else
+      print("OP",op)
+      assert(false)
+    end
+      
+  elseif a.type=="int" and b.type=="int" then
+    local prec = math.max(a.precision,b.precision)
+    local thistype = darkroom.type.int(prec)
+    
+    if darkroom.cmpops[op] then
+      return darkroom.type.bool(), thistype, thistype
+    elseif darkroom.binops[op] or treatedAsBinops[op] then
+      return thistype, thistype, thistype
+    elseif op=="pow" then
+      local thistype = darkroom.type.float(32)
+      return thistype, thistype, thistype
+    else
+      print("OP",op)
+      assert(false)
+    end
+  elseif a.type=="uint" and b.type=="uint" then
+    local prec = math.max(a.precision,b.precision)
+    local thistype = darkroom.type.uint(prec)
+    
+    if darkroom.cmpops[op] then
+      return darkroom.type.bool(), thistype, thistype
+    elseif darkroom.binops[op] or treatedAsBinops[op] then
+      return thistype, thistype, thistype
+    elseif op=="pow" then
+      local thistype = darkroom.type.float(32)
+      return thistype, thistype, thistype
+    else
+      print("OP2",op)
+      assert(false)
+    end
+  elseif (a.type=="uint" and b.type=="int") or (a.type=="int" and b.type=="uint") then
+    
+    local ut = a
+    local t = b
+    if a.type=="int" then ut,t = t,ut end
+    
+    local prec
+    if ut.precision==t.precision and t.precision < 64 then
+      prec = t.precision * 2
+    elseif ut.precision<t.precision then
+      prec = math.max(a.precision,b.precision)
+    else
+      darkroom.error("Can't meet a "..ut:str().." and a "..t:str(),ast:linenumber(),ast:offset(),ast:filename())
+    end
+    
+    local thistype = darkroom.type.int(prec)
+    
+    if darkroom.cmpops[op] then
+      return darkroom.type.bool(), thistype, thistype
+    elseif darkroom.binops[op] or treatedAsBinops[op] then
+      return thistype, thistype, thistype
+    elseif op=="pow" then
+      return thistype, thistype, thistype
+    else
+      print( "operation " .. op .. " is not implemented for aType:" .. a.type .. " bType:" .. b.type .. " " )
+      assert(false)
+    end
+    
+  elseif (a.type=="float" and (b.type=="uint" or b.type=="int")) or 
+    ((a.type=="uint" or a.type=="int") and b.type=="float") then
+    
+    local thistype
+    local ftype = a
+    local itype = b
+    if b.type=="float" then ftype,itype=itype,ftype end
+    
+    if ftype.precision==32 and itype.precision<32 then
+      thistype = darkroom.type.float(32)
+    elseif ftype.precision==32 and itype.precision==32 then
+      thistype = darkroom.type.float(32)
+    elseif ftype.precision==64 and itype.precision<64 then
+      thistype = darkroom.type.float(64)
+    else
+      assert(false) -- NYI
+    end
+    
+    if darkroom.cmpops[op] then
+      return darkroom.type.bool(), thistype, thistype
+    elseif darkroom.intbinops[op] then
+      darkroom.error("Passing a float to an integer binary op "..op,ast:linenumber(),ast:offset())
+    elseif darkroom.binops[op] or treatedAsBinops[op] then
+      return thistype, thistype, thistype
+    elseif op=="pow" then
+      local thistype = darkroom.type.float(32)
+      return thistype, thistype, thistype
+    else
+      print("OP4",op)
+      assert(false)
+    end
+    
+  elseif a.type=="float" and b.type=="float" then
+    
+    local prec = math.max(a.precision,b.precision)
+    local thistype = darkroom.type.float(prec)
+    
+    if darkroom.cmpops[op] then
+      return darkroom.type.bool(), thistype, thistype
+    elseif darkroom.intbinops[op] then
+      darkroom.error("Passing a float to an integer binary op "..op,ast:linenumber(),ast:offset())
+    elseif darkroom.binops[op] or treatedAsBinops[op] then
+      return thistype, thistype, thistype
+    elseif op=="pow" then
+      local thistype = darkroom.type.float(32)
+      return thistype, thistype, thistype
+    else
+      print("OP3",op)
+      assert(false)
+    end
+    
+  elseif a.type=="bool" and b.type=="bool" then
+    -- you can combine two bools into an array of bools
+    if darkroom.boolops[op]==nil and op~="array" then
+      print("Internal error, attempting to meet two booleans on a non-boolean op: "..op,ast:linenumber(),ast:offset())
+      return nil
+    end
+    
+    local thistype = darkroom.type.bool()
+    return thistype, thistype, thistype
+  elseif a:isArray() and b:isArray()==false then
+    -- we take scalar constants and duplicate them out to meet the other arguments array length
+    local thistype, lhstype, rhstype = darkroom.type.meet( a, darkroom.type.array( b,a :arrayLength() ), op, ast )
+    return thistype, lhstype, rhstype
+  elseif a:isArray()==false and b:isArray() then
+    local thistype, lhstype, rhstype = darkroom.type.meet( darkroom.type.array(a, b:arrayLength() ), b, op, ast )
+    return thistype, lhstype, rhstype
+  else
+    print("Type error, meet not implemented for "..tostring(a).." and "..tostring(b),"line",ast:linenumber(),ast:filename())
+    print(ast.op)
     assert(false)
+    --os.exit()
+  end
+  
+  assert(false)
   return nil
 end
 
@@ -335,18 +365,18 @@ function darkroom.type.checkExplicitCast(from, to, ast)
   if from==to then
     -- obvously can return true...
     return true
-  elseif darkroom.type.isArray(from) and darkroom.type.isArray(to) then
-    if darkroom.type.arrayLength(from)~=darkroom.type.arrayLength(to) then
-      darkroom.error("Can't change array length when casting "..from:str().." to "..to:str(),ast:linenumber(),ast:offset(),ast:filename())
+  elseif from:isArray() and to:isArray() then
+    if from:arrayLength()~=to:arrayLength() then
+      darkroom.error("Can't change array length when casting "..from:str().." to "..to:str(), ast:linenumber(), ast:offset(), ast:filename() )
     end
 
     return darkroom.type.checkExplicitCast(from.over, to.over,ast)
 
-  elseif darkroom.type.isArray(from)==false and darkroom.type.isArray(to)  then
-    return darkroom.type.checkExplicitCast(from, to.over,ast)
+  elseif from:isArray()==false and to:isArray() then
+    return darkroom.type.checkExplicitCast(from, to.over, ast )
 
-  elseif darkroom.type.isArray(from) and darkroom.type.isArray(to)==false then
-    darkroom.error("Can't cast an array type to a non-array type. "..from:str().." to "..to:str(),ast:linenumber(),ast:offset(),ast:filename())
+  elseif from:isArray() and to:isArray()==false then
+    darkroom.error("Can't cast an array type to a non-array type. "..from:str().." to "..to:str(), ast:linenumber(), ast:offset(), ast:filename() )
     return false
   elseif from.type=="uint" and to.type=="uint" then
     return true
@@ -421,154 +451,14 @@ end
 ---------------------------------------------------------------------
 -- 'externally exposed' functions
 
--- this will only work on a typed ast
-function darkroom.getType(ast)
-  assert(type(ast)=="table")
-  assert(ast.type~=nil)
-  return ast.type
-end
-
-function darkroom.type.isFloat(ty)
-  assert(getmetatable(ty)==TypeMT)
-  return ty.type=="float"
-end
-
-function darkroom.type.astIsFloat(ast)
-  return darkroom.type.isFloat(darkroom.getType(ast))	 
-end
-
-function darkroom.type.isUint(ty)
-  assert(getmetatable(ty)==TypeMT)
-  return ty.type=="uint"
-end
-
-function darkroom.type.astIsUint(ast)
-  return darkroom.type.isUint(darkroom.getType(ast))
-end
-
-
-function darkroom.type.isInt(ty)
-  assert(getmetatable(ty)==TypeMT)
-  return ty.type=="int"
-end
-
-function darkroom.type.astIsInt(ast)
-  return darkroom.type.isInt(darkroom.getType(ast))
-end
-
-function darkroom.type.isNumber(ty)
-  assert(getmetatable(ty)==TypeMT)
-  return ty.type=="float" or ty.type=="uint" or ty.type=="int"
-end
-
-function darkroom.type.astIsNumber(ast)
-  return darkroom.type.isNumber(darkroom.getType(ast))	 
-end
-
-function darkroom.type.isBool(ty)
-  assert(getmetatable(ty)==TypeMT)
-  return ty.type=="bool"
-end
-
-function darkroom.type.astIsBool(ast)
-  return darkroom.type.isBool(darkroom.getType(ast))
-end
-
-function darkroom.type.isArray(ty)
-  assert(getmetatable(ty)==TypeMT)
-  return ty.type=="array"
-end
-
-function darkroom.type.astIsArray(ast)
-  assert(darkroom.ast.isAST(ast))
-  return darkroom.type.isArray(darkroom.getType(ast))
-end
--- returns 0 if not an array
-function darkroom.type.arrayLength(ty)
-  assert(getmetatable(ty)==TypeMT)
-  if ty.type~="array" then return 0 end
-  return ty.size  
-end
-
--- returns 0 if ast is not an array
-function darkroom.type.astArrayLength(ast)
-  return darkroom.type.arrayLength(darkroom.getType(ast))
-end
-
-
-function darkroom.type.arrayOver(ty)
-  assert(getmetatable(ty)==TypeMT)
-  return ty.over
-end
-
-function darkroom.type.astArrayOver(ast)
-  local ty = darkroom.getType(ast)
-  assert(darkroom.type.isArray(ty))
-  return darkroom.type.arrayOver(ty)
-end
-
 function darkroom.type.isType(ty)
   return getmetatable(ty)==TypeMT
-end
-
-function darkroom.type.isCropMode(cropMode)
-  return cropMode == darkroom.cropSame or 
-    cropMode == darkroom.cropGrow or 
-    cropMode == darkroom.cropShrink or
-    cropMode == darkroom.cropExplicit
-
-end
-
--- return precision of this type
-function darkroom.type.precision(ty)
-  if darkroom.type.isUint(ty) then
-    return ty.precision
-  else
-    assert(false)
-  end
 end
 
 -- convert this uint type to an int type with same precision
 function darkroom.type.uintToInt(ty)
   assert(darkroom.type.isUint(ty))
-  return darkroom.type.int(darkroom.type.precision(ty))
-end
-
-function darkroom.type.typeToString(ty)
-  assert(darkroom.type.isType(ty))
-
-  if ty.type=="bool" then
-    return "bool"
-  elseif ty.type=="int" then
-    return "int"..ty.precision
-  elseif ty.type=="uint" then
-    return "uint"..ty.precision
-  elseif ty.type=="float" then
-    return "float"..ty.precision
-  elseif ty.type=="array" then
-    return darkroom.type.typeToString(ty.over).."["..ty.size.."]"
-  end
-
-  print("Error, typeToString input doesn't appear to be a type")
-  os.exit()
-end
-
-function darkroom.type.astTypeToString(ast)
-  return darkroom.type.typeToString(darkroom.getType(ast))
-end
-
--- returns size in bytes
-function darkroom.type.sizeof(ty)
-  if ty.type=="float" and ty.precision==32 then
-    return 4
-  elseif ty.type=="uint" and ty.precision==8 then
-    return 1
-  end
-
-  print(darkroom.type.typeToString(ty))
-
-  assert(false)
-  return nil
+  return darkroom.type.int(ty.precision)
 end
 
 function TypeFunctions:toC()
@@ -581,108 +471,49 @@ function TypeFunctions:toC()
   end
 end
 
-function TypeFunctions:print()
-  print(darkroom.type.typeToString(self))
-end
-
-function TypeFunctions:str()
- return darkroom.type.typeToString(self)
-end
-
 function TypeFunctions:isArray()
   return self.type=="array"
 end
 
 function TypeFunctions:arrayOver()
-  return darkroom.type.arrayOver(self)
-end
-
-function TypeFunctions:arrayLength()
-  return darkroom.type.arrayLength(self)
-end
-
-function TypeFunctions:toTerraType()
-  return darkroom.type.toTerraType(self)
-end
-
-function TypeFunctions:sizeof()
-  return terralib.sizeof(self:toTerraType())
-end
-
-function TypeFunctions:isFloat()
-  return darkroom.type.isFloat(self)
-end
-
-function TypeFunctions:isBool()
-  return darkroom.type.isBool(self)
-end
-
-function TypeFunctions:isInt()
-  return darkroom.type.isInt(self)
-end
-
-function TypeFunctions:isUint()
-  return darkroom.type.isUint(self)
-end
-
-function TypeFunctions:isNumber()
-  return darkroom.type.isNumber(self)
-end
-
-function TypeFunctions:channels()
-  if self.type~="array" then return 1 end
-  return self.size
-end
-
-function TypeFunctions:baseType()
-  if self.type~="array" then return self end
+  assert(self.type=="array")
+  assert(self.over.type~="array")
   return self.over
 end
 
--- this calculates the precision of the result of a reduction tree.
--- op is the reduction op
--- typeTable is a list of the types we're reducing over
-function darkroom.type.reduce(op,typeTable)
-  assert(type(typeTable)=="table")
-  assert(#typeTable>=1)
-  for k,v in pairs(typeTable) do assert(darkroom.type.isType(v)) end
-
-  return typeTable[1]
+-- returns 0 if not an array
+function TypeFunctions:arrayLength()
+  if self.type~="array" then return 0 end
+  return self.size  
 end
 
-
--- _type = the orion type
 -- if pointer is true, generate a pointer instead of a value
 -- vectorN = width of the vector [optional]
-function darkroom.type.toTerraType(_type,pointer,vectorN)
-  assert(darkroom.type.isType(_type))
-
+function TypeFunctions:toTerraType(pointer, vectorN)
   local ttype
 
-  if _type==darkroom.type.float(32) then
+  if self==darkroom.type.float(32) then
     ttype = float
-  elseif _type==darkroom.type.float(64) then
+  elseif self==darkroom.type.float(64) then
     ttype = double
-  elseif _type==darkroom.type.uint(8) then
+  elseif self==darkroom.type.uint(8) then
     ttype = uint8
-  elseif _type==darkroom.type.int(8) then
+  elseif self==darkroom.type.int(8) then
     ttype = int8
-  elseif _type==darkroom.type.bool() then
+  elseif self==darkroom.type.bool() then
     ttype = bool
-  elseif _type==darkroom.type.int(32) then
+  elseif self==darkroom.type.int(32) then
     ttype = int32
-  elseif _type==darkroom.type.int(64) then
+  elseif self==darkroom.type.int(64) then
     ttype = int64
-  elseif _type==darkroom.type.uint(32) then
+  elseif self==darkroom.type.uint(32) then
     ttype = uint32
-  elseif _type==darkroom.type.uint(16) then
+  elseif self==darkroom.type.uint(16) then
     ttype = uint16
-  elseif _type==darkroom.type.int(16) then
+  elseif self==darkroom.type.int(16) then
     ttype = int16
-  elseif darkroom.type.isArray(_type) then
-    local baseType = darkroom.type.arrayOver(_type)
-    local al = darkroom.type.arrayLength(_type)
-    ttype = darkroom.type.toTerraType( baseType, pointer, vectorN )[al]
+  elseif self:isArray() then
+    ttype = self:arrayOver():toTerraType( pointer, vectorN )[self:channels()]
   else
     print(darkroom.type.typeToString(_type))
     print(debug.traceback())
@@ -701,5 +532,53 @@ function darkroom.type.toTerraType(_type,pointer,vectorN)
   assert(false)
 
   return nil
+end
+
+function TypeFunctions:sizeof()
+  return terralib.sizeof(self:toTerraType())
+end
+
+function TypeFunctions:isFloat()
+  return self.type=="float"
+end
+
+function TypeFunctions:isBool()
+  return self.type=="bool"
+end
+
+function TypeFunctions:isInt()
+  return self.type=="int"
+end
+
+function TypeFunctions:isUint()
+  return self.type=="uint"
+end
+
+function TypeFunctions:isNumber()
+  return self.type=="float" or self.type=="uint" or self.type=="int"
+end
+
+function TypeFunctions:channels()
+  if self.type~="array" then return 1 end
+  local chan = 1
+  for k,v in ipairs(self.size) do chan = chan*v end
+  return chan
+end
+
+function TypeFunctions:baseType()
+  if self.type~="array" then return self end
+  assert(type(self.over)~="array")
+  return self.over
+end
+
+-- this calculates the precision of the result of a reduction tree.
+-- op is the reduction op
+-- typeTable is a list of the types we're reducing over
+function darkroom.type.reduce(op,typeTable)
+  assert(type(typeTable)=="table")
+  assert(#typeTable>=1)
+  for k,v in pairs(typeTable) do assert(darkroom.type.isType(v)) end
+
+  return typeTable[1]
 end
 

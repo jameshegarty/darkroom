@@ -330,3 +330,34 @@ function map(t,f)
   return res
 end
 
+-- if idx={a,b,c} this does
+-- t[a][b][c] = t[a][b][c] or value
+-- (and also makes the intermediate tables if necessary)
+function deepsetweak(t,idx,value)
+  assert(type(t)=="table")
+  assert(type(idx)=="table")
+
+  local T = t
+  for k,v in ipairs(idx) do
+    if #idx==k then
+      T[v] = T[v] or value
+      return T[v]
+    else
+      T[v] = T[v] or {}
+      T = T[v]
+    end
+  end
+end
+
+function concat(t1,t2)
+  local t = {}
+  for i=1,#t1 do table.insert(t,t1) end
+  for i=1,#t2 do t[#t1+1] = t2[i] end
+  return t
+end
+
+function reverse(t)
+  local r = {}
+  for k,v in ipairs(t) do r[#t-k+1] = v end
+  return t
+end

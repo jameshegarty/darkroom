@@ -708,7 +708,7 @@ function darkroom.compileTimeProcess(imfunc, envfn)
           local n = inp.expr:shallowcopy()
           n.kind="tapLUTLookup"
           n.index = inp.index
-          n.type = darkroom.type.arrayOver(inp.expr.type)
+          n.type = inp.expr.type:arrayOver()
           return darkroom.ast.new(n):copyMetadataFrom(inp)
         end
       elseif inp.kind=="fieldselect" then
