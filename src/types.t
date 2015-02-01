@@ -48,7 +48,7 @@ darkroom.type._arraySize={}
 function darkroom.type.array(_type,size)
   if type(size)=="number" then size={size} end
   assert(type(size)=="table")
-  map(size, function(n) assert(type(n)=="number" and n>1) end)
+  map(size, function(n) assert(type(n)=="number" and n>0) end)
   assert(getmetatable(_type)==TypeMT)
 
   local ty = _type

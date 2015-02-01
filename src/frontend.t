@@ -331,7 +331,7 @@ darkroom.lang.expr = darkroom.Parser.Pratt()
          local begin = p:next().linenumber
          local idx = p:expr()
          p:expectmatch(']', '[', begin )
-         return darkroom.ast.new({kind="index",index=idx,expr = lhs}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
+         return darkroom.ast.new({kind="index",index1=idx,expr = lhs}):setLinenumber(p:cur().linenumber):setOffset(p:cur().offset):setFilename(p:cur().filename)
     end)
 :infix("(", 8, function(p,lhs)
          local begin = p:next().linenumber
@@ -707,7 +707,7 @@ function darkroom.compileTimeProcess(imfunc, envfn)
         if inp.expr.kind=="tap" and inp.expr.count~=nil then -- count~=nil indicates LUT
           local n = inp.expr:shallowcopy()
           n.kind="tapLUTLookup"
-          n.index = inp.index
+          n.index1 = inp.index1
           n.type = inp.expr.type:arrayOver()
           return darkroom.ast.new(n):copyMetadataFrom(inp)
         end

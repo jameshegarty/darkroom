@@ -1177,7 +1177,7 @@ function darkroom.terracompiler.codegen(
           for k,v in pairs(TapStruct:getentries()) do if v.field==tostring(node.id) then entry=v.field end end
             out = `taps.[entry]
         elseif node.kind=="tapLUTLookup" then
-          local index = inputs["index"][1]
+          local index = inputs["index1"][1]
           
           local entry
           for k,v in pairs(TapStruct:getentries()) do if v.field==tostring(node.id) then entry=v.field end end
@@ -1245,7 +1245,7 @@ function darkroom.terracompiler.codegen(
         elseif node.kind=="array" then
           out = inputs["expr"..c][1]
         elseif node.kind=="index" then
-          local idx = `[inputs.index[1]][0]
+          local idx = `[inputs.index1[1]][0]
           out = `[packedSymbol["expr"]][idx]
         elseif node.kind=="mapreducevar" then
           assert(mapreducevarSymbols[node.mapreduceNode]==nil)

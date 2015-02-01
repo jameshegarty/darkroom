@@ -324,7 +324,7 @@ function astPrintPrettys(root)
   elseif self.kind=="tapLUT" then
     out="_tapLUT_"..self.id
   elseif self.kind=="tapLUTLookup" then
-    out="_tapLUT_"..self.id.."["..inputs.index.."]"
+    out="_tapLUT_"..self.id.."["..inputs.index1.."]"
   elseif self.kind=="transform" then
     out= inputs.expr
     if self.arg1~=nil then
@@ -392,7 +392,7 @@ function astPrintPrettys(root)
   elseif self.kind=="gatherColumn" then
     out = "gatherColumn("..inputs._input..","..inputs.x..")"
   elseif self.kind=="index" then
-    out = inputs.expr.."["..inputs.index.."]"
+    out = inputs.expr.."["..inputs.index1.."]"
   elseif self.kind=="var" then
 --    out = self.name
     out = "VAR"..self.name
@@ -575,7 +575,7 @@ function typedASTPrintPrettys(root)
   elseif self.kind=="tap" then
     out=out.."_tap_"..self.id
   elseif self.kind=="tapLUTLookup" then
-    out=out.."_tapLUT_"..self.id.."["..inputs.index.."]"
+    out=out.."_tapLUT_"..self.id.."["..inputs.index1.."]"
   elseif self.kind=="transformBaked" then
     out = out..inputs.expr.."("
 
@@ -630,7 +630,7 @@ function typedASTPrintPrettys(root)
 
     out = out..")"
   elseif self.kind=="index" then
-    out = out.."("..inputs.expr..")["..inputs.index.."]"
+    out = out.."("..inputs.expr..")["..inputs.index1.."]"
   elseif self.kind=="gather" then
     out = "gather(\ninput = "..inputs._input..",\n"
     out = out.."x = "..inputs.x..",\n"

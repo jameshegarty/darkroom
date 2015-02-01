@@ -287,7 +287,7 @@ function typedASTFunctions:stencil(input, typedASTRoot)
   elseif self.kind=="position" or self.kind=="tap" or self.kind=="value" then
     return Stencil.new()
   elseif self.kind=="tapLUTLookup" then
-    return self.index:stencil(input, typedASTRoot)
+    return self.index1:stencil(input, typedASTRoot)
   elseif self.kind=="load" then
     if type(self.relX.constLow)~="number" or type(self.relY.constLow)~="number" then
       -- this is a gather
@@ -376,6 +376,557 @@ function typedASTFunctions:irType()
   return "typedAST"
 end
 
+function darkroom.typedAST.typecheckAST( origast, inputs, newNodeFn )
+  assert(darkroom.ast.isAST(origast))
+  if newNodeFn==nil then newNodeFn = darkroom.typedAST.new end
+  assert(type(newNodeFn)=="function") -- this is either darkroom.typedAST.new or systolicAST.new
+  local ast = origast:shallowcopy()
+  
+  if ast.kind~="transform" and ast.kind~="outputs" then
+    for k,v in pairs(inputs) do
+      for i=1,2 do
+        if ast["scaleN"..i]==nil or ast["scaleN"..i]==0 then ast["scaleN"..i] = v["scaleN"..i] end
+        if ast["scaleD"..i]==nil or ast["scaleD"..i]==0 then ast["scaleD"..i] = v["scaleD"..i] end
+        local n1,d1 = ratioFactor(ast["scaleN"..i],ast["scaleD"..i])
+        local n2,d2 = ratioFactor(v["scaleN"..i],v["scaleD"..i])
+        if (n1~=n2 or d1~=d2) and v["scaleN"..i]~=0 then
+          print("kind",ast.kind,"i",i,"key",k,"scaleN_this",ast["scaleN"..i],"scaleN_input",v["scaleN"..i],ast["scaleD"..i],v["scaleD"..i])
+          darkroom.error("Operations can only be applied to images that are the same size.",origast:linenumber(), origast:offset(), origast:filename())
+        end
+      end
+    end
+  end
+  
+  if ast.kind~="outputs" then
+    for k,v in pairs(inputs) do
+      if v.kind=="filter" then
+        darkroom.error("Operations can not be performed on sparse (filtered) images",origast:linenumber(), origast:offset(), origast:filename())
+      end
+    end
+  end
+  
+  if ast.kind=="value" then
+    if ast.type==nil then ast.type=darkroom.type.valueToType(ast.value) end
+    if ast.type==nil then
+      darkroom.error("Internal error, couldn't convert "..tostring(ast.value).." to orion type", origast:linenumber(), origast:offset(), origast:filename() )
+    end
+    ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
+    ast.constLow = ast.value; ast.constHigh = ast.value
+  elseif ast.kind=="unary" then
+    ast.expr = inputs["expr"]
+    
+    if ast.op=="-" then
+      if ast.expr.type:isUint() then
+        darkroom.warning("You're negating a uint, this is probably not what you want to do!", origast:linenumber(), origast:offset(), origast:filename())
+      end
+      
+      ast.type = ast.expr.type
+      if type(ast.expr.constLow)=="number" then 
+        ast.constLow = -ast.expr.constLow; ast.constHigh = -ast.expr.constHigh; 
+        if ast.constLow > ast.constHigh then ast.constLow, ast.constHigh = ast.constHigh, ast.constLow end
+      end
+    elseif ast.op=="floor" or ast.op=="ceil" then
+      ast.type = darkroom.type.float(32)
+    elseif ast.op=="abs" then
+      if ast.expr.type:baseType()==darkroom.type.float(32) then
+        ast.type = ast.expr.type
+      elseif ast.expr.type:baseType()==darkroom.type.float(64) then
+        ast.type = ast.expr.type
+      elseif ast.expr.type:baseType():isInt() or ast.expr.type:baseType():isUint() then
+        -- obv can't make it any bigger
+        ast.type = ast.expr.type
+      else
+        ast.expr.type:print()
+        assert(false)
+      end
+    elseif ast.op=="not" then
+      if ast.expr.type:baseType():isBool() or ast.expr.type:baseType():isInt() or ast.expr.type:baseType():isUint() then
+        ast.type = ast.expr.type
+      else
+        darkroom.error("not only works on bools and integers",origast:linenumber(), origast:offset())
+        assert(false)
+      end
+    elseif ast.op=="sin" or ast.op=="cos" or ast.op=="exp" or ast.op=="arctan" or ast.op=="ln" or ast.op=="sqrt" then
+      if ast.expr.type==darkroom.type.float(32) then
+        ast.type = darkroom.type.float(32)
+      elseif ast.expr.type==darkroom.type.float(64) then
+        ast.type = darkroom.type.float(64)
+      else
+        darkroom.error("sin, cos, arctan, ln and exp only work on floating point types, not "..ast.expr.type:str(), origast:linenumber(), origast:offset(), origast:filename() )
+      end
+    elseif ast.op=="arrayAnd" then
+      if ast.expr.type:isArray() and ast.expr.type:arrayOver():isBool() then
+        ast.type = darkroom.type.bool()
+      else
+        darkroom.error("vectorAnd only works on arrays of bools", origast:linenumber(), origast:offset(), origast:filename() )
+      end
+    elseif ast.op=="print" then
+      ast.type = ast.expr.type
+    else
+      print(ast.op)
+      assert(false)
+    end
+    
+  elseif ast.kind=="binop" then
+    
+    local lhs = inputs["lhs"]
+    local rhs = inputs["rhs"]
+    
+    assert(lhs.type~=nil)
+    assert(rhs.type~=nil)
+    
+    if type(lhs.constLow)=="number" and type(rhs.constLow)=="number" then
+      local function applyop(lhslow, lhshigh, rhslow, rhshigh, op)
+        local a = op(lhslow,rhslow)
+        local b = op(lhslow,rhshigh)
+        local c = op(lhshigh,rhslow)
+        local d = op(lhshigh,rhshigh)
+        return math.min(a,b,c,d), math.max(a,b,c,d)
+      end
+
+      if ast.op=="+" then
+        ast.constLow, ast.constHigh = applyop( lhs.constLow, lhs.constHigh, rhs.constLow, rhs.constHigh, function(l,r) return l+r end)
+      elseif ast.op=="-" then
+        ast.constLow, ast.constHigh = applyop( lhs.constLow, lhs.constHigh, rhs.constLow, rhs.constHigh, function(l,r) return l-r end)
+      elseif ast.op=="*" then
+        ast.constLow, ast.constHigh = applyop( lhs.constLow, lhs.constHigh, rhs.constLow, rhs.constHigh, function(l,r) return l*r end)
+      elseif ast.op=="/" then
+        ast.constLow, ast.constHigh = applyop( lhs.constLow, lhs.constHigh, rhs.constLow, rhs.constHigh, function(l,r) return l/r end)
+      end
+    end
+
+    local thistype, lhscast, rhscast = darkroom.type.meet( lhs.type, rhs.type, ast.op, origast )
+    
+    if thistype==nil then
+      darkroom.error("Type error, inputs to "..ast.op,origast:linenumber(), origast:offset(), origast:filename())
+    end
+    
+    if lhs.type~=lhscast then lhs = newNodeFn({kind="cast",expr=lhs,type=lhscast}):copyMetadataFrom(origast) end
+    if rhs.type~=rhscast then rhs = newNodeFn({kind="cast",expr=rhs,type=rhscast}):copyMetadataFrom(origast) end
+    
+    ast.type = thistype
+    ast.lhs = lhs
+    ast.rhs = rhs
+    
+  elseif ast.kind=="position" then
+    -- if position is still in the tree at this point, it means it's being used in an expression somewhere
+    -- choose a reasonable type...
+    ast.type=darkroom.type.int(32)
+    ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
+  elseif ast.kind=="select" or ast.kind=="vectorSelect" then
+    local cond = inputs["cond"]
+    local a = inputs["a"]
+    local b = inputs["b"]
+
+    if ast.kind=="vectorSelect" then
+      if cond.type:arrayOver()~=darkroom.type.bool() then
+        print("IB",cond.type:arrayOver())
+        darkroom.error("Error, condition of vectorSelect must be array of booleans. ", origast:linenumber(), origast:offset(), origast:filename() )
+        return nil
+      end
+
+      if cond.type:isArray()==false or
+        a.type:isArray()==false or
+        b.type:isArray()==false or
+        a.type:arrayLength()~=b.type:arrayLength() or
+        cond.type:arrayLength()~=a.type:arrayLength() then
+        darkroom.error("Error, all arguments to vectorSelect must be arrays of the same length", origast:linenumber(), origast:offset(), origast:filename() )
+        return nil            
+      end
+    else
+      if cond.type ~= darkroom.type.bool() then
+        darkroom.error("Error, condition of select must be scalar boolean. Use vectorSelect",origast:linenumber(),origast:offset(),origast:filename())
+        return nil
+      end
+
+      if a.type:isArray()~=b.type:isArray() then
+        darkroom.error("Error, if any results of select are arrays, all results must be arrays",origast:linenumber(),origast:offset())
+        return nil
+      end
+      
+      if a.type:isArray() and
+        a.type:arrayLength()~=b.type:arrayLength() then
+        darkroom.error("Error, array arguments to select must be the same length", origast:linenumber(), origast:offset(), origast:filename() )
+        return nil
+      end
+    end
+
+    local thistype, lhscast, rhscast =  darkroom.type.meet(a.type,b.type, ast.kind, origast)
+
+    if a.type~=lhscast then a = newNodeFn({kind="cast",expr=a,type=lhscast}):copyMetadataFrom(origast) end
+    if b.type~=rhscast then b = newNodeFn({kind="cast",expr=b,type=rhscast}):copyMetadataFrom(origast) end
+    
+    ast.type = thistype
+    ast.cond = cond
+    ast.a = a
+    ast.b = b
+    
+  elseif ast.kind=="index" then
+    local expr = inputs["expr"]
+    
+    if expr.type:isArray()==false then
+      darkroom.error("Error, you can only index into an array type! Type is "..tostring(expr.type),origast:linenumber(),origast:offset(), origast:filename())
+      os.exit()
+    end
+    
+    ast.expr = expr
+
+    local i = 1
+    while inputs["index"..i] do
+      ast["index"..i] = inputs["index"..i]
+
+      if ast["index"..i].constLow==nil then
+        darkroom.error( "index "..i.." must be a constant expression", origast:linenumber(), origast:offset(), origast:filename() )
+      end
+      
+      if ast["index"..i].constLow<0 or ast["index"..i].constHigh >= expr.type:channels() then
+        darkroom.error( "index "..i.." value out of range. It is ["..ast.index.constLow..","..ast.index.constHigh.."] but should be within [0,"..(darkroom.type.arrayLength(expr.type)-1).."]", origast:linenumber(), origast:offset(), origast:filename() )
+      end
+      
+      i = i + 1
+    end
+    
+    ast.type = expr.type:arrayOver()
+  elseif ast.kind=="transform" then
+    ast.expr = inputs["expr"]
+    
+    -- this just gets the value of the thing we're translating
+    ast.type = ast.expr.type
+    
+    local i=1
+    while ast["arg"..i] do
+      ast["arg"..i] = inputs["arg"..i] 
+      i=i+1
+    end
+    
+    -- now make the new transformBaked node out of this
+    local newtrans = {kind="transformBaked",expr=ast.expr,type=ast.expr.type}
+    
+    local noTransform = true
+
+    local i=1
+    while ast["arg"..i] do
+      -- if we got here we can assume it's valid
+      local translate, multN, multD = darkroom.typedAST.synthOffset( inputs["arg"..i], inputs["zeroedarg"..i], darkroom.dimToCoord[i])
+
+      if translate==nil then
+        darkroom.error("Error, non-stencil access pattern", origast:linenumber(), origast:offset(), origast:filename())
+      end
+
+      assert(type(translate.constLow)=="number")
+      assert(type(translate.constHigh)=="number")
+      assert(translate.type:isInt() or translate.type:isUint())
+
+      newtrans["translate"..i]=translate
+      newtrans["scaleN"..i]=multD*ast.expr["scaleN"..i]
+      newtrans["scaleD"..i]=multN*ast.expr["scaleD"..i]
+
+      if translate~=0 or multD~=1 or multN~=1 then noTransform = false end
+      i=i+1
+    end
+    
+    -- at least 2 arguments must be specified. 
+    -- the parser was supposed to guarantee this.
+    assert(i>2)
+
+    if noTransform then -- eliminate unnecessary transforms early
+      ast=ast.expr:shallowcopy()
+    else
+      ast=newtrans
+    end
+
+  elseif ast.kind=="array" then
+    
+    local cnt = 1
+    while ast["expr"..cnt] do
+      ast["expr"..cnt] = inputs["expr"..cnt]
+      cnt = cnt + 1
+    end
+    
+    local mtype = ast.expr1.type
+    local atype, btype
+    
+    if mtype:isArray() then
+      darkroom.error("You can't have nested arrays (index 0 of vector)", origast:linenumber(), origast:offset(), origast:filename() )
+    end
+    
+    local cnt = 2
+    while ast["expr"..cnt] do
+      if ast["expr"..cnt].type:isArray() then
+        darkroom.error("You can't have nested arrays (index "..(i-1).." of vector)")
+      end
+      
+      mtype, atype, btype = darkroom.type.meet( mtype, ast["expr"..cnt].type, "array", origast )
+      
+      if mtype==nil then
+        darkroom.error("meet error")      
+      end
+      
+      -- our type system should have guaranteed this...
+      assert(mtype==atype)
+      assert(mtype==btype)
+      
+      cnt = cnt + 1
+    end
+    
+    -- now we've figured out what the type of the array should be
+    
+    -- may need to insert some casts
+    local cnt = 1
+    while ast["expr"..cnt] do
+      -- meet should have failed if this isn't possible...
+      local from = ast["expr"..cnt].type
+
+      if from~=mtype then
+        if darkroom.type.checkImplicitCast(from, mtype,origast)==false then
+          darkroom.error("Error, can't implicitly cast "..from:str().." to "..mtype:str(), origast:linenumber(), origast:offset())
+        end
+        
+        ast["expr"..cnt] = newNodeFn({kind="cast",expr=ast["expr"..cnt], type=mtype}):copyMetadataFrom(ast["expr"..cnt])
+      end
+
+      cnt = cnt + 1
+    end
+    
+    local arraySize = cnt - 1
+    ast.type = darkroom.type.array(mtype, arraySize)
+    
+
+  elseif ast.kind=="cast" then
+
+    -- note: we don't eliminate these cast nodes, because there's a difference
+    -- between calculating a value at a certain precision and then downsampling,
+    -- and just calculating the value at the lower precision.
+    ast.expr = inputs["expr"]
+    
+    if darkroom.type.checkExplicitCast(ast.expr.type,ast.type,origast)==false then
+      darkroom.error("Casting from "..ast.expr.type:str().." to "..ast.type:str().." isn't allowed!",origast:linenumber(),origast:offset())
+    end
+  elseif ast.kind=="assert" then
+
+    ast.cond = inputs["cond"]
+    ast.expr = inputs["expr"]
+    ast.printval = inputs["printval"]
+
+    if darkroom.type.astIsBool(ast.cond)==false then
+      darkroom.error("Error, condition of assert must be boolean",origast:linenumber(),origast:offset(), origast:filename())
+      return nil
+    end
+
+    ast.type = ast.expr.type
+
+  elseif ast.kind=="mapreducevar" then
+    ast.type = darkroom.type.int(32)
+    ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
+
+    if type(inputs.low.constLow)~="number" or inputs.low.constLow~=inputs.low.constHigh then
+      darkroom.error("Map reduce var range low must be a constant",origast:linenumber(),origast:offset(), origast:filename())
+    end
+
+    if type(inputs.high.constLow)~="number" or inputs.high.constLow~=inputs.high.constHigh then
+      darkroom.error("Map reduce var range low must be a constant",origast:linenumber(),origast:offset(), origast:filename())
+    end
+
+    ast.low = inputs.low
+    ast.high = inputs.high
+    ast.constLow = inputs.low.constLow
+    ast.constHigh = inputs.high.constLow
+  elseif ast.kind=="iterateload" then
+    ast.type = inputs._expr.type
+    ast._expr = nil
+  elseif ast.kind=="tap" then
+    -- taps should be tagged with type already
+    ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
+  elseif ast.kind=="tapLUTLookup" then
+    ast.index1 = inputs["index1"]
+    
+    -- tapLUTs should be tagged with type already
+    assert(darkroom.type.isType(ast.type))
+    
+    if ast.index1.type:isUint()==false and ast.index1.type:isInt()==false then
+      darkroom.error("Error, index into tapLUT must be integer", origast:linenumber(), origast:offset(), origast:filename())
+      return nil
+    end
+  elseif ast.kind=="crop" then
+    ast.expr = inputs["expr"]
+    ast.type = ast.expr.type
+  elseif ast.kind=="reduce" then
+    local i=1
+    local typeSet = {}
+
+    while ast["expr"..i] do
+      ast["expr"..i] = inputs["expr"..i]
+      table.insert(typeSet,ast["expr"..i].type)
+      
+      i=i+1
+    end
+
+    ast.type = darkroom.type.reduce( ast.op, typeSet)
+  elseif ast.kind=="outputs" then
+    -- doesn't matter, this is always the root and we never need to get its type
+    ast.type = inputs.expr1.type
+    ast.scaleN1 = 0
+    ast.scaleD1 = 0
+    ast.scaleN2 = 0
+    ast.scaleD2 = 0
+    
+    local i=1
+    while ast["expr"..i] do
+      ast["expr"..i] = inputs["expr"..i]
+      i=i+1
+    end
+
+  elseif ast.kind=="type" then
+    -- ast.type is already a type, so don't have to do anything
+    -- shouldn't matter, but need to return something
+  elseif ast.kind=="gather" then
+    ast.type = inputs._input.type
+    ast._input = inputs._input
+    ast.x = inputs.x
+    ast.y = inputs.y
+
+    for _,v in pairs({"minX","maxX","minY","maxY"}) do
+      local res = inputs[v]
+      if type(res.constLow)~="number" or res.constLow~=res.constHigh then
+        darkroom.error("Argument "..v.." to gather must be a constant", origast:linenumber(), origast:offset(), origast:filename())
+      end
+      ast[v] = res
+    end
+
+    if ast.x.type:isInt()==false then
+      darkroom.error("Error, x argument to gather must be int but is "..ast.x.type:str(), origast:linenumber(), origast:offset())
+    end
+
+    if ast.y.type:isInt()==false then
+      darkroom.error("Error, y argument to gather must be int but is "..ast.y.type:str(), origast:linenumber(), origast:offset())
+    end
+  elseif ast.kind=="gatherColumn" then
+    ast.type = inputs._input.type
+    ast._input = inputs._input
+    ast.x = inputs.x
+
+    for _,v in pairs({"rowWidth","columnStartX","columnEndX","columnStartY","columnEndY"}) do
+      if ast[v]==nil then 
+        darkroom.error("Argument "..v.." to gatherColumn missing",origast:linenumber(),origast:offset(),origast:filename())
+      end
+
+      local res = ast[v]:eval(1,newNodeFn({}):copyMetadataFrom(origast))
+      if res:area()~=1 then
+        darkroom.error("Argument "..v.." to gatherColumn must be a constant",origast:linenumber(),origast:offset(),origast:filename())
+      end
+      ast[v] = res:min(1)
+    end
+
+    if ast.columnStartY>ast.columnEndY then
+      darkroom.error("gatherColumn startY should not be larger than endY",origast:linenumber(),origast:offset(),origast:filename())
+    end
+
+    if ast.type:isArray() then
+      assert(false)
+    else
+      ast.type = darkroom.type.array(ast.type,ast.rowWidth*(ast.columnEndY-ast.columnStartY+1))
+    end
+
+  elseif ast.kind=="load" then
+    -- already has a type
+    ast.scaleN1=1; ast.scaleD1=1; ast.scaleN2=1; ast.scaleD2=1;
+    assert(inputs.relX~=nil)
+    assert(inputs.relY~=nil)
+    ast.relX = inputs.relX
+    ast.relY = inputs.relY
+  elseif ast.kind=="mapreduce" then
+
+    origast:map("varnode", function(n,i) ast["varnode"..i] = inputs["varnode"..i] end)
+
+    if ast.reduceop=="sum" or ast.reduceop=="max" or ast.reduceop=="min" then
+      ast.type = inputs.expr.type
+    elseif ast.reduceop=="argmin" or ast.reduceop=="argmax" then
+      if inputs.expr.type:isArray()==true then
+        darkroom.error("argmin and argmax can only be applied to scalar quantities", origast:linenumber(), origast:offset(), origast:filename())
+      end
+
+      ast.type = darkroom.type.array(darkroom.type.int(32),origast:arraySize("varname")+1)
+    elseif ast.reduceop=="none" then
+      if origast:arraySize("varname")~=1 then
+        darkroom.error("Pure map can only be one dimensional", origast:linenumber(), origast:offset(), origast:filename())
+      end
+
+      if ast.varnode1.low.constLow~=0 or ast.varnode1.low.constLow~=ast.varnode1.low.constHigh or ast.varnode1.high.constLow~=ast.varnode1.high.constHigh then
+        darkroom.error("Pure map can only have range 0 to N", origast:linenumber(), origast:offset(), origast:filename())
+      end
+
+      if inputs.expr.type:isArray()==true then
+        darkroom.error("pure map can only be applied to scalar quantities", origast:linenumber(), origast:offset(), origast:filename())
+      end
+
+      ast.type = darkroom.type.array(inputs.expr.type,ast.varnode1.high.constLow+1)
+    else
+      darkroom.error("Unknown reduce operator '"..ast.reduceop.."'")
+    end
+
+    ast.expr = inputs.expr
+  elseif ast.kind=="iterate" then
+    ast.iterationSpaceLow = ast.iterationSpaceLow:eval(1,newNodeFn({}):copyMetadataFrom(origast))
+    if ast.iterationSpaceLow:area()~=1 then
+      darkroom.error("iteration range must be a constant",ast:linenumber(),ast:offset(),ast:filename())
+    end
+    ast.iterationSpaceLow = ast.iterationSpaceLow:min(1)
+
+    ast.iterationSpaceHigh = ast.iterationSpaceHigh:eval(1,newNodeFn({}):copyMetadataFrom(origast))
+    if ast.iterationSpaceHigh:area()~=1 then
+      darkroom.error("iteration range must be a constant",ast:linenumber(),ast:offset(),ast:filename())
+    end
+    ast.iterationSpaceHigh = ast.iterationSpaceHigh:min(1)
+
+    if ast.reduceop=="sum" or ast.reduceop=="max" or ast.reduceop=="min" then
+      ast.type = inputs.expr.type
+    elseif ast.reduceop=="none" then
+      if ast.iterationSpaceLow~=0 or ast.iterationSpaceHigh<=0 then
+        darkroom.error("Pure iterate can only have range 0 to N", origast:linenumber(), origast:offset(), origast:filename())
+      end
+
+      ast.type = darkroom.type.array(inputs.expr.type,ast.iterationSpaceHigh-ast.iterationSpaceLow+1)
+    else
+      darkroom.error("Unknown reduce operator '"..ast.reduceop.."'")
+    end
+
+    ast._iterationvar = inputs._iterationvar
+    ast.expr = inputs.expr
+
+    local i = 1
+    while ast["loadname"..i] do
+      ast["_loadexpr"..i] = inputs["_loadexpr"..i]
+      i = i + 1
+    end
+
+  elseif ast.kind=="filter" then
+    ast.cond = inputs.cond
+    ast.expr = inputs.expr
+    ast.type = ast.expr.type
+
+    if ast.cond.type:isBool()==false then
+      darkroom.error("condition of filter must be a scalar boolean", origast:linenumber(), origast:offset(), origast:filename())
+    end
+  elseif ast.kind=="iterationvar" then
+    ast.type = darkroom.type.int(32)
+    ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
+  else
+    darkroom.error("Internal error, typechecking for "..ast.kind.." isn't implemented!",ast.line,ast.char)
+    return nil
+  end
+
+  if darkroom.type.isType(ast.type)==false then print(ast.kind) end
+  ast = newNodeFn(ast):copyMetadataFrom(origast)
+  assert(darkroom.type.isType(ast.type))
+  if type(ast.constLow)=="number" then assert(ast.constLow<=ast.constHigh) end
+
+  for i=1,2 do 
+    if type(ast["scaleN"..i])~="number" or type(ast["scaleD"..i])~="number" then print("missingrate",ast.kind); assert(false) end 
+  end
+
+  return ast
+end
+
 function darkroom.typedAST._toTypedAST(inast)
 
   local largestScaleN = {1,1}
@@ -385,542 +936,7 @@ function darkroom.typedAST._toTypedAST(inast)
 
   local res = inast:visitEach(
     function(origast,inputs)
-      assert(darkroom.ast.isAST(origast))
-      local ast = origast:shallowcopy()
-
-      if ast.kind~="transform" and ast.kind~="outputs" then
-        for k,v in pairs(inputs) do
-          for i=1,2 do
-            if ast["scaleN"..i]==nil or ast["scaleN"..i]==0 then ast["scaleN"..i] = v[1]["scaleN"..i] end
-            if ast["scaleD"..i]==nil or ast["scaleD"..i]==0 then ast["scaleD"..i] = v[1]["scaleD"..i] end
-            local n1,d1 = ratioFactor(ast["scaleN"..i],ast["scaleD"..i])
-            local n2,d2 = ratioFactor(v[1]["scaleN"..i],v[1]["scaleD"..i])
-            if (n1~=n2 or d1~=d2) and v[1]["scaleN"..i]~=0 then
-              print("kind",ast.kind,"i",i,"key",k,"scaleN_this",ast["scaleN"..i],"scaleN_input",v[1]["scaleN"..i],ast["scaleD"..i],v[1]["scaleD"..i])
-              darkroom.error("Operations can only be applied to images that are the same size.",origast:linenumber(), origast:offset(), origast:filename())
-            end
-          end
-        end
-      end
-
-      if ast.kind~="outputs" then
-        for k,v in pairs(inputs) do
-          if v[1].kind=="filter" then
-            darkroom.error("Operations can not be performed on sparse (filtered) images",origast:linenumber(), origast:offset(), origast:filename())
-          end
-        end
-      end
-
-      if ast.kind=="value" then
-        if ast.type==nil then ast.type=darkroom.type.valueToType(ast.value) end
-        if ast.type==nil then
-          darkroom.error("Internal error, couldn't convert "..tostring(ast.value).." to orion type", origast:linenumber(), origast:offset(), origast:filename() )
-        end
-        ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
-        ast.constLow = ast.value; ast.constHigh = ast.value
-      elseif ast.kind=="unary" then
-        ast.expr = inputs["expr"][1]
-        
-        if ast.op=="-" then
-          if ast.expr.type:isUint() then
-            darkroom.warning("You're negating a uint, this is probably not what you want to do!", origast:linenumber(), origast:offset(), origast:filename())
-          end
-          
-          ast.type = ast.expr.type
-          if type(ast.expr.constLow)=="number" then 
-            ast.constLow = -ast.expr.constLow; ast.constHigh = -ast.expr.constHigh; 
-            if ast.constLow > ast.constHigh then ast.constLow, ast.constHigh = ast.constHigh, ast.constLow end
-          end
-        elseif ast.op=="floor" or ast.op=="ceil" then
-          ast.type = darkroom.type.float(32)
-        elseif ast.op=="abs" then
-          if ast.expr.type:baseType()==darkroom.type.float(32) then
-            ast.type = ast.expr.type
-          elseif ast.expr.type:baseType()==darkroom.type.float(64) then
-            ast.type = ast.expr.type
-          elseif ast.expr.type:baseType():isInt() or ast.expr.type:baseType():isUint() then
-            -- obv can't make it any bigger
-            ast.type = ast.expr.type
-          else
-            ast.expr.type:print()
-            assert(false)
-          end
-        elseif ast.op=="not" then
-          if ast.expr.type:baseType():isBool() or ast.expr.type:baseType():isInt() or ast.expr.type:baseType():isUint() then
-            ast.type = ast.expr.type
-          else
-            darkroom.error("not only works on bools and integers",origast:linenumber(), origast:offset())
-            assert(false)
-          end
-        elseif ast.op=="sin" or ast.op=="cos" or ast.op=="exp" or ast.op=="arctan" or ast.op=="ln" or ast.op=="sqrt" then
-          if ast.expr.type==darkroom.type.float(32) then
-            ast.type = darkroom.type.float(32)
-          elseif ast.expr.type==darkroom.type.float(64) then
-            ast.type = darkroom.type.float(64)
-          else
-            darkroom.error("sin, cos, arctan, ln and exp only work on floating point types, not "..ast.expr.type:str(), origast:linenumber(), origast:offset(), origast:filename() )
-          end
-        elseif ast.op=="arrayAnd" then
-          if ast.expr.type:isArray() and ast.expr.type:arrayOver():isBool() then
-            ast.type = darkroom.type.bool()
-          else
-            darkroom.error("vectorAnd only works on arrays of bools", origast:linenumber(), origast:offset(), origast:filename() )
-          end
-        elseif ast.op=="print" then
-          ast.type = ast.expr.type
-        else
-          print(ast.op)
-          assert(false)
-        end
-        
-      elseif ast.kind=="binop" then
-        
-        local lhs = inputs["lhs"][1]
-        local rhs = inputs["rhs"][1]
-        
-        assert(lhs.type~=nil)
-        assert(rhs.type~=nil)
-        
-        if type(lhs.constLow)=="number" and type(rhs.constLow)=="number" then
-          local function applyop(lhslow, lhshigh, rhslow, rhshigh, op)
-            local a = op(lhslow,rhslow)
-            local b = op(lhslow,rhshigh)
-            local c = op(lhshigh,rhslow)
-            local d = op(lhshigh,rhshigh)
-            return math.min(a,b,c,d), math.max(a,b,c,d)
-          end
-
-          if ast.op=="+" then
-            ast.constLow, ast.constHigh = applyop( lhs.constLow, lhs.constHigh, rhs.constLow, rhs.constHigh, function(l,r) return l+r end)
-          elseif ast.op=="-" then
-            ast.constLow, ast.constHigh = applyop( lhs.constLow, lhs.constHigh, rhs.constLow, rhs.constHigh, function(l,r) return l-r end)
-          elseif ast.op=="*" then
-            ast.constLow, ast.constHigh = applyop( lhs.constLow, lhs.constHigh, rhs.constLow, rhs.constHigh, function(l,r) return l*r end)
-          elseif ast.op=="/" then
-            ast.constLow, ast.constHigh = applyop( lhs.constLow, lhs.constHigh, rhs.constLow, rhs.constHigh, function(l,r) return l/r end)
-          end
-        end
-
-        local thistype, lhscast, rhscast = darkroom.type.meet( lhs.type, rhs.type, ast.op, origast )
-        
-        if thistype==nil then
-          darkroom.error("Type error, inputs to "..ast.op,origast:linenumber(), origast:offset(), origast:filename())
-        end
-        
-        if lhs.type~=lhscast then lhs = darkroom.typedAST.new({kind="cast",expr=lhs,type=lhscast}):copyMetadataFrom(origast) end
-        if rhs.type~=rhscast then rhs = darkroom.typedAST.new({kind="cast",expr=rhs,type=rhscast}):copyMetadataFrom(origast) end
-        
-        ast.type = thistype
-        ast.lhs = lhs
-        ast.rhs = rhs
-        
-      elseif ast.kind=="position" then
-        -- if position is still in the tree at this point, it means it's being used in an expression somewhere
-        -- choose a reasonable type...
-        ast.type=darkroom.type.int(32)
-        ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
-      elseif ast.kind=="select" or ast.kind=="vectorSelect" then
-        local cond = inputs["cond"][1]
-        local a = inputs["a"][1]
-        local b = inputs["b"][1]
-
-        if ast.kind=="vectorSelect" then
-          if cond.type:arrayOver()~=darkroom.type.bool() then
-            print("IB",cond.type:arrayOver())
-            darkroom.error("Error, condition of vectorSelect must be array of booleans. ", origast:linenumber(), origast:offset(), origast:filename() )
-            return nil
-          end
-
-          if cond.type:isArray()==false or
-            a.type:isArray()==false or
-            b.type:isArray()==false or
-            a.type:arrayLength()~=b.type:arrayLength() or
-            cond.type:arrayLength()~=a.type:arrayLength() then
-            darkroom.error("Error, all arguments to vectorSelect must be arrays of the same length", origast:linenumber(), origast:offset(), origast:filename() )
-            return nil            
-          end
-        else
-          if cond.type ~= darkroom.type.bool() then
-            darkroom.error("Error, condition of select must be scalar boolean. Use vectorSelect",origast:linenumber(),origast:offset(),origast:filename())
-            return nil
-          end
-
-          if a.type:isArray()~=b.type:isArray() then
-            darkroom.error("Error, if any results of select are arrays, all results must be arrays",origast:linenumber(),origast:offset())
-            return nil
-          end
-          
-          if a.type:isArray() and
-            a.type:arrayLength()~=b.type:arrayLength() then
-            darkroom.error("Error, array arguments to select must be the same length", origast:linenumber(), origast:offset(), origast:filename() )
-            return nil
-          end
-        end
-
-        local thistype, lhscast, rhscast =  darkroom.type.meet(a.type,b.type, ast.kind, origast)
-
-        if a.type~=lhscast then a = darkroom.typedAST.new({kind="cast",expr=a,type=lhscast}):copyMetadataFrom(origast) end
-        if b.type~=rhscast then b = darkroom.typedAST.new({kind="cast",expr=b,type=rhscast}):copyMetadataFrom(origast) end
-        
-        ast.type = thistype
-        ast.cond = cond
-        ast.a = a
-        ast.b = b
-        
-      elseif ast.kind=="index" then
-        local expr = inputs["expr"][1]
-        
-        if expr.type:isArray()==false then
-          expr.type:print()
-          darkroom.error("Error, you can only index into an array type!",origast:linenumber(),origast:offset(), origast:filename())
-          os.exit()
-        end
-        
-        ast.expr = expr
-        ast.index = inputs.index[1]
-
-        if ast.index.constLow==nil then
-          darkroom.error( "index must be a constant expression", origast:linenumber(), origast:offset(), origast:filename() )
-        end
-
-        if ast.index.constLow<0 or ast.index.constHigh >= expr.type:channels() then
-          darkroom.error( "index value out of range. It is ["..ast.index.constLow..","..ast.index.constHigh.."] but should be within [0,"..(darkroom.type.arrayLength(expr.type)-1).."]", origast:linenumber(), origast:offset(), origast:filename() )
-        end
-
-        ast.type = expr.type:arrayOver()
-      elseif ast.kind=="transform" then
-        ast.expr = inputs["expr"][1]
-        
-        -- this just gets the value of the thing we're translating
-        ast.type = ast.expr.type
-        
-        local i=1
-        while ast["arg"..i] do
-          ast["arg"..i] = inputs["arg"..i][1] 
-          i=i+1
-        end
-        
-        -- now make the new transformBaked node out of this
-        local newtrans = {kind="transformBaked",expr=ast.expr,type=ast.expr.type}
-        
-        local noTransform = true
-
-        local i=1
-        while ast["arg"..i] do
-          -- if we got here we can assume it's valid
-          local translate, multN, multD = darkroom.typedAST.synthOffset( inputs["arg"..i][1], inputs["zeroedarg"..i][1], darkroom.dimToCoord[i])
-
-          if translate==nil then
-            darkroom.error("Error, non-stencil access pattern", origast:linenumber(), origast:offset(), origast:filename())
-          end
-
-          assert(type(translate.constLow)=="number")
-          assert(type(translate.constHigh)=="number")
-          assert(translate.type:isInt() or translate.type:isUint())
-
-          newtrans["translate"..i]=translate
-          newtrans["scaleN"..i]=multD*ast.expr["scaleN"..i]
-          newtrans["scaleD"..i]=multN*ast.expr["scaleD"..i]
-
-          if translate~=0 or multD~=1 or multN~=1 then noTransform = false end
-          i=i+1
-        end
-        
-        -- at least 2 arguments must be specified. 
-        -- the parser was supposed to guarantee this.
-        assert(i>2)
-
-        if noTransform then -- eliminate unnecessary transforms early
-          ast=ast.expr:shallowcopy()
-        else
-          ast=newtrans
-        end
-
-      elseif ast.kind=="array" then
-        
-        local cnt = 1
-        while ast["expr"..cnt] do
-          ast["expr"..cnt] = inputs["expr"..cnt][1]
-          cnt = cnt + 1
-        end
-        
-        local mtype = ast.expr1.type
-        local atype, btype
-        
-        if mtype:isArray() then
-          darkroom.error("You can't have nested arrays (index 0 of vector)", origast:linenumber(), origast:offset(), origast:filename() )
-        end
-        
-        local cnt = 2
-        while ast["expr"..cnt] do
-          if ast["expr"..cnt].type:isArray() then
-            darkroom.error("You can't have nested arrays (index "..(i-1).." of vector)")
-          end
-          
-          mtype, atype, btype = darkroom.type.meet( mtype, ast["expr"..cnt].type, "array", origast )
-          
-          if mtype==nil then
-            darkroom.error("meet error")      
-          end
-          
-          -- our type system should have guaranteed this...
-          assert(mtype==atype)
-          assert(mtype==btype)
-          
-          cnt = cnt + 1
-        end
-        
-        -- now we've figured out what the type of the array should be
-        
-        -- may need to insert some casts
-        local cnt = 1
-        while ast["expr"..cnt] do
-          -- meet should have failed if this isn't possible...
-          local from = ast["expr"..cnt].type
-
-          if from~=mtype then
-            if darkroom.type.checkImplicitCast(from, mtype,origast)==false then
-              darkroom.error("Error, can't implicitly cast "..from:str().." to "..mtype:str(), origast:linenumber(), origast:offset())
-            end
-            
-            ast["expr"..cnt] = darkroom.typedAST.new({kind="cast",expr=ast["expr"..cnt], type=mtype}):copyMetadataFrom(ast["expr"..cnt])
-          end
-
-          cnt = cnt + 1
-        end
-        
-        local arraySize = cnt - 1
-        ast.type = darkroom.type.array(mtype, arraySize)
-        
-
-      elseif ast.kind=="cast" then
-
-        -- note: we don't eliminate these cast nodes, because there's a difference
-        -- between calculating a value at a certain precision and then downsampling,
-        -- and just calculating the value at the lower precision.
-        ast.expr = inputs["expr"][1]
-        
-        if darkroom.type.checkExplicitCast(ast.expr.type,ast.type,origast)==false then
-          darkroom.error("Casting from "..ast.expr.type:str().." to "..ast.type:str().." isn't allowed!",origast:linenumber(),origast:offset())
-        end
-      elseif ast.kind=="assert" then
-
-        ast.cond = inputs["cond"][1]
-        ast.expr = inputs["expr"][1]
-        ast.printval = inputs["printval"][1]
-
-        if darkroom.type.astIsBool(ast.cond)==false then
-          darkroom.error("Error, condition of assert must be boolean",origast:linenumber(),origast:offset(), origast:filename())
-          return nil
-        end
-
-        ast.type = ast.expr.type
-
-      elseif ast.kind=="mapreducevar" then
-        ast.type = darkroom.type.int(32)
-        ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
-
-        if type(inputs.low[1].constLow)~="number" or inputs.low[1].constLow~=inputs.low[1].constHigh then
-          darkroom.error("Map reduce var range low must be a constant",origast:linenumber(),origast:offset(), origast:filename())
-        end
-
-        if type(inputs.high[1].constLow)~="number" or inputs.high[1].constLow~=inputs.high[1].constHigh then
-          darkroom.error("Map reduce var range low must be a constant",origast:linenumber(),origast:offset(), origast:filename())
-        end
-
-        ast.low = inputs.low[1]
-        ast.high = inputs.high[1]
-        ast.constLow = inputs.low[1].constLow
-        ast.constHigh = inputs.high[1].constLow
-      elseif ast.kind=="iterateload" then
-        ast.type = inputs._expr[1].type
---        ast._expr = inputs._expr[1] -- we keep this around to make the stencil, kernelGraph, and code motion stuff work correctly
-        ast._expr = nil
-      elseif ast.kind=="tap" then
-        -- taps should be tagged with type already
-        ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
-      elseif ast.kind=="tapLUTLookup" then
-        ast.index = inputs["index"][1]
-        
-        -- tapLUTs should be tagged with type already
-        assert(darkroom.type.isType(ast.type))
-        
-        if ast.index.type:isUint()==false and ast.index.type:isInt()==false then
-          darkroom.error("Error, index into tapLUT must be integer", origast:linenumber(), origast:offset(), origast:filename())
-          return nil
-        end
-      elseif ast.kind=="crop" then
-        ast.expr = inputs["expr"][1]
-        ast.type = ast.expr.type
-      elseif ast.kind=="reduce" then
-        local i=1
-        local typeSet = {}
-
-        while ast["expr"..i] do
-          ast["expr"..i] = inputs["expr"..i][1]
-          table.insert(typeSet,ast["expr"..i].type)
-          
-          i=i+1
-        end
-
-        ast.type = darkroom.type.reduce( ast.op, typeSet)
-      elseif ast.kind=="outputs" then
-        -- doesn't matter, this is always the root and we never need to get its type
-        ast.type = inputs.expr1[1].type
-        ast.scaleN1 = 0
-        ast.scaleD1 = 0
-        ast.scaleN2 = 0
-        ast.scaleD2 = 0
-
-        local i=1
-        while ast["expr"..i] do
-          ast["expr"..i] = inputs["expr"..i][1]
-          i=i+1
-        end
-
-      elseif ast.kind=="type" then
-        -- ast.type is already a type, so don't have to do anything
-        -- shouldn't matter, but need to return something
-      elseif ast.kind=="gather" then
-        ast.type = inputs._input[1].type
-        ast._input = inputs._input[1]
-        ast.x = inputs.x[1]
-        ast.y = inputs.y[1]
-
-        for _,v in pairs({"minX","maxX","minY","maxY"}) do
-          local res = inputs[v][1]
-          if type(res.constLow)~="number" or res.constLow~=res.constHigh then
-            darkroom.error("Argument "..v.." to gather must be a constant", origast:linenumber(), origast:offset(), origast:filename())
-          end
-          ast[v] = res
-        end
-
-        if ast.x.type:isInt()==false then
-          darkroom.error("Error, x argument to gather must be int but is "..ast.x.type:str(), origast:linenumber(), origast:offset())
-        end
-
-        if ast.y.type:isInt()==false then
-          darkroom.error("Error, y argument to gather must be int but is "..ast.y.type:str(), origast:linenumber(), origast:offset())
-        end
-      elseif ast.kind=="gatherColumn" then
-        ast.type = inputs._input[1].type
-        ast._input = inputs._input[1]
-        ast.x = inputs.x[1]
-
-        for _,v in pairs({"rowWidth","columnStartX","columnEndX","columnStartY","columnEndY"}) do
-          if ast[v]==nil then 
-            darkroom.error("Argument "..v.." to gatherColumn missing",origast:linenumber(),origast:offset(),origast:filename())
-          end
-
-          local res = ast[v]:eval(1,darkroom.typedAST.new({}):copyMetadataFrom(origast))
-          if res:area()~=1 then
-            darkroom.error("Argument "..v.." to gatherColumn must be a constant",origast:linenumber(),origast:offset(),origast:filename())
-          end
-          ast[v] = res:min(1)
-        end
-
-        if ast.columnStartY>ast.columnEndY then
-          darkroom.error("gatherColumn startY should not be larger than endY",origast:linenumber(),origast:offset(),origast:filename())
-        end
-
-        if ast.type:isArray() then
-          assert(false)
-        else
-          ast.type = darkroom.type.array(ast.type,ast.rowWidth*(ast.columnEndY-ast.columnStartY+1))
-        end
-
-      elseif ast.kind=="load" then
-        -- already has a type
-        ast.scaleN1=1; ast.scaleD1=1; ast.scaleN2=1; ast.scaleD2=1;
-        assert(inputs.relX~=nil)
-        assert(inputs.relY~=nil)
-        ast.relX = inputs.relX[1]
-        ast.relY = inputs.relY[1]
-      elseif ast.kind=="mapreduce" then
-
-        origast:map("varnode", function(n,i) ast["varnode"..i] = inputs["varnode"..i][1] end)
-
-        if ast.reduceop=="sum" or ast.reduceop=="max" or ast.reduceop=="min" then
-          ast.type = inputs.expr[1].type
-        elseif ast.reduceop=="argmin" or ast.reduceop=="argmax" then
-          if inputs.expr[1].type:isArray()==true then
-            darkroom.error("argmin and argmax can only be applied to scalar quantities", origast:linenumber(), origast:offset(), origast:filename())
-          end
-
-          ast.type = darkroom.type.array(darkroom.type.int(32),origast:arraySize("varname")+1)
-        elseif ast.reduceop=="none" then
-          if origast:arraySize("varname")~=1 then
-            darkroom.error("Pure map can only be one dimensional", origast:linenumber(), origast:offset(), origast:filename())
-          end
-
-          if ast.varnode1.low.constLow~=0 or ast.varnode1.low.constLow~=ast.varnode1.low.constHigh or ast.varnode1.high.constLow~=ast.varnode1.high.constHigh then
-            darkroom.error("Pure map can only have range 0 to N", origast:linenumber(), origast:offset(), origast:filename())
-          end
-
-          if inputs.expr[1].type:isArray()==true then
-            darkroom.error("pure map can only be applied to scalar quantities", origast:linenumber(), origast:offset(), origast:filename())
-          end
-
-          ast.type = darkroom.type.array(inputs.expr[1].type,ast.varnode1.high.constLow+1)
-        else
-          darkroom.error("Unknown reduce operator '"..ast.reduceop.."'")
-        end
-
-        ast.expr = inputs.expr[1]
-      elseif ast.kind=="iterate" then
-        ast.iterationSpaceLow = ast.iterationSpaceLow:eval(1,darkroom.typedAST.new({}):copyMetadataFrom(origast))
-        if ast.iterationSpaceLow:area()~=1 then
-          darkroom.error("iteration range must be a constant",ast:linenumber(),ast:offset(),ast:filename())
-        end
-        ast.iterationSpaceLow = ast.iterationSpaceLow:min(1)
-
-        ast.iterationSpaceHigh = ast.iterationSpaceHigh:eval(1,darkroom.typedAST.new({}):copyMetadataFrom(origast))
-        if ast.iterationSpaceHigh:area()~=1 then
-          darkroom.error("iteration range must be a constant",ast:linenumber(),ast:offset(),ast:filename())
-        end
-        ast.iterationSpaceHigh = ast.iterationSpaceHigh:min(1)
-
-        if ast.reduceop=="sum" or ast.reduceop=="max" or ast.reduceop=="min" then
-          ast.type = inputs.expr[1].type
-        elseif ast.reduceop=="none" then
-          if ast.iterationSpaceLow~=0 or ast.iterationSpaceHigh<=0 then
-            darkroom.error("Pure iterate can only have range 0 to N", origast:linenumber(), origast:offset(), origast:filename())
-          end
-
-          ast.type = darkroom.type.array(inputs.expr[1].type,ast.iterationSpaceHigh-ast.iterationSpaceLow+1)
-        else
-          darkroom.error("Unknown reduce operator '"..ast.reduceop.."'")
-        end
-
-        ast._iterationvar = inputs._iterationvar[1]
-        ast.expr = inputs.expr[1]
-
-        local i = 1
-        while ast["loadname"..i] do
-          ast["_loadexpr"..i] = inputs["_loadexpr"..i][1]
-          i = i + 1
-        end
-
-      elseif ast.kind=="filter" then
-        ast.cond = inputs.cond[1]
-        ast.expr = inputs.expr[1]
-        ast.type = ast.expr.type
-
-        if ast.cond.type:isBool()==false then
-          darkroom.error("condition of filter must be a scalar boolean", origast:linenumber(), origast:offset(), origast:filename())
-        end
-      elseif ast.kind=="iterationvar" then
-        ast.type = darkroom.type.int(32)
-        ast.scaleN1 = 0; ast.scaleN2 = 0; ast.scaleD1 = 0; ast.scaleD2 = 0; -- meet with any rate
-      else
-        darkroom.error("Internal error, typechecking for "..ast.kind.." isn't implemented!",ast.line,ast.char)
-        return nil
-      end
-
-      if darkroom.type.isType(ast.type)==false then print(ast.kind) end
-      ast = darkroom.typedAST.new(ast):copyMetadataFrom(origast)
-      assert(darkroom.type.isType(ast.type))
-      if type(ast.constLow)=="number" then assert(ast.constLow<=ast.constHigh) end
+      local res = darkroom.typedAST.typecheckAST(origast, inputs)
 
       -- rules for finding the largest scale:
       -- (1/1), (2/1), (4/1) => 4 (even if they have common factors, largest number is chosen)
@@ -928,28 +944,28 @@ function darkroom.typedAST._toTypedAST(inast)
       -- (1/1), (1/3), (1/7) => 1 (denom is irrelevant)
       -- (1/1), (7/1), (3/1) => 21 (numerators must have common factors)
       -- (1/1), (1/3), (7/3) => 7 (denom is irrelevant)
+
       for i=1,2 do 
-        if type(ast["scaleN"..i])~="number" or type(ast["scaleD"..i])~="number" then print("missingrate",ast.kind); assert(false) end 
-        if ast["scaleN"..i]~=0 and ast["scaleD"..i]~=0 then
-          local N = ast["scaleN"..i]/gcd(ast["scaleN"..i],ast["scaleD"..i]) -- eg (4/2) => (2/1)
+        if res["scaleN"..i]~=0 and res["scaleD"..i]~=0 then
+          local N = res["scaleN"..i]/gcd(res["scaleN"..i],res["scaleD"..i]) -- eg (4/2) => (2/1)
           assert(math.floor(N)==N)
           local lcdN = (N*largestScaleN[i])/gcd(N,largestScaleN[i])
           if lcdN>largestScaleN[i] then largestScaleN[i] = lcdN 
           elseif N>largestScaleN[i] then largestScaleN[i] = N end
         end
         
-        if ast["scaleN"..i]/ast["scaleD"..i] < smallestScaleN[i]/smallestScaleD[i] then
-          smallestScaleN[i] = ast["scaleN"..i]
-          smallestScaleD[i] = ast["scaleD"..i]
+        if res["scaleN"..i]/res["scaleD"..i] < smallestScaleN[i]/smallestScaleD[i] then
+          smallestScaleN[i] = res["scaleN"..i]
+          smallestScaleD[i] = res["scaleD"..i]
         end
       end
 
-      return {ast}
+      return res
     end)
 
   assert(smallestScaleN[1]==1)
   assert(smallestScaleN[2]==1)
-  return res[1], largestScaleN[1], largestScaleN[2], smallestScaleD[1], smallestScaleD[2]
+  return res, largestScaleN[1], largestScaleN[2], smallestScaleD[1], smallestScaleD[2]
 end
 
 function darkroom.typedAST.astToTypedAST(ast, options)

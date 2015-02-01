@@ -4,21 +4,24 @@ fpga.modules = terralib.require("fpgamodules")
 
 BRAM_SIZE_BYTES = 2048
 
-function fpga.codegenKernel( kernel, moduleInputs )
+function fpga.codegenKernel( kernel, moduleInputs, x, y, imageWidth, imageHeight )
   assert(darkroom.kernelGraph.isKernelGraph(kernel))
   assert(type(moduleInputs)=="table")
+  assert(systolicAST.isSystolicAST(x))
+  assert(systolicAST.isSystolicAST(y))
+  assert(type(imageWidth)=="number")
+  assert(type(imageHeight)=="number")
 
   local systolicFn = kernel.kernel:visitEach(
     function( node, inputs)
       if node.kind=="load" then
-        if type(node.from)=="number" then
-          print(inputs.relX)
-          print(inputs.relY)
-          for k,v in pairs(node) do print(k,v) end
-          return systolic.index(moduleInputs[node.from+1], inputs.relX, inputs.relY)
-        else
-
-        end
+        local r =  systolic.index(moduleInputs[node.from+1], {inputs.relX, inputs.relY})
+        return r
+      elseif node.kind=="crop" then
+        local cond = systolic.__or(systolic.ge(x-node.shiftX,imageWidth),systolic.ge(y-node.shiftY,imageWidth))
+        assert(systolicAST.isSystolicAST(cond))
+        assert(systolicAST.isSystolicAST(inputs.expr))
+        return systolic.select(cond , 0, inputs.expr )
       else
         local n = node:shallowcopy()
         for k,v in node:inputs() do
@@ -56,16 +59,16 @@ function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffe
 
   local definitions = {}
   local pipeline = statemachine.module("Pipeline")
-  local moduleInputs = map( inputs, function(v,k) return systolic.input("input"..k, v[1].expr.type) end )
+  local moduleInputs = map( inputs, function(v,k) return systolic.input("input"..k, darkroom.type.array(v[1].expr.type,{1,1})) end )
   local moduleOutputs  = {systolic.output("output", kernelGraph.child1.kernel.type )}
   local processImFunction = pipeline:addFunction("processIm", moduleInputs, moduleOutputs)
-
+  local x,y = systolic.input("x",int16), systolic.input("y",int16)
   local regularInputLinebuffers, gatherInputLinebuffers, outputLinebuffers = fpga.collectLinebuffers( kernelGraph )
 
   kernelGraph:visitEach(
     function(node, inputArgs)
       if node.kernel~=nil then
-        local kernelFunction = fpga.codegenKernel( node, moduleInputs )
+        local kernelFunction = fpga.codegenKernel( node, moduleInputs, x, y, imageWidth, imageHeight )
 
         local fifos = map( regularInputLinebuffers[node], 
                            function(v) local fifo =  module.fifo(); processImFunction:addIf( v:ready(), fifo:pushBack(v:get())); return fifo end )

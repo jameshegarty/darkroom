@@ -310,6 +310,8 @@ function nearestPowerOf2(x)
 end
 
 function gcd(a,b)
+  assert(type(a)=="number")
+  assert(type(b)=="number")
   if b ~= 0 then
     return gcd(b, a % b)
   else
@@ -360,4 +362,12 @@ function reverse(t)
   local r = {}
   for k,v in ipairs(t) do r[#t-k+1] = v end
   return t
+end
+
+function filter(t,f)
+  local r = {}
+  for k,v in pairs(t) do
+    if f(v) then r[k] = v end
+  end
+  return r
 end

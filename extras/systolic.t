@@ -432,12 +432,19 @@ function systolicFunctionFunctions:getDefinition(callsites)
   return t
 end
 
+local function typecheck(ast)
+  assert(darkroom.ast.isAST(ast))
+  return darkroom.typedAST.typecheckAST(ast, filter(ast,function(n) return systolicAST.isSystolicAST(n) end), systolicAST.new )
+end
+
 local function convert(ast)
   if getmetatable(ast)==systolicASTMT then
     return ast
   elseif type(ast)=="number" then
-    return setmetatable({kind="value", value=ast, type=darkroom.type.uint(8)},systolicASTMT)
+    local t = darkroom.ast.new({kind="value", value=ast}):setLinenumber(0):setOffset(0):setFilename("")
+    return typecheck(t)
   else
+    print(type(ast))
     assert(false)
   end
 end
@@ -445,27 +452,40 @@ end
 local function binop(lhs, rhs, op)
   lhs = convert(lhs)
   rhs = convert(rhs)
-  return setmetatable({kind="binop",op=op,lhs=lhs,rhs=rhs,type=lhs.type},systolicASTMT)
+  return typecheck(darkroom.ast.new({kind="binop",op=op,lhs=lhs,rhs=rhs,type=lhs.type}):copyMetadataFrom(lhs))
 end
 
 systolicASTFunctions = {}
 setmetatable(systolicASTFunctions,{__index=IRFunctions})
-systolicASTMT={__index=systolicASTFunctions,__add=function(l,r) return binop(l,r,"+") end}
+systolicASTMT={__index=systolicASTFunctions,
+__add=function(l,r) return binop(l,r,"+") end, 
+__eq=function(l,r) return binop(l,r,"==") end, 
+__sub=function(l,r) return binop(l,r,"-") end}
 
 -- ops
-function systolic.index(t,x,y)
-  assert(systolicAST.isSystolicAST(t))
-  assert(systolicAST.isSystolicAST(x))
-  assert(systolicAST.isSystolicAST(y))
-  assert(darkroom.type.isArray(t.type))
-  return systolicAST.new({kind="index", expr=t, indexX = x, indexY = y})
+function systolic.index(expr,idx)
+  assert(systolicAST.isSystolicAST(expr))
+  assert(type(idx)=="table")
+  local t = {kind="index", expr=expr}
+  map(idx, function(n,i) t["index"..i] = convert(n);  end)
+  return typecheck(darkroom.ast.new(t):copyMetadataFrom(expr))
 end
 
+function systolic.select(cond,a,b)
+  cond, a, b = convert(cond), convert(a), convert(b)
+  return typecheck(darkroom.ast.new({kind="select",cond=cond,a=a,b=b}):copyMetadataFrom(cond))
+end
+
+function systolic.le(lhs, rhs) return binop(lhs,rhs,"<=") end
+function systolic.lt(lhs, rhs) return binop(lhs,rhs,"<") end
+function systolic.ge(lhs, rhs) return binop(lhs,rhs,">=") end
+function systolic.gt(lhs, rhs) return binop(lhs,rhs,">") end
+function systolic.__or(lhs, rhs) return binop(lhs,rhs,"or") end
 
 function systolicASTFunctions:internalDelay()
-  if self.kind=="binop" then
+  if self.kind=="binop" or self.kind=="select" then
     return 1
-  elseif self.kind=="input" or self.kind=="reg" or self.kind=="value" then
+  elseif self.kind=="input" or self.kind=="reg" or self.kind=="value" or self.kind=="index" or self.kind=="cast" then
     return 0
   else
     print(self.kind)
@@ -499,7 +519,7 @@ end
 function systolic.input(name, ty)
   assert(type(name)=="string")
   ty = darkroom.type.fromTerraType(ty, 0, 0, "")
-  return setmetatable({kind="input",varname=name,type=ty},systolicASTMT)
+  return systolicAST.new({kind="input",varname=name,type=ty,scaleN1=0,scaleD1=0,scaleN2=0,scaleD2=0}):setLinenumber(0):setOffset(0):setFilename("")
 end
 
 return systolic
