@@ -351,10 +351,27 @@ function deepsetweak(t,idx,value)
   end
 end
 
+-- if idx={a,b,c} this does
+-- return t[a][b][c]
+-- but returns nil if any of the indexing fails, doesn't error out
+function index(t,idx)
+  assert(type(t)=="table")
+  assert(type(idx)=="table")
+  
+  local T = t
+  for k,v in ipairs(idx) do
+    T = T[k]
+    if type(T)~="table" then return nil end
+  end
+  return T
+end
+
 function concat(t1,t2)
+  assert(type(t1)=="table")
+  assert(type(t2)=="table")
   local t = {}
-  for i=1,#t1 do table.insert(t,t1) end
-  for i=1,#t2 do t[#t1+1] = t2[i] end
+  for k,v in ipairs(t1) do table.insert(t,v) end
+  for k,v in ipairs(t2) do table.insert(t,v) end
   return t
 end
 
@@ -370,4 +387,30 @@ function filter(t,f)
     if f(v) then r[k] = v end
   end
   return r
+end
+
+function foldt(t,f)
+  if #t==2 then return f(t[1],t[2]) end
+
+  local res = {}
+  local i=1
+  while t[i] do
+    table.insert(res, f(t[i],t[i+1]))
+    i = i + 2
+  end
+  while t[i] do
+    table.insert(res, t[i])
+    i = i + 1
+  end
+
+  return res
+end
+
+function range(a,b)
+  assert(type(a)=="number")
+  assert(type(b)=="number" or b==nil)
+  if b==nil then a,b = 1,a end
+  local t = {}
+  for i=a,b do table.insert(t,i) end
+  return t
 end

@@ -54,13 +54,20 @@ end
 
 function systolic.module(name)
   assert(type(name)=="string")
-  local t = {name=name,regs={},functions={}}
+  local t = {name=name,regs={},functions={},ram128s={}}
   return setmetatable(t,systolicModuleMT)
 end
 
 function systolicModuleFunctions:add(inst)
+  assert(systolicAST.isSystolicAST(inst))
+  assert( (inst.kind=="instance" and inst.pure==nil) or inst.kind=="reg" or inst.kind=="ram128")
+
   if inst.kind=="reg" then
     table.insert(self.regs,inst)
+    return inst
+  elseif inst.kind=="ram128" then
+    table.insert(self.ram128s,inst)
+    return inst
   else
     assert(false)
   end
@@ -101,6 +108,10 @@ function valueToVerilog(value,ty)
   else
     assert(false)
   end
+end
+
+function systolicModuleFunctions:instantiate()
+  return systolicAST.new({kind="instance",module=self}):setLinenumber(0):setOffset(0):setFilename("")
 end
 
 function systolicModuleFunctions:getInstance(instname,callsites)
@@ -175,13 +186,23 @@ function systolicModuleFunctions:getDefinition(callsites)
 end
 
 systolicFunctionFunctions = {}
-systolicFunctionMT={__index=systolicFunctionFunctions}
+systolicFunctionMT={__index=systolicFunctionFunctions, 
+                    __call = function(self,args) -- args is a table of key,value pairs for the named arguments
+                      assert(self.pure)
+                      local t = {kind="instance",module=self}
+                      for k,v in ipairs(args) do
+                        assert(systolicAST.isSystolicAST(v))
+                        t["input_"..k] = v
+                      end
+                      return systolicAST.new(t):setLinenumber(0):setOffset(0):setFilename("")
+                    end
+}
 
 function systolic.pureFunction(name, inputs, outputs)
   map( inputs, function(v) assert(v.kind=="input") end )
   map( outputs, function(v) assert(v.kind=="output") end )
 
-  local t = {name=name, inputs=inputs, outputs=outputs, assignments={}, asserts={}, pure=true}
+  local t = {name=name, inputs=inputs, outputs=outputs, assignments={}, ram128assignments={}, asserts={}, pure=true}
 
   return setmetatable(t,systolicFunctionMT)
 end
@@ -229,10 +250,21 @@ local function retime(expr)
   return retiming
 end
 
-function systolicFunctionFunctions:addAssign(dst,expr)
+function systolicFunctionFunctions:addAssign( dst, expr )
+  assert(systolicAST.isSystolicAST(dst))
+  assert(systolicAST.isSystolicAST(expr))
   assert(dst.kind=="output" or dst.kind=="reg")
   
   table.insert(self.assignments,{dst=dst,expr=expr,retiming=retime(expr)})
+end
+
+function systolicFunctionFunctions:writeRam128( ram128, addr, expr )
+  assert(systolicAST.isSystolicAST(ram128))
+  assert(ram128.kind=="ram128")
+  assert(systolicAST.isSystolicAST(addr))
+  assert(systolicAST.isSystolicAST(expr))
+
+  table.insert(self.ram128assignments,{dst=ram128,expr=expr,addr=addr,retiming=retime(expr)})
 end
 
 local function codegen(ast, callsiteId)
@@ -434,7 +466,14 @@ end
 
 local function typecheck(ast)
   assert(darkroom.ast.isAST(ast))
-  return darkroom.typedAST.typecheckAST(ast, filter(ast,function(n) return systolicAST.isSystolicAST(n) end), systolicAST.new )
+
+  if ast.kind=="readram128" then
+    local t = ast:shallowcopy()
+    t.type=darkroom.type.bool()
+    return systolicAST.new(t):copyMetadataFrom(ast)
+  else
+    return darkroom.typedAST.typecheckAST(ast, filter(ast,function(n) return systolicAST.isSystolicAST(n) end), systolicAST.new )
+  end
 end
 
 local function convert(ast)
@@ -471,6 +510,20 @@ function systolic.index(expr,idx)
   return typecheck(darkroom.ast.new(t):copyMetadataFrom(expr))
 end
 
+function systolic.cast( expr, ty )
+  return typecheck(darkroom.ast.new({kind="cast",expr=expr,type=ty}):copyMetadataFrom(expr))
+end
+
+function systolic.array( expr )
+  assert(type(expr)=="table")
+  local t = {kind="array"}
+  for k,v in ipairs(expr) do
+    assert(systolicAST.isSystolicAST(v))
+    t["expr"..k] = v
+  end
+  return typecheck(darkroom.ast.new(t):copyMetadataFrom(expr[1]))
+end
+
 function systolic.select(cond,a,b)
   cond, a, b = convert(cond), convert(a), convert(b)
   return typecheck(darkroom.ast.new({kind="select",cond=cond,a=a,b=b}):copyMetadataFrom(cond))
@@ -493,6 +546,12 @@ function systolicASTFunctions:internalDelay()
   end
 end
 
+function systolicASTFunctions:read(addr)
+  assert(self.kind=="ram128")
+  addr = convert(addr)
+  return typecheck(darkroom.ast.new({kind="readram128",addr=addr}):copyMetadataFrom(self))
+end
+
 systolicAST = {}
 function systolicAST.isSystolicAST(ast)
   return getmetatable(ast)==systolicASTMT
@@ -500,6 +559,10 @@ end
 
 function systolicAST.new(tab)
   assert(type(tab)=="table")
+  if tab.scaleN1==nil then tab.scaleN1=0 end
+  if tab.scaleD1==nil then tab.scaleD1=0 end
+  if tab.scaleN2==nil then tab.scaleN2=0 end
+  if tab.scaleD2==nil then tab.scaleD2=0 end
   darkroom.IR.new(tab)
   return setmetatable(tab,systolicASTMT)
 end
@@ -507,7 +570,12 @@ end
 function systolic.reg( name, ty, initial )
   assert(type(name)=="string")
   ty = darkroom.type.fromTerraType(ty, 0, 0, "")
-  return setmetatable({kind="reg",varname=name,initial=initial,type=ty},systolicASTMT)
+  return systolicAST.new({kind="reg",varname=name,initial=initial,type=ty}):setLinenumber(0):setOffset(0):setFilename("")
+end
+
+function systolic.ram128( name )
+  assert(type(name)=="string")
+  return systolicAST.new({kind="ram128",varname=name}):setLinenumber(0):setOffset(0):setFilename("")
 end
 
 function systolic.output(name, ty)

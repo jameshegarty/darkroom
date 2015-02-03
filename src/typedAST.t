@@ -580,7 +580,7 @@ function darkroom.typedAST.typecheckAST( origast, inputs, newNodeFn )
       end
       
       if ast["index"..i].constLow<0 or ast["index"..i].constHigh >= expr.type:channels() then
-        darkroom.error( "index "..i.." value out of range. It is ["..ast.index.constLow..","..ast.index.constHigh.."] but should be within [0,"..(darkroom.type.arrayLength(expr.type)-1).."]", origast:linenumber(), origast:offset(), origast:filename() )
+        darkroom.error( "index "..i.." value out of range. It is ["..ast["index"..i].constLow..","..ast["index"..i].constHigh.."] but should be within [0,"..(expr.type:arrayLength()[i]-1).."]", origast:linenumber(), origast:offset(), origast:filename() )
       end
       
       i = i + 1

@@ -45,7 +45,7 @@ darkroom.type._arraySize={}
 -- the last index of size is the innermost size
 -- {3,4} means 3 arrays of size 4. [x,y] where x in [0,2], y is in [0,3]
 -- But we store this in darkroom.type._array in the opposite order to be unambiguous
-function darkroom.type.array(_type,size)
+function darkroom.type.array( _type, size )
   if type(size)=="number" then size={size} end
   assert(type(size)=="table")
   map(size, function(n) assert(type(n)=="number" and n>0) end)
@@ -54,7 +54,7 @@ function darkroom.type.array(_type,size)
   local ty = _type
   if _type.type=="array" then 
     size = concat(size,_type.size) 
-    ty = _type.type
+    ty = _type.over
   end
   assert(ty:isArray()==false)
 
@@ -223,7 +223,7 @@ function darkroom.type.meet( a, b, op, ast)
     elseif ut.precision<t.precision then
       prec = math.max(a.precision,b.precision)
     else
-      darkroom.error("Can't meet a "..ut:str().." and a "..t:str(),ast:linenumber(),ast:offset(),ast:filename())
+      darkroom.error("Can't meet a "..tostring(ut).." and a "..tostring(t),ast:linenumber(),ast:offset(),ast:filename())
     end
     
     local thistype = darkroom.type.int(prec)
@@ -366,8 +366,9 @@ function darkroom.type.checkExplicitCast(from, to, ast)
     -- obvously can return true...
     return true
   elseif from:isArray() and to:isArray() then
-    if from:arrayLength()~=to:arrayLength() then
-      darkroom.error("Can't change array length when casting "..from:str().." to "..to:str(), ast:linenumber(), ast:offset(), ast:filename() )
+    -- we do allow you to explicitly cast arrays of different shapes but the same total size
+    if from:channels()~=to:channels() then
+      darkroom.error("Can't change array length when casting "..tostring(from).." to "..tostring(to), ast:linenumber(), ast:offset(), ast:filename() )
     end
 
     return darkroom.type.checkExplicitCast(from.over, to.over,ast)
@@ -376,7 +377,7 @@ function darkroom.type.checkExplicitCast(from, to, ast)
     return darkroom.type.checkExplicitCast(from, to.over, ast )
 
   elseif from:isArray() and to:isArray()==false then
-    darkroom.error("Can't cast an array type to a non-array type. "..from:str().." to "..to:str(), ast:linenumber(), ast:offset(), ast:filename() )
+    darkroom.error("Can't cast an array type to a non-array type. "..tostring(from).." to "..tostring(to), ast:linenumber(), ast:offset(), ast:filename() )
     return false
   elseif from.type=="uint" and to.type=="uint" then
     return true
