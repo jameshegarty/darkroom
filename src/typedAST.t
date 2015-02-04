@@ -635,6 +635,17 @@ function darkroom.typedAST.typecheckAST( origast, inputs, newNodeFn )
       ast=newtrans
     end
 
+  elseif ast.kind=="struct" then
+    local ty = {}
+
+    local cnt = 1
+    while ast["key"..cnt] do
+      ast["value"..cnt] = inputs["value"..cnt]
+      ty[ast["key"..cnt]] = ast["value"..cnt].type
+      cnt = cnt + 1
+    end
+
+    ast.type = darkroom.type.structure(ty)
   elseif ast.kind=="array" then
     
     local cnt = 1

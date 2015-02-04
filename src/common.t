@@ -390,6 +390,8 @@ function filter(t,f)
 end
 
 function foldt(t,f)
+  assert(#t>0)
+  if #t==1 then return f(t[1]) end
   if #t==2 then return f(t[1],t[2]) end
 
   local res = {}
@@ -412,5 +414,15 @@ function range(a,b)
   if b==nil then a,b = 1,a end
   local t = {}
   for i=a,b do table.insert(t,i) end
+  return t
+end
+
+-- takes table m this is a key,value table,
+-- removes the keys and turns it into an array
+function mapToArray(m)
+  local t = {}
+  for k,v in pairs(m) do
+    table.insert(t,v)
+  end
   return t
 end

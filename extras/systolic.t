@@ -199,8 +199,8 @@ systolicFunctionMT={__index=systolicFunctionFunctions,
 }
 
 function systolic.pureFunction(name, inputs, outputs)
-  map( inputs, function(v) assert(v.kind=="input") end )
-  map( outputs, function(v) assert(v.kind=="output") end )
+  map( inputs, function(v,k) assert(type(k)=="string"); assert(v.kind=="input") end )
+  map( outputs, function(v,k) assert(type(k)=="string"); assert(v.kind=="output") end )
 
   local t = {name=name, inputs=inputs, outputs=outputs, assignments={}, ram128assignments={}, asserts={}, pure=true}
 
@@ -210,10 +210,10 @@ end
 function systolicModuleFunctions:addFunction(name, inputs, outputs)
 
   assert(type(inputs)=="table")
-  for k,v in pairs(inputs) do assert(v.kind=="input") end
+  for k,v in pairs(inputs) do assert(type(k)=="string");assert(v.kind=="input") end
 
   assert(type(outputs)=="table")
-  for k,v in pairs(outputs) do assert(v.kind=="output") end
+  for k,v in pairs(outputs) do assert(type(k)=="string");assert(v.kind=="output") end
 
   local t = {name=name, inputs=inputs, outputs=outputs, assignments={}, asserts={}}
   assert(self.functions[name]==nil)
@@ -494,15 +494,53 @@ local function binop(lhs, rhs, op)
   return typecheck(darkroom.ast.new({kind="binop",op=op,lhs=lhs,rhs=rhs,type=lhs.type}):copyMetadataFrom(lhs))
 end
 
+systolic._callsites = {}
+
 systolicASTFunctions = {}
 setmetatable(systolicASTFunctions,{__index=IRFunctions})
-systolicASTMT={__index=systolicASTFunctions,
+systolicASTMT={
+__index = function(tab,key)
+  local v = rawget(tab, key)
+  if v ~= nil then return v end
+  v = systolicASTFunctions[key]
+
+  if v==nil then
+    -- perhaps this is a function call
+    if rawget(tab,"kind")=="instance" and rawget(tab,"pure")==nil then
+      -- try to find key in function tab
+      local fn = tab.module.functions[key]
+      if fn~=nil then
+        return function(self, I)
+          assert(type(I)=="table" or I==nil or systolicAST.isSystolicAST(I))
+
+          systolic._callsites[self] = systolic._callsites[self] or {}
+          systolic._callsites[self][fn.name] = systolic._callsites[self][fn.name] or {}
+          table.insert(systolic._callsites[self][fn.name],1)
+
+          if type(I)=="table" and systolicAST.isSystolicAST(I)==false then
+            I = systolic.structure(I)
+          end
+
+          local outtype = {}
+          for k,v in pairs(fn.outputs) do
+            outtype[k] = v.type
+          end
+          outtype = darkroom.type.structure(outtype)
+
+          return systolicAST.new({kind="call",inst=self,input=I,functionname=fn.name,callsiteid = #systolic._callsites[self][fn.name], type=outtype}):setLinenumber(0):setOffset(0):setFilename("")
+               end
+      end
+    end
+  end
+  return v
+end,
+isIR = true,
 __add=function(l,r) return binop(l,r,"+") end, 
 __eq=function(l,r) return binop(l,r,"==") end, 
 __sub=function(l,r) return binop(l,r,"-") end}
 
 -- ops
-function systolic.index(expr,idx)
+function systolic.index( expr, idx )
   assert(systolicAST.isSystolicAST(expr))
   assert(type(idx)=="table")
   local t = {kind="index", expr=expr}
@@ -511,11 +549,30 @@ function systolic.index(expr,idx)
 end
 
 function systolic.cast( expr, ty )
+  assert(systolicAST.isSystolicAST(expr))
+  assert(darkroom.type.isType(ty))
   return typecheck(darkroom.ast.new({kind="cast",expr=expr,type=ty}):copyMetadataFrom(expr))
+end
+
+function systolic.structure( I )
+  assert(type(I)=="table")
+  local t = {kind="struct"}
+
+  local cnt = 1
+  for k,v in pairs(I) do
+    assert(type(k)=="string")
+    assert(systolicAST.isSystolicAST(v))
+    t["key"..cnt] = k
+    t["value"..cnt] = v
+    cnt = cnt + 1
+  end
+
+  return typecheck(darkroom.ast.new(t):copyMetadataFrom(t.value1))
 end
 
 function systolic.array( expr )
   assert(type(expr)=="table")
+  assert(#expr>0)
   local t = {kind="array"}
   for k,v in ipairs(expr) do
     assert(systolicAST.isSystolicAST(v))
@@ -536,9 +593,9 @@ function systolic.gt(lhs, rhs) return binop(lhs,rhs,">") end
 function systolic.__or(lhs, rhs) return binop(lhs,rhs,"or") end
 
 function systolicASTFunctions:internalDelay()
-  if self.kind=="binop" or self.kind=="select" then
+  if self.kind=="binop" or self.kind=="select" or self.kind=="readram128" then
     return 1
-  elseif self.kind=="input" or self.kind=="reg" or self.kind=="value" or self.kind=="index" or self.kind=="cast" then
+  elseif self.kind=="input" or self.kind=="reg" or self.kind=="value" or self.kind=="index" or self.kind=="cast" or self.kind=="array" then
     return 0
   else
     print(self.kind)

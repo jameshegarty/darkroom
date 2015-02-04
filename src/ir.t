@@ -628,6 +628,7 @@ end
 function darkroom.IR.isIR(v)
   local mt = getmetatable(v)
   if type(mt)~="table" then return false end
+  if mt.isIR then return true end -- a hack, in case we want to override the __index function
   if type(mt.__index)~="table" then return false end
   local mmt = getmetatable(mt.__index)
   if type(mmt)~="table" then return false end

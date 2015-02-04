@@ -15,7 +15,9 @@ function fpga.codegenKernel( kernel, moduleInputs, x, y, imageWidth, imageHeight
   local systolicFn = kernel.kernel:visitEach(
     function( node, inputs)
       if node.kind=="load" then
-        local r =  systolic.index(moduleInputs[node.from+1], {inputs.relX, inputs.relY})
+        print("NODE>FROM",node.from)
+        map(moduleInputs,print)
+        local r =  systolic.index(moduleInputs[node.from], {inputs.relX, inputs.relY})
         return r
       elseif node.kind=="crop" then
         local cond = systolic.__or(systolic.ge(x-node.shiftX,imageWidth),systolic.ge(y-node.shiftY,imageWidth))
@@ -32,7 +34,7 @@ function fpga.codegenKernel( kernel, moduleInputs, x, y, imageWidth, imageHeight
     end)
 
   local out = systolic.output( kernel.kernel:name(), kernel.kernel.type )
-  local kernelFn = systolic.pureFunction( kernel:name(), {}, {out} )
+  local kernelFn = systolic.pureFunction( kernel:name(), {}, {output=out} )
   kernelFn:addAssign( out, systolicFn )
 
   return kernelFn
@@ -55,25 +57,27 @@ function fpga.allocateLinebuffers( kernelGraph, options, pipeline, pipelineMain,
 
   local inputFifos = {}
   local function allocateALinebuffer( src, kind )
+    assert(type(kind)=="string")
+
     local key
     if type(src)=="number" then
       key = "input"..src
       if inputFifos[src]==nil then
-        local input = moduleInputs[src+1]
+        local input = moduleInputs[src]
         local fifo = fpga.modules.fifo( darkroom.type.array( input.type, {1,1} ) ):instantiate()
-        fifo = inputFifos[src]
+        inputFifos[src] = fifo
         pipeline:add(fifo)
-        pipelineMain:addIfLaunch( pipeline:valid(), fifo:pushBack(input) )
+        pipelineMain:addIfLaunch( pipeline:valid(), fifo:pushBack({input=input}) )
       end
-      return inputFifos[src]
+      return inputFifos[src], key
     elseif darkroom.kernelGraph.isKernelGraph(src) then
-      key = v.from:name().."_regular"
+      key = src:name().."_regular"
       if outputLinebuffers[key]==nil then
         assert(src:maxUse(1)<=0)
         assert(src:maxUse(2)<=0)
-        outputLinebuffers[key] = fpga.modules.linebuffer( src:minUse(1), src:minUse(2), src.kernel.type, options.stripWidth):instantiate()
+        outputLinebuffers[src][key] = fpga.modules.linebuffer( src:minUse(1), src:minUse(2), src.kernel.type, options.stripWidth):instantiate()
       end
-      return outputLinebuffers[key]
+      return outputLinebuffers[src][key], key
     else
         assert(false)
     end
@@ -82,19 +86,21 @@ function fpga.allocateLinebuffers( kernelGraph, options, pipeline, pipelineMain,
   local function addFifo( src, dst, key, LB )
     assert(type(src)=="number" or darkroom.kernelGraph.isKernelGraph(src))
     assert(darkroom.kernelGraph.isKernelGraph(dst))
-    assert(type(key)=="string")
+    assert( type(key) == "string" )
     assert( systolicAST.isSystolicAST( LB ) )
 
-    if regularInputLinebuffers[node][key]==nil then
+    if regularInputLinebuffers[dst][src]==nil then
       if type(src)=="number" then
         -- this is already a fifo
-        regularInputLinebuffers[node][key] = LB
+        regularInputLinebuffers[dst][src] = {inst=LB,key=key,type=darkroom.type.array(moduleInputs[src].type,{1,1})}
       else
-        local lowX, lowY = dst:minUse(1, src), dst:minUse(2, src)
-        local fifo = module.fifo( darkroom.type.array( dst.type, {-lowX,-lowY} ) ):instantiate()
+        local lowX, lowY = 0,0
+        if dst.kernel~=nil then lowX, lowY = dst:minUse(1, src), dst:minUse(2, src) end
+        local ty = darkroom.type.array( src.kernel.type, {-lowX+1,-lowY+1} )
+        local fifo = fpga.modules.fifo( ty ):instantiate()
         pipeline:add(fifo)
-        pipelineMain:addIfLaunch( LB:ready(), fifo:pushBack(LB:get()))
-        regularInputLinebuffers[node][key] = fifo
+        pipelineMain:addIfLaunch( LB:ready(), fifo:pushBack( LB:load() ) )
+        regularInputLinebuffers[dst][src] = {inst=fifo,key=key,type=ty}
       end
     end
   end
@@ -115,6 +121,11 @@ function fpga.allocateLinebuffers( kernelGraph, options, pipeline, pipelineMain,
             local LB, key = allocateALinebuffer( v.from, "regular" )
             addFifo( v.from, node, key, LB )
           end)
+      else
+        for k,v in node:inputs() do
+          local LB, key = allocateALinebuffer( v, "regular" )
+          addFifo( v, node, key, LB )
+        end
       end
 
     end)
@@ -130,25 +141,53 @@ function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffe
 
   local definitions = {}
 
-  local moduleInputs = map( inputs, function(v,k) return systolic.input("input"..k, darkroom.type.array(v[1].expr.type,{1,1})) end )
-  local moduleOutputs  = {systolic.output("output", kernelGraph.child1.kernel.type )}
+  local validIn = systolic.input("validIn",darkroom.type.bool())
+  local validOut = systolic.output("validOut",darkroom.type.bool())
+  local moduleInputs = {validIn}
+  local inputIdsToSystolic = {}
+  for k,v in pairs(inputs) do inputIdsToSystolic[k-1]=systolic.input("input"..k, darkroom.type.array(v[1].expr.type,{1,1})); table.insert(moduleInputs,inputIdsToSystolic[k-1]) end 
+  local moduleOutputs  = {validOut,systolic.output("output", kernelGraph.child1.kernel.type )}
   local pipeline = statemachine.module("Pipeline", moduleInputs, moduleOutputs)
   local pipelineMain = pipeline:addBlock("main")
   local x,y = systolic.input("x",int16), systolic.input("y",int16)
-  local inputLinebufferFifos, gatherInputLinebuffers, outputLinebuffers = fpga.allocateLinebuffers( kernelGraph, options, pipeline, pipelineMain, moduleInputs )
+  local inputLinebufferFifos, gatherInputLinebuffers, outputLinebuffers = fpga.allocateLinebuffers( kernelGraph, options, pipeline, pipelineMain, inputIdsToSystolic )
 
   kernelGraph:visitEach(
     function(node, inputArgs)
       if node.kernel~=nil then
-        local kernelFunction = fpga.codegenKernel( node, moduleInputs, x, y, imageWidth, imageHeight )
-        local kernelCall = kernelFunction( map( inputLinebufferFifos[node], function(v) return v:get() end ) )
-        local allFifosReady = foldt( map(fifos, function(n) return n:ready() end), function(a,b) return systolic.__and(a,b:ready()) end)
-        pipelineMain:addIfLaunch( allFifosReady, map(outputLinebuffers[node], function(v) return v:store(kernelCall) end) )
+        local linebufferInputs = map( inputLinebufferFifos[node], function(v,k) return systolic.input(v.key,v.type) end )
+        local kernelFunction = fpga.codegenKernel( node, linebufferInputs, x, y, imageWidth, imageHeight )
+        local kernelCall = kernelFunction( map( inputLinebufferFifos[node], function(v) return v.inst:popFront() end ) )
+        local fifoReady = mapToArray(map(inputLinebufferFifos[node], function(n) return n.inst:ready() end))
+        for k,v in pairs(fifoReady) do print("FR",k,v,systolicAST.isSystolicAST(v)) end
+        local allFifosReady = foldt( fifoReady, function(a,b) if b==nil then return a else return systolic.__and(a,b) end end)
+        assert(systolicAST.isSystolicAST(allFifosReady))
+        pipelineMain:addIfLaunch( allFifosReady, systolic.array(mapToArray(map(outputLinebuffers[node], function(v) return v:store(kernelCall) end))) )
       end
     end)
 
+  for k,v in pairs(inputLinebufferFifos[kernelGraph]) do
+    pipelineMain:addAssign( validOut, v.inst:ready())
+  end
+
   return pipeline
 end
+
+local function calcMaxStencil( kernelGraph )
+  local maxStencil = Stencil.new()
+  kernelGraph:visitEach(
+    function(node)
+      if node.kernel~=nil then maxStencil = maxStencil:unionWith(neededStencil(true,kernelGraph,node,1,nil)) end
+    end)
+  return maxStencil
+end
+
+function delayToXY(delay, width)
+  local lines = math.floor(delay/width)
+  local xpixels = delay - lines*width
+  return xpixels, lines
+end
+
 
 function fpga.codegenHarness( inputs, outputs, kernelGraph, shifts, options, largestEffectiveCycles, padMinX, padMinY, padMaxX, padMaxY, imageWidth, imageHeight)
   assert(type(padMaxY)=="number")
@@ -196,15 +235,6 @@ function fpga.codegenHarness( inputs, outputs, kernelGraph, shifts, options, lar
     assert(false)
   end
 
-end
-
-local function calcMaxStencil( kernelGraph )
-  local maxStencil = Stencil.new()
-  kernelGraph:visitEach(
-    function(node)
-      if node.kernel~=nil then maxStencil = maxStencil:unionWith(neededStencil(true,kernelGraph,node,1,nil)) end
-    end)
-  return maxStencil
 end
 
 local function choosePadding( kernelGraph, imageWidth, imageHeight, smallestScaleX, smallestScaleY)

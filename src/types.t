@@ -49,7 +49,7 @@ function darkroom.type.array( _type, size )
   if type(size)=="number" then size={size} end
   assert(type(size)=="table")
   map(size, function(n) assert(type(n)=="number" and n>0) end)
-  assert(getmetatable(_type)==TypeMT)
+  assert( getmetatable(_type) == TypeMT )
 
   local ty = _type
   if _type.type=="array" then 
@@ -65,6 +65,28 @@ function darkroom.type.array( _type, size )
   darkroom.type._array[ty] = darkroom.type._array[ty] or {}
   darkroom.type._array[ty][size] = darkroom.type._array[ty][size] or setmetatable({type="array", over=ty, size=size},TypeMT)
   return darkroom.type._array[ty][size]
+end
+
+darkroom.type._struct={}
+function darkroom.type.structure( kvs )
+  assert(type(kvs)=="table")
+  local s = {}
+  for k,v in pairs(kvs) do 
+    assert(type(k)=="string")
+    assert(darkroom.type.isType(v))
+    assert(s.type~="struct")
+    table.insert(s,{k=k,v=v}) 
+  end
+  table.sort(s, function(a,b) return a.k<b.k end)
+  local key = ""
+  map(s, function(n) key = key..n.k.."-"..tostring(n.v).."-" end)
+  print("STRUCT KEY",key)
+
+  if darkroom.type._struct[key]==nil then
+    darkroom.type._struct[key] = setmetatable({type="struct",kvs = kvs}, TypeMT)
+  end
+
+  return darkroom.type._struct[key]
 end
 
 function darkroom.type.fromTerraType(ty, linenumber, offset, filename)
@@ -377,6 +399,11 @@ function darkroom.type.checkExplicitCast(from, to, ast)
     return darkroom.type.checkExplicitCast(from, to.over, ast )
 
   elseif from:isArray() and to:isArray()==false then
+    if from:arrayOver():isBool() and from:channels()==to:sizeof()*8 then
+      -- casting an array of bools to a type with the same number of bits is OK
+      return true
+    end
+
     darkroom.error("Can't cast an array type to a non-array type. "..tostring(from).." to "..tostring(to), ast:linenumber(), ast:offset(), ast:filename() )
     return false
   elseif from.type=="uint" and to.type=="uint" then

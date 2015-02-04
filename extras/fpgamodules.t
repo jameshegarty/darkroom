@@ -472,10 +472,11 @@ end
 function modules.linebuffer(maxDelayX, maxDelayY, datatype, stripWidth)
   assert(type(maxDelayX)=="number")
   assert(type(maxDelayY)=="number")
+  assert(maxDelayX>=0)
+  assert(maxDelayY>=0)
   assert(darkroom.type.isType(datatype))
 
-  local O = {}
-  local Oflat = {}
+  local O = systolic.output("output", darkroom.type.array(datatype,{maxDelayX+1,maxDelayY+1}))
   local OR = {}
   local BRAM = {}
   local writeAddr = systolic.reg("writeAddr", uint16, 0)
@@ -487,11 +488,8 @@ function modules.linebuffer(maxDelayX, maxDelayY, datatype, stripWidth)
   lb:add(readAddr)
 
   for y=-maxDelayY,0 do
-    O[y] = {}
     OR[y] = {}
     for x=-maxDelayX,0 do
-      O[y][x] = systolic.output("out_x"..numToVarname(x).."_y"..numToVarname(y), datatype)
-      table.insert(Oflat, O[y][x])
       OR[y][x] = systolic.reg("lb_x"..numToVarname(x).."_y"..numToVarname(y), datatype)
       lb:add(OR[y][x])
     end
@@ -502,8 +500,8 @@ function modules.linebuffer(maxDelayX, maxDelayY, datatype, stripWidth)
   end
 
   do -- store
-    local I = systolic.input("in",datatype)
-    local storeFn = lb:addFunction("store",{I},{})
+    local I = systolic.input( "in", datatype )
+    local storeFn = lb:addFunction("store",{input=I},{})
     storeFn:addAssign(writeAddr,writeAddr+1)
 
     for y=-maxDelayY,0 do
@@ -522,19 +520,27 @@ function modules.linebuffer(maxDelayX, maxDelayY, datatype, stripWidth)
 
   do -- load
     local strideX = systolic.input("strideX",uint8)
-    local loadFn = lb:addFunction("load",{strideX},Oflat)
-    loadFn:addAssign(readAddr, readAddr+strideX)
+    local loadFn = lb:addFunction("load",{},{output=O})
+    loadFn:addAssign(readAddr, readAddr+1)
     loadFn:addAssert(writeAddr==readAddr)
 
+    local Oflat = {}
     for y=-maxDelayY,0 do
       for x=-maxDelayX,0 do
-        loadFn:addAssign(O[y][x],OR[y][x])
+        table.insert(Oflat, OR[y][x])
       end
     end
+    loadFn:addAssign(O,systolic.array(Oflat))
   end
+
+
+  -- ready
+  local readyres = systolic.output("isReady", darkroom.type.bool() )
+  local readyFn = lb:addFunction("ready",{},{ready=readyres})
 
   return lb
 end
+modules.linebuffer = memoize( modules.linebuffer )
 
 function modules.fifo(ty)
   assert(darkroom.type.isType(ty))
@@ -542,36 +548,37 @@ function modules.fifo(ty)
   local fifo = systolic.module("fifo")
   local writeAddr = fifo:add(systolic.reg("count", uint16, 0))
   local readAddr = fifo:add(systolic.reg("count", uint16, 0))
-  local rams = map( range( ty:channels()*ty:baseType():sizeof() ), function(v) local r = systolic.ram128("fifo"..v); return fifo:add(r) end )
+  local bits = ty:baseType():sizeof()*8
+  local rams = map( range( ty:channels()*bits ), function(v) local r = systolic.ram128("fifo"..v); return fifo:add(r) end )
 
   -- pushBack
   local input = systolic.input("input", ty)
   local flatinputs = systolic.cast( input, darkroom.type.array( ty:baseType(), {ty:channels()} ) )
-  local pushBack = fifo:addFunction("pushBack",{input},{})
+  local pushBack = fifo:addFunction("pushBack",{input=input},{})
   pushBack:addAssert( systolic.lt(writeAddr - readAddr, 128), "attempting to push to a full fifo" )
   pushBack:addAssign( writeAddr, writeAddr + 1)
   for c=1,ty:channels()-1 do
-    for b=1,ty:baseType():sizeof() do
-      pushBack:writeRam128( rams[(c-1)*ty:baseType():sizeof()+(b-1)+1], writeAddr, systolic.index(systolic.index(input,{c-1}),{b-1}) )
+    for b=1,bits do
+      pushBack:writeRam128( rams[(c-1)*bits+(b-1)+1], writeAddr, systolic.index(systolic.index(input,{c-1}),{b-1}) )
     end
   end
 
   -- popFront
   local out = systolic.output("output", ty)
-  local popFront = fifo:addFunction("popFront",{},{out})
+  local popFront = fifo:addFunction("popFront",{},{output=out})
   popFront:addAssert( writeAddr ~= readAddr, "attempting to pop from an empty fifo" )
   popFront:addAssign( readAddr, readAddr + 1)
   popFront:addAssign( out, systolic.array( map( range(ty:channels()), function(c)
-    return systolic.cast(systolic.array(map( range(ty:baseType():sizeof()), 
+    return systolic.cast(systolic.array(map( range(bits), 
       function(b) 
-       return rams[(c-1)*ty:baseType():sizeof()+(b-1)+1]:read(readAddr)
+       return rams[(c-1)*bits+(b-1)+1]:read(readAddr)
       end)),ty:baseType()) end)))
 
 
   -- ready
-  local readyres = systolic.output("isReady", darkroom.bool() )
-  local ready = fifo:addFunction("ready",{},{readyres})
-  ready:addAssign(readyres, count > 0 )
+  local readyres = systolic.output("isReady", darkroom.type.bool() )
+  local ready = fifo:addFunction("ready",{},{ready=readyres})
+  ready:addAssign(readyres, systolic.gt(writeAddr-readAddr,0) )
 
   return fifo
 end
