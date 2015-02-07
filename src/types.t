@@ -3,6 +3,8 @@ TypeFunctions = {}
 TypeMT = {__index=TypeFunctions, __tostring=function(ty)
   if ty.type=="bool" then
     return "bool"
+  elseif ty.type=="null" then
+    return "null"
   elseif ty.type=="int" then
     return "int"..ty.precision
   elseif ty.type=="uint" then
@@ -11,15 +13,23 @@ TypeMT = {__index=TypeFunctions, __tostring=function(ty)
     return "float"..ty.precision
   elseif ty.type=="array" then
     return tostring(ty.over).."["..table.concat(ty.size,",").."]"
+  elseif ty.type=="struct" then
+    local t = "{"
+    for k,v in pairs(ty.kvs) do
+      t=t..k.."="..tostring(v)..","
+    end
+    return t.."}"
   end
 
-  print("Error, typeToString input doesn't appear to be a type")
-  os.exit()
+  print("Error, typeToString input doesn't appear to be a type, ",ty.type)
+  assert(false)
 end}
 
 darkroom.type._bool=setmetatable({type="bool"}, TypeMT)
-
 function darkroom.type.bool() return darkroom.type._bool end
+
+darkroom.type._null=setmetatable({type="null"}, TypeMT)
+function darkroom.type.null() return darkroom.type._null end
 
 darkroom.type._uint={}
 function darkroom.type.uint(prec)
@@ -70,6 +80,8 @@ end
 darkroom.type._struct={}
 function darkroom.type.structure( kvs )
   assert(type(kvs)=="table")
+  assert(keycount(kvs)>0)
+
   local s = {}
   for k,v in pairs(kvs) do 
     assert(type(k)=="string")
@@ -81,6 +93,7 @@ function darkroom.type.structure( kvs )
   local key = ""
   map(s, function(n) key = key..n.k.."-"..tostring(n.v).."-" end)
   print("STRUCT KEY",key)
+  assert(keycount(kvs)>0)
 
   if darkroom.type._struct[key]==nil then
     darkroom.type._struct[key] = setmetatable({type="struct",kvs = kvs}, TypeMT)
@@ -395,10 +408,10 @@ function darkroom.type.checkExplicitCast(from, to, ast)
 
     return darkroom.type.checkExplicitCast(from.over, to.over,ast)
 
-  elseif from:isArray()==false and to:isArray() then
+  elseif (from:isStruct()==false and from:isArray()==false) and to:isArray() then
     return darkroom.type.checkExplicitCast(from, to.over, ast )
 
-  elseif from:isArray() and to:isArray()==false then
+  elseif from:isArray() and (to:isArray()==false and to:isStruct()==false) then
     if from:arrayOver():isBool() and from:channels()==to:sizeof()*8 then
       -- casting an array of bools to a type with the same number of bits is OK
       return true
@@ -406,6 +419,16 @@ function darkroom.type.checkExplicitCast(from, to, ast)
 
     darkroom.error("Can't cast an array type to a non-array type. "..tostring(from).." to "..tostring(to), ast:linenumber(), ast:offset(), ast:filename() )
     return false
+  elseif from:isStruct() and to:isStruct()==false and keycount(from.kvs)==1 then
+    for k,v in pairs(from.kvs) do
+      return darkroom.type.checkExplicitCast(v,to,ast)
+    end
+  elseif from:isStruct() and to:isStruct() and keycount(from.kvs)==keycount(to.kvs) then
+    for k,v in pairs(from.kvs) do
+      if to.kvs[k]==nil then return false end
+      if darkroom.type.checkExplicitCast(v,to.kvs[k],ast)==false then return false end
+    end
+    return true
   elseif from.type=="uint" and to.type=="uint" then
     return true
   elseif from.type=="int" and to.type=="int" then
@@ -431,8 +454,7 @@ function darkroom.type.checkExplicitCast(from, to, ast)
   elseif from.type=="float" and to.type=="float" then
     return true
   else
-    from:print()
-    to:print()
+    print(from,to)
     assert(false) -- NYI
   end
 
@@ -442,11 +464,13 @@ end
 -- compare this to meet - this is where we can't change the type of 'to',
 -- so we just have to see if 'from' can be converted to 'to'
 function darkroom.type.checkImplicitCast(from, to, ast)
-  assert(from~=nil)
-  assert(to~=nil)
-  assert(darkroom.ast.isAST(ast))
+  assert(darkroom.type.isType(from))
+  assert(darkroom.type.isType(to))
+  assert(darkroom.IR.isIR(ast))
 
-  if from.type=="uint" and to.type=="uint" then
+  if from==to then
+    return true -- obviously
+  elseif from.type=="uint" and to.type=="uint" then
     if to.precision >= from.precision then
       return true
     end
@@ -470,8 +494,20 @@ function darkroom.type.checkImplicitCast(from, to, ast)
     if to.precision >= from.precision then
       return true
     end
+  elseif from:isStruct() and to:isStruct()==false and keycount(from.kvs)==1 then
+    -- convert a struct of one entry to the type of that entry
+    -- terrible, terrible language design
+    for k,v in pairs(from.kvs) do
+      return darkroom.type.checkImplicitCast(v,to,ast)
+    end
+  elseif from:isStruct() and to:isStruct() and keycount(from.kvs)==keycount(to.kvs) then
+    for k,v in pairs(from.kvs) do
+      if to.kvs[k]==nil then print("A");return false end
+      local r = darkroom.type.checkImplicitCast(v,to.kvs[k],ast)
+      if r==false then return false end
+    end
+    return true
   end
-
 
   return false
 end
@@ -580,6 +616,10 @@ end
 
 function TypeFunctions:isUint()
   return self.type=="uint"
+end
+
+function TypeFunctions:isStruct()
+  return self.type=="struct"
 end
 
 function TypeFunctions:isNumber()

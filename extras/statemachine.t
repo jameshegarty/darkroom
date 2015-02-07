@@ -14,23 +14,23 @@ function statemachine.isBlock(n)
   return getmetatable(n) == stateMachineBlockMT
 end
 
-function statemachine.module(name,inputs, outputs)
+function statemachine.module( name, inputs, outputs, mainblock )
   assert(type(name)=="string")
   map(inputs, function(v) assert(v.kind=="input") end)
   map(outputs, function(v) assert(v.kind=="output") end)
-
-  return setmetatable({name=name, blocks={}, inputs=inputs, outputs=outputs, instances={}}, stateMachineModuleMT)
+  assert(statemachine.isBlock(mainblock))
+  return setmetatable({name=name, mainblock = mainblock, inputs=inputs, outputs=outputs, instances={}}, stateMachineModuleMT)
 end
 
-function stateMachineModuleFunctions:addBlock(name)
-  local t = {name=name,  statements = {}}
-  table.insert(self.blocks, t)
+function statemachine.block(name, predicate)
+  assert(type(name)=="string")
+  assert(systolicAST.isSystolicAST(predicate))
+  local t = {name=name,  statements = {}, branches={}, predicate = predicate}
   return setmetatable(t,stateMachineBlockMT)
 end
 
 function stateMachineModuleFunctions:add( inst )
-  assert(systolicAST.isSystolicAST(inst))
-  assert(inst.kind=="instance")
+  assert(systolicInstance.isSystolicInstance(inst))
   table.insert(self.instances, inst)
 end
 
@@ -47,7 +47,30 @@ function stateMachineModuleFunctions:toVerilog()
   end
   table.insert(t,");\n")
 
+
+  for k,v in ipairs(self.mainblock.statements) do
+    if v.kind=="iflaunch" then
+      table.insert(t," // if launch\n")
+      table.insert(t," // if "..typedASTPrintPrettys(v.cond).." then\n")
+      table.insert(t," // "..typedASTPrintPrettys(v.launch).."\n")
+      local launchstat, launchvar = v.launch:toVerilog({validbit=systolic.__and(v.cond, self.mainblock.predicate)})
+      t = concat(t,launchstat)
+    elseif v.kind=="assign" then
+      table.insert(t," // assign\n")
+      local predstat, predvar = self.mainblock.predicate:toVerilog({pipeline=false})
+      t = concat(t,predstat)
+      local exprstat, exprvar = v.expr:toVerilog({pipeline=false})
+      t = concat(t,exprstat)
+      table.insert( t, "if("..predvar..") begin "..v.dst:name().." <= "..exprvar.."; end\n" )
+    else
+      assert(false)
+    end
+  end
+
   table.insert(t,"endmodule\n\n")
+
+  local defn = systolic.getDefinitions()
+  t = concat({defn},t)
 
   return t
 end
@@ -60,6 +83,12 @@ end
 function stateMachineBlockFunctions:addIfLaunch( cond, launch )
   assert(systolicAST.isSystolicAST(cond))
   assert(systolicAST.isSystolicAST(launch))
+
+  if cond.type:isBool()==false then
+    assert( darkroom.type.checkImplicitCast( cond.type, darkroom.type.bool(), cond ) )
+    cond = systolic.cast(cond, darkroom.type.bool())
+  end
+
   table.insert(self.statements,{kind="iflaunch",cond=cond,launch=launch})
 end
 
@@ -67,6 +96,12 @@ function stateMachineBlockFunctions:addAssign( dst, expr )
   assert(systolicAST.isSystolicAST(dst))
   assert(dst.kind=="output")
   assert(systolicAST.isSystolicAST(expr))
+
+  if dst.type~=expr.type then
+    assert( darkroom.type.checkImplicitCast( expr.type, dst.type, expr ) )
+    expr = systolic.cast( expr, dst.type )
+  end
+
   table.insert(self.statements,{kind="assign",dst=dst,expr=expr})
 end
 

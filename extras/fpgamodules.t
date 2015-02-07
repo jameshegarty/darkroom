@@ -501,8 +501,8 @@ function modules.linebuffer(maxDelayX, maxDelayY, datatype, stripWidth)
 
   do -- store
     local I = systolic.input( "in", datatype )
-    local storeFn = lb:addFunction("store",{input=I},{})
-    storeFn:addAssign(writeAddr,writeAddr+1)
+    local storeFn = lb:addFunction("store",{I},nil)
+    storeFn:addAssign(writeAddr,writeAddr:read()+1)
 
     for y=-maxDelayY,0 do
       for x=-maxDelayX,0 do
@@ -520,14 +520,14 @@ function modules.linebuffer(maxDelayX, maxDelayY, datatype, stripWidth)
 
   do -- load
     local strideX = systolic.input("strideX",uint8)
-    local loadFn = lb:addFunction("load",{},{output=O})
-    loadFn:addAssign(readAddr, readAddr+1)
+    local loadFn = lb:addFunction("load",{},O)
+    loadFn:addAssign(readAddr, readAddr:read()+1)
     loadFn:addAssert(writeAddr==readAddr)
 
     local Oflat = {}
     for y=-maxDelayY,0 do
       for x=-maxDelayX,0 do
-        table.insert(Oflat, OR[y][x])
+        table.insert(Oflat, OR[y][x]:read())
       end
     end
     loadFn:addAssign(O,systolic.array(Oflat))
@@ -536,7 +536,7 @@ function modules.linebuffer(maxDelayX, maxDelayY, datatype, stripWidth)
 
   -- ready
   local readyres = systolic.output("isReady", darkroom.type.bool() )
-  local readyFn = lb:addFunction("ready",{},{ready=readyres})
+  local readyFn = lb:addFunction("ready",{},readyres)
 
   return lb
 end
@@ -554,9 +554,9 @@ function modules.fifo(ty)
   -- pushBack
   local input = systolic.input("input", ty)
   local flatinputs = systolic.cast( input, darkroom.type.array( ty:baseType(), {ty:channels()} ) )
-  local pushBack = fifo:addFunction("pushBack",{input=input},{})
-  pushBack:addAssert( systolic.lt(writeAddr - readAddr, 128), "attempting to push to a full fifo" )
-  pushBack:addAssign( writeAddr, writeAddr + 1)
+  local pushBack = fifo:addFunction("pushBack",{input},nil)
+  pushBack:addAssert( systolic.lt(writeAddr:read() - readAddr:read(), 128), "attempting to push to a full fifo" )
+  pushBack:addAssign( writeAddr, writeAddr:read() + 1)
   for c=1,ty:channels()-1 do
     for b=1,bits do
       pushBack:writeRam128( rams[(c-1)*bits+(b-1)+1], writeAddr, systolic.index(systolic.index(input,{c-1}),{b-1}) )
@@ -565,20 +565,20 @@ function modules.fifo(ty)
 
   -- popFront
   local out = systolic.output("output", ty)
-  local popFront = fifo:addFunction("popFront",{},{output=out})
+  local popFront = fifo:addFunction("popFront",{},out)
   popFront:addAssert( writeAddr ~= readAddr, "attempting to pop from an empty fifo" )
-  popFront:addAssign( readAddr, readAddr + 1)
+  popFront:addAssign( readAddr, readAddr:read() + 1)
   popFront:addAssign( out, systolic.array( map( range(ty:channels()), function(c)
     return systolic.cast(systolic.array(map( range(bits), 
       function(b) 
-       return rams[(c-1)*bits+(b-1)+1]:read(readAddr)
+       return rams[(c-1)*bits+(b-1)+1]:read(readAddr:read())
       end)),ty:baseType()) end)))
 
 
   -- ready
   local readyres = systolic.output("isReady", darkroom.type.bool() )
-  local ready = fifo:addFunction("ready",{},{ready=readyres})
-  ready:addAssign(readyres, systolic.gt(writeAddr-readAddr,0) )
+  local ready = fifo:addFunction("ready",{},readyres)
+  ready:addAssign(readyres, systolic.gt(writeAddr:read()-readAddr:read(),0) )
 
   return fifo
 end

@@ -640,10 +640,11 @@ function darkroom.typedAST.typecheckAST( origast, inputs, newNodeFn )
 
     local cnt = 1
     while ast["key"..cnt] do
-      ast["value"..cnt] = inputs["value"..cnt]
-      ty[ast["key"..cnt]] = ast["value"..cnt].type
+      ast["expr"..ast["key"..cnt]] = inputs["value"..cnt]
+      ty[ast["key"..cnt]] = inputs["value"..cnt].type
       cnt = cnt + 1
     end
+    assert(cnt>1)
 
     ast.type = darkroom.type.structure(ty)
   elseif ast.kind=="array" then

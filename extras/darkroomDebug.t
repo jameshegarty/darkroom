@@ -522,6 +522,7 @@ end
 -- assignments: varname -> string
 function typedASTPrintPrettys(root)
   if type(root)=="number" then return tostring(root) end
+  assert(darkroom.typedAST.isTypedAST(root) or systolicAST.isSystolicAST(root))
 
   local assignments = {}
   local res = root:visitEach(
@@ -567,7 +568,11 @@ function typedASTPrintPrettys(root)
   elseif self.kind=="value" then
     out=out..tostring(self.value)
   elseif self.kind=="input" then
-    out=out.."_input_"..self.id
+    if systolicAST.isSystolicAST(self) then
+      out = out.."_input_"..self.varname
+    else
+      out=out.."_input_"..self.id
+    end
   elseif self.kind=="position" then
     out=out..self.coord
   elseif self.kind=="cast" then
@@ -617,6 +622,12 @@ function typedASTPrintPrettys(root)
              end)
 
     out = out..")"
+  elseif self.kind=="struct" then
+    out = out.."struct{"
+    for k,v in pairs(inputs) do
+      out = out..k.."="..v
+    end
+    out = out.."}"
   elseif self.kind=="assert" then
     out = out.."assert("..self.expr:printprettys(root,self,"expr",assignments)..","..self.printval:printprettys(root,self,"printval",assignments)
     out = out..","..self.cond:printprettys(root,self,"cond",assignments)..")"
@@ -668,6 +679,17 @@ function typedASTPrintPrettys(root)
     out = "filter( "..inputs.cond..", "..inputs.expr.." )"
   elseif self.kind=="lifted" then
     out = "lifted"..self.id
+  elseif self.kind=="validbit" then
+    out = "validbit"
+  elseif self.kind=="call" then
+    if self.pure then
+      out = self.func.name.."("
+    else
+      out = self.inst.name..":"..self.functionname.."("
+    end
+
+    for k,v in pairs(self.func.inputs) do out = out..k.."="..inputs["input_"..k].."," end
+    out = out..")"
   else
     print(self.kind)  
     assert(false)
