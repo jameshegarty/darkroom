@@ -1,5 +1,5 @@
 import "darkroom"
-darkroomSimple = terralib.require("darkroomSimple")
+darkroomSimple = require("darkroomSimple")
 
 fusedIter = 5
 unfusedIter = 10

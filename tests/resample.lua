@@ -1,7 +1,7 @@
 ffi = require "ffi"
 
 (terralib.loadfile("test.t"))()
-terralib.require("bilinear")
+require("bilinear")
 import "darkroom"
 
 maxVelocity = 1

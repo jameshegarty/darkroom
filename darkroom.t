@@ -4,18 +4,18 @@ local cstdlib = terralib.includec("stdlib.h")
 
 darkroom={}
 
-terralib.require("common")
-terralib.require("frontend")
-terralib.require("types")
+require("common")
+require("frontend")
+require("types")
 require "stencil"
 require "optimizations"
 require "ir"
-terralib.require("ast")
+require("ast")
 require "typedAST"
 require "kernelgraph"
 require "schedule"
-terralib.require("api")
-terralib.require("backend_terra")
+require("api")
+require("backend_terra")
 
 return {
   name = "darkroom";

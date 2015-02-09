@@ -1,7 +1,7 @@
 import "darkroom"
-terralib.require("darkroomDebug")
+require("darkroomDebug")
 
-darkroomSimple = terralib.require("darkroomSimple")
+darkroomSimple = require("darkroomSimple")
 
 a = darkroomSimple.load("color.bmp")
 im a(x,y) [float[3]]( a(x,y) ) end

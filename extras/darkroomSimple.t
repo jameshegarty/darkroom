@@ -8,7 +8,7 @@ orionSimple.imageHeights = {}
 orionSimple.taps = {}
 orionSimple.tapInputs = {} -- tap values we pass in
 
-terralib.require("image")
+require("image")
 
 function imageToOrionType(im)
   local _type = darkroom.type.uint(8)

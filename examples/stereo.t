@@ -1,6 +1,6 @@
 import "darkroom"
-darkroomSimple = terralib.require("darkroomSimple")
-terralib.require("bilinear")
+darkroomSimple = require("darkroomSimple")
+require("bilinear")
 
 function rectify( img, remap )
   local u = im(j,i) [int8](remap[0] - 128) end

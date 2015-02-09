@@ -232,7 +232,7 @@ function darkroom.evalEscape(luavalue, ast)
 end
 
 ---------------------------------------------------------
-darkroom.Parser = terralib.require("parsing")
+darkroom.Parser = require("parsing")
 darkroom.lang = {}
 
 local function literal(p, v)

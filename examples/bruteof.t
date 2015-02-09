@@ -1,6 +1,5 @@
 import "darkroom"
---terralib.require("darkroomDebug")
-darkroomSimple = terralib.require "darkroomSimple"
+darkroomSimple = require "darkroomSimple"
 
 -- brute force optical flow
 
