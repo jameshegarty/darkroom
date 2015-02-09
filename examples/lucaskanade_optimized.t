@@ -1,6 +1,6 @@
 import "darkroom"
-darkroomSimple = terralib.require("darkroomSimple")
-terralib.require "bilinear"
+darkroomSimple = require("darkroomSimple")
+require "bilinear"
 
 windowRadius = 2
 iterations = 1 -- iterations per level

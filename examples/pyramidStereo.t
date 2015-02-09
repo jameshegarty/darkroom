@@ -1,7 +1,7 @@
 import "darkroom"
-darkroomSimple = terralib.require("darkroomSimple")
+darkroomSimple = require("darkroomSimple")
 --terralib.require("darkroomDebug")
-terralib.require("bilinear")
+require("bilinear")
 
 LEVELS = 3 -- including base level
 BASE_SEARCH = 40
