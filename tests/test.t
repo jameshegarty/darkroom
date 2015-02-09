@@ -42,8 +42,8 @@ if false then
 end
 
 import "darkroom"
-terralib.require("darkroomDebug")
-darkroomSimple = terralib.require("darkroomSimple")
+require("darkroomDebug")
+darkroomSimple = require("darkroomSimple")
 
 -- call this with testscript.lua [runtype] [runfile]
 -- runtype is int (interpreter), "allmat" (all materialized), "fast" (fast schedule)

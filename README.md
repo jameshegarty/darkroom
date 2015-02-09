@@ -15,7 +15,7 @@ Add the Darkroom language definition to your lua path environment variable. Add 
 
     export DR=[path to darkroom root]
     export TERRADIR=[path to terra root]
-    export LUA_PATH="$LUA_PATH;./?.lua;./?.t;$DR/?.t;$DR/src/?.t;$DR/extras/?.t;$TERRADIR/tests/lib/?.t"
+    export TERRA_PATH="$TERRA_PATH;./?.t;$DR/?.t;$DR/src/?.t;$DR/extras/?.t;$TERRADIR/tests/lib/?.t"
 
 Darkroom and Terra are tested to work on Linux and Mac OS X. Other platforms are unlikely to work.
 

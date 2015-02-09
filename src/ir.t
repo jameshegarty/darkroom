@@ -501,18 +501,18 @@ end
 -- by defn, this function only returns v's that have the same metatable as self
 -- note that this can return the same value under different keys!
 function IRFunctions:inputs()
-  local f, s, var = pairs(self)
+  local f, s, varr = pairs(self)
 
-  local function filteredF(s,var)
+  local function filteredF(s,varr)
     while 1 do
-      local k,v = f(s,var)
-      var = k
+      local k,v = f(s,varr)
+      varr = k
       if k==nil then return nil,nil end
       if darkroom.IR.isIR(v) and getmetatable(self)==getmetatable(v) then return k,v end
     end
   end
 
-  return filteredF,s,var
+  return filteredF,s,varr
 end
 
 darkroom.IR._parentsCache=setmetatable({}, {__mode="k"})
@@ -559,7 +559,7 @@ function IRFunctions:parents(root)
 
   local list = darkroom.IR._parentsCache[root][self]
 
-  local function filteredF(s,var)
+  local function filteredF(s)
     assert(type(s)=="table")
     assert(type(s.i)=="number")
 

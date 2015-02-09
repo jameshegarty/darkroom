@@ -79,9 +79,6 @@ function Stencil:product(b)
   return ns
 end
 
--- can't use the keyword union in terra files
-function Stencil:st_union(b) return self:union(b) end
-
 -- not in place
 function Stencil:intersect(b)
   assert(Stencil.isStencil(b))

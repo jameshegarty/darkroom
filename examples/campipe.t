@@ -1,6 +1,6 @@
 import "darkroom"
-terralib.require("darkroomDebug")
-darkroomSimple = terralib.require("darkroomSimple")
+require("darkroomDebug")
+darkroomSimple = require("darkroomSimple")
 
 -- simple, totally fixed function camera pipeline
 function blackLevel( in1, pedestal )

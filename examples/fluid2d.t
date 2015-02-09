@@ -1,6 +1,6 @@
 import "darkroom"
-terralib.require "bilinear"
-terralib.require "image"
+require "bilinear"
+require "image"
 
 cstdlib = terralib.includec("stdlib.h")
 cstdio = terralib.includec("stdio.h")
