@@ -39,14 +39,18 @@ function stateMachineModuleFunctions:toVerilog()
 
   table.insert(t,"module "..self.name.."(input CLK")
   for _,input in pairs(self.inputs) do
-    table.insert(t,", input ["..(input.type:sizeof()*8-1)..":0] "..input.varname)
+    table.insert(t,", input ["..(input.type:sizeof()*8-1)..":0] "..input.name)
   end
   
   for _,output in pairs(self.outputs) do
-    table.insert(t,", output ["..(output.type:sizeof()*8-1)..":0] "..output.varname)
+    table.insert(t,", output ["..(output.type:sizeof()*8-1)..":0] "..output.name)
   end
   table.insert(t,");\n")
 
+  table.insert(t,"  // instances\n")
+  for k,v in pairs(self.instances) do
+    table.insert(t, v:toVerilog() )
+  end
 
   for k,v in ipairs(self.mainblock.statements) do
     if v.kind=="iflaunch" then
@@ -61,7 +65,8 @@ function stateMachineModuleFunctions:toVerilog()
       t = concat(t,predstat)
       local exprstat, exprvar = v.expr:toVerilog({pipeline=false})
       t = concat(t,exprstat)
-      table.insert( t, "if("..predvar..") begin "..v.dst:name().." <= "..exprvar.."; end\n" )
+--      table.insert( t, "if("..predvar..") begin "..v.dst.name.." <= "..exprvar.."; end\n" )
+      table.insert( t, v.dst.name.." <= "..exprvar..";\n" )
     else
       assert(false)
     end
@@ -93,7 +98,7 @@ function stateMachineBlockFunctions:addIfLaunch( cond, launch )
 end
 
 function stateMachineBlockFunctions:addAssign( dst, expr )
-  assert(systolicAST.isSystolicAST(dst))
+  assert(systolicInstance.isSystolicInstance(dst))
   assert(dst.kind=="output")
   assert(systolicAST.isSystolicAST(expr))
 

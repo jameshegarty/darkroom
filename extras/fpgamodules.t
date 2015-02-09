@@ -500,14 +500,14 @@ function modules.linebuffer(maxDelayX, maxDelayY, datatype, stripWidth)
   end
 
   do -- store
-    local I = systolic.input( "in", datatype )
+    local I = systolic.input( "indata", datatype )
     local storeFn = lb:addFunction("store",{I},nil)
     storeFn:addAssign(writeAddr,writeAddr:read()+1)
 
     for y=-maxDelayY,0 do
       for x=-maxDelayX,0 do
         if x==0 and y==0 then
-          storeFn:addAssign(OR[y][x],I)
+          storeFn:addAssign(OR[y][x],I:read())
         elseif x==0 then
           local evicted = storeFn:bramWriteAndReturnOriginal(BRAM[y+1])
           storeFn:addAssign(OR[y][x],evicted)
@@ -546,14 +546,14 @@ function modules.fifo(ty)
   assert(darkroom.type.isType(ty))
 
   local fifo = systolic.module("fifo")
-  local writeAddr = fifo:add(systolic.reg("count", uint16, 0))
-  local readAddr = fifo:add(systolic.reg("count", uint16, 0))
+  local writeAddr = fifo:add(systolic.reg("writeAddr", uint16, 0))
+  local readAddr = fifo:add(systolic.reg("readAddr", uint16, 0))
   local bits = ty:baseType():sizeof()*8
   local rams = map( range( ty:channels()*bits ), function(v) local r = systolic.ram128("fifo"..v); return fifo:add(r) end )
 
   -- pushBack
-  local input = systolic.input("input", ty)
-  local flatinputs = systolic.cast( input, darkroom.type.array( ty:baseType(), {ty:channels()} ) )
+  local input = systolic.input("indata", ty)
+  local flatinputs = systolic.cast( input:read(), darkroom.type.array( ty:baseType(), {ty:channels()} ) )
   local pushBack = fifo:addFunction("pushBack",{input},nil)
   pushBack:addAssert( systolic.lt(writeAddr:read() - readAddr:read(), 128), "attempting to push to a full fifo" )
   pushBack:addAssign( writeAddr, writeAddr:read() + 1)
@@ -564,7 +564,7 @@ function modules.fifo(ty)
   end
 
   -- popFront
-  local out = systolic.output("output", ty)
+  local out = systolic.output("outdata", ty)
   local popFront = fifo:addFunction("popFront",{},out)
   popFront:addAssert( writeAddr ~= readAddr, "attempting to pop from an empty fifo" )
   popFront:addAssign( readAddr, readAddr:read() + 1)
@@ -583,6 +583,30 @@ function modules.fifo(ty)
   return fifo
 end
 modules.fifo = memoize(modules.fifo)
+
+function modules.xygen(W,H)
+  assert(type(W)=="number")
+  assert(type(H)=="number")
+
+  local xygen = systolic.module("xygen")
+  local xreg = xygen:add(systolic.reg("xreg", int16, 0))
+  local yreg = xygen:add(systolic.reg("yreg", int16, 0))
+
+  -- x fn
+  local xout = systolic.output("xout", int16 )
+  local x = xygen:addFunction("x",{},xout)
+  x:addAssign(xout, xreg:read())
+  x:addAssign(xreg, systolic.select(systolic.eq(xreg:read(),W),0,xreg:read()+1))
+  x:addAssign(yreg, systolic.select(systolic.eq(xreg:read(),W),yreg:read()+1,yreg:read()))
+
+  -- y fn
+  local yout = systolic.output("yout", int16 )
+  local y = xygen:addFunction("y",{},yout)
+  y:addAssign(yout, yreg:read())
+
+  return xygen
+end
+modules.xygen = memoize(modules.xygen)
 
 local function fixedBram(conf)
   local A = "A"

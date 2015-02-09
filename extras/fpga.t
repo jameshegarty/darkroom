@@ -4,28 +4,25 @@ fpga.modules = terralib.require("fpgamodules")
 
 BRAM_SIZE_BYTES = 2048
 
-function fpga.codegenKernel( kernel, inputLinebufferFifos, x, y, imageWidth, imageHeight )
+function fpga.codegenKernel( kernel, inputLinebufferFifos, imageWidth, imageHeight )
   assert(darkroom.kernelGraph.isKernelGraph(kernel))
   assert(type(inputLinebufferFifos)=="table")
-  assert(systolicAST.isSystolicAST(x))
-  assert(systolicAST.isSystolicAST(y))
   assert(type(imageWidth)=="number")
   assert(type(imageHeight)=="number")
 
-  local moduleInputs = {}
+  local x,y = systolic.input("x",int16), systolic.input("y",int16)
+
+  local moduleInputs = {x=x,y=y}
   local datasourceToInput = {}
-  map( inputLinebufferFifos, function(v,k) moduleInputs[v.key] = systolic.input(v.key,v.type); datasourceToInput[k] = moduleInputs[v.key] end )
+  map( inputLinebufferFifos, function(v,k) moduleInputs[v.key] = systolic.input(v.key,v.type); datasourceToInput[k] = moduleInputs[v.key]:read() end )
 
 
   local systolicFn = kernel.kernel:visitEach(
     function( node, inputs)
       if node.kind=="load" then
-        print("NODE>FROM",node.from)
-        map(moduleInputs,print)
-        local r =  systolic.index(datasourceToInput[node.from], {inputs.relX, inputs.relY})
-        return r
+        return systolic.index( datasourceToInput[node.from], {inputs.relX, inputs.relY})
       elseif node.kind=="crop" then
-        local cond = systolic.__or(systolic.ge(x-node.shiftX,imageWidth),systolic.ge(y-node.shiftY,imageWidth))
+        local cond = systolic.__or(systolic.ge(x:read()-node.shiftX,imageWidth),systolic.ge(y:read()-node.shiftY,imageWidth))
         assert(systolicAST.isSystolicAST(cond))
         assert(systolicAST.isSystolicAST(inputs.expr))
         return systolic.select(cond , 0, inputs.expr )
@@ -38,11 +35,8 @@ function fpga.codegenKernel( kernel, inputLinebufferFifos, x, y, imageWidth, ima
       end
     end)
 
-  local out = systolic.output( kernel.kernel:name(), kernel.kernel.type )
-  for k,v in pairs(moduleInputs) do
-    print("KGINPUTS",k,v)
-  end
-  local kernelFn = systolic.pureFunction( kernel:name(), moduleInputs, out )
+  local out = systolic.output( "out", kernel.kernel.type )
+  local kernelFn = systolic.makeFunction( kernel:name(), moduleInputs, out )
   kernelFn:addAssign( out, systolicFn )
 
   return kernelFn
@@ -75,7 +69,7 @@ function fpga.allocateLinebuffers( kernelGraph, options, pipeline, pipelineMain,
         local fifo = fpga.modules.fifo( input.type ):instantiate("fifo_input"..src)
         inputFifos[src] = fifo
         pipeline:add(fifo)
-        pipelineMain:addIfLaunch( pipeline:valid(), fifo:pushBack({input}) )
+        pipelineMain:addIfLaunch( pipeline:valid(), fifo:pushBack({indata=input:read()}) )
       end
       return inputFifos[src], key
     elseif darkroom.kernelGraph.isKernelGraph(src) then
@@ -107,7 +101,7 @@ function fpga.allocateLinebuffers( kernelGraph, options, pipeline, pipelineMain,
         local ty = darkroom.type.array( src.kernel.type, {-lowX+1,-lowY+1} )
         local fifo = fpga.modules.fifo( ty ):instantiate("fifo_"..key.."_to_"..dst:name())
         pipeline:add(fifo)
-        pipelineMain:addIfLaunch( LB:ready() , fifo:pushBack( {LB:load()} ) )
+        pipelineMain:addIfLaunch( LB:ready() , fifo:pushBack( {indata=LB:load()} ) )
         regularInputLinebuffers[dst][src] = {inst=fifo,key=key,type=ty}
       end
     end
@@ -153,32 +147,32 @@ function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffe
   local validOut = systolic.output("validOut",darkroom.type.bool())
   local moduleInputs = {validIn}
   local inputIdsToSystolic = {}
-  for k,v in pairs(inputs) do inputIdsToSystolic[k-1]=systolic.input("input"..k, darkroom.type.array(v[1].expr.type,{1,1})); table.insert(moduleInputs,inputIdsToSystolic[k-1]) end 
-  local moduleOutputs  = {validOut,systolic.output("output", kernelGraph.child1.kernel.type )}
-  local pipelineMain = statemachine.block( "main", validIn )
+  for k,v in pairs(inputs) do inputIdsToSystolic[k-1]=systolic.input("input"..k, darkroom.type.array(v[1].expr.type,{1,1})); table.insert(moduleInputs,inputIdsToSystolic[k-1]) end
+  local finalOut = systolic.output("output", kernelGraph.child1.kernel.type )
+  local moduleOutputs  = {validOut,finalOut}
+  local pipelineMain = statemachine.block( "main", validIn:read() )
   local pipeline = statemachine.module("Pipeline", moduleInputs, moduleOutputs, pipelineMain)
-  local x,y = systolic.input("x",int16), systolic.input("y",int16)
   local inputLinebufferFifos, gatherInputLinebuffers, outputLinebuffers = fpga.allocateLinebuffers( kernelGraph, options, pipeline, pipelineMain, inputIdsToSystolic )
 
   kernelGraph:visitEach(
     function(node, inputArgs)
       if node.kernel~=nil then
-        local kernelFunction = fpga.codegenKernel( node, inputLinebufferFifos[node], x, y, imageWidth, imageHeight )
-        local kernelArgs = {}
+        local kernelFunction = fpga.codegenKernel( node, inputLinebufferFifos[node], imageWidth, imageHeight )
+        local xygen = fpga.modules.xygen(imageWidth, imageHeight ):instantiate("xygen")
+        local kernelArgs = {x=xygen:x(), y=xygen:y()}
         map( inputLinebufferFifos[node], function(v) kernelArgs[v.key] = v.inst:popFront() end )
         local kernelCall = kernelFunction( kernelArgs )
-        print("KCALL")
-
         local fifoReady = mapToArray(map(inputLinebufferFifos[node], function(n) return n.inst:ready() end))
         for k,v in pairs(fifoReady) do print("FR",k,v,systolicAST.isSystolicAST(v)) end
         local allFifosReady = foldt( fifoReady, function(a,b) if b==nil then return a else return systolic.__and(a,b) end end)
         assert(systolicAST.isSystolicAST(allFifosReady))
-        pipelineMain:addIfLaunch( allFifosReady, systolic.array(mapToArray(map(outputLinebuffers[node], function(v) return v:store({kernelCall}) end))) )
+        pipelineMain:addIfLaunch( allFifosReady, systolic.array(mapToArray(map(outputLinebuffers[node], function(v) return v:store({indata=kernelCall}) end))) )
       end
     end)
 
   for k,v in pairs(inputLinebufferFifos[kernelGraph]) do
     pipelineMain:addAssign( validOut, v.inst:ready())
+    pipelineMain:addAssign( finalOut, v.inst:popFront({valid=v.inst:ready()}))
   end
 
   return pipeline

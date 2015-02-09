@@ -568,11 +568,9 @@ function typedASTPrintPrettys(root)
   elseif self.kind=="value" then
     out=out..tostring(self.value)
   elseif self.kind=="input" then
-    if systolicAST.isSystolicAST(self) then
-      out = out.."_input_"..self.varname
-    else
-      out=out.."_input_"..self.id
-    end
+    out=out.."_input_"..self.id
+  elseif self.kind=="readinput" then
+    out = out.."_input_"..self.inst.name
   elseif self.kind=="position" then
     out=out..self.coord
   elseif self.kind=="cast" then
@@ -688,7 +686,7 @@ function typedASTPrintPrettys(root)
       out = self.inst.name..":"..self.functionname.."("
     end
 
-    for k,v in pairs(self.func.inputs) do out = out..k.."="..inputs["input_"..k].."," end
+    for k,v in pairs(self.func.inputs) do out = out..k.."="..inputs["input_"..v.name].."," end
     out = out..")"
   else
     print(self.kind)  
