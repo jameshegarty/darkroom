@@ -476,7 +476,7 @@ function modules.linebuffer(maxDelayX, maxDelayY, datatype, stripWidth)
   assert(maxDelayY>=0)
   assert(darkroom.type.isType(datatype))
 
-  local O = systolic.output("output", darkroom.type.array(datatype,{maxDelayX+1,maxDelayY+1}))
+  local O = systolic.output("out", darkroom.type.array(datatype,{maxDelayX+1,maxDelayY+1}))
   local OR = {}
   local BRAM = {}
   local writeAddr = systolic.reg("writeAddr", uint16, 0)
@@ -744,8 +744,8 @@ module sim;
   wire validOut;
   integer realX = ]=]..(stripWidth+metadata.padMaxX-1)..[=[;
   integer realY = ]=]..(metadata.padMinY-1)..[=[;
-  integer addr = -PIPE_DELAY+1-]=]..outputShift*metadata.cycles..[=[;
   integer addrT;
+  integer outputPixelsSeen = 0;
 ]=]}
 
   local i=1
@@ -758,7 +758,7 @@ module sim;
   table.insert( res, [=[  reg [10000:0] outputFilename; 
   reg [7:0] i = 0;
 
-  Pipeline pipeline(.CLK(CLK),.inX(posX),.inY(posY),.packedinput(pipelineInput),.out(pipelineOutput),.validInNextCycle(validInNextCycle),.validOut(validOut),.cycle(cycle));
+  Pipeline pipeline(.CLK(CLK),.input1(pipelineInput),.out(pipelineOutput),.validIn(validIn),.validOut(validOut));
 
   initial begin
    $display("HELLO");]=])
@@ -778,7 +778,7 @@ module sim;
 
    // prime the pipe
    // we run this for a large number of cycles to simulate what will happen in the actual hardware
-   addrT = 1000+PIPE_DELAY+]=]..outputShift..[=[;
+   addrT = 1000+]=]..outputShift..[=[;
    while(addrT>0) begin
      posX = realX;
      posY = realY;
@@ -829,16 +829,16 @@ table.insert( res, [=[       end else begin
        CLK = 1;
        #10
 //     $display(modOutput);
-       if(addr>=0 && validOut) begin 
+       if(validOut) begin 
          i = 0;
          while( i<]=]..outputBytes..[=[) begin
            $fwrite(fileout, "%c", pipelineOutput[i*8+:8]); 
            i = i + 1;
          end
+         outputPixelsSeen = outputPixelsSeen + 1;
        end
 
          cycle = cycle + 1;
-         addr = addr + 1;
        end
 
        realX = realX + 1;
@@ -847,10 +847,9 @@ table.insert( res, [=[       end else begin
    end // while (c != `EOF)
 
    // drain pipe
-   addr = -PIPE_DELAY-]=]..(outputShift*metadata.cycles)..[=[;
 
    realX = ]=]..(metadata.padMinX)..[=[;
-   while (addr<0) begin
+   while (outputPixelsSeen < ]=]..(imageHeight*stripWidth)..[=[) begin
      cycle = 0;
      while (cycle < ]=]..metadata.cycles..[=[) begin
        pipelineInput = 0;
@@ -868,10 +867,10 @@ table.insert( res, [=[       end else begin
          $fwrite(fileout, "%c", pipelineOutput[i*8+:8]);
          i = i + 1;
        end
+       outputPixelsSeen = outputPixelsSeen+1;
      end
 
        cycle = cycle + 1;
-       addr = addr + 1;
      end
 
      if(realX==]=]..(stripWidth+metadata.padMaxX-1)..[=[) begin

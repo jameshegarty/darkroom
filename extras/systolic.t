@@ -5,6 +5,13 @@ systolicModuleMT={__index=systolicModuleFunctions}
 
 systolicInstanceFunctions = {}
 
+function checkReserved(k)
+  if k=="input" or k=="output" then
+    print("Error, variable name ",k," is a reserved keyword in verilog")
+    assert(false)
+  end
+end
+
 local definitionCache = {}
 function systolic.addDefinition(X)
   if definitionCache[X:getDefinitionKey()]==nil then
@@ -96,6 +103,7 @@ function systolicModuleFunctions:add(inst)
   assert(systolicInstance.isSystolicInstance(inst))
   assert( (inst.kind=="instance" and inst.pure==nil) or inst.kind=="reg" or inst.kind=="ram128")
 
+  checkReserved(inst.name)
   if self.usedInstanceNames[inst.name]~=nil then
     print("Error, name "..inst.name.." already in use")
     assert(false)
@@ -317,6 +325,9 @@ local function codegen(ast, callsiteId)
   assert(systolicAST.isSystolicAST(ast))
   assert(type(callsiteId)=="number" or callsiteId==nil)
 
+  local callsite = ""
+  if type(callsiteId)=="number" then callsite = "C"..callsiteId.."_" end
+
   local resDeclarations = {}
   local resClockedLogic = {}
 
@@ -328,13 +339,13 @@ local function codegen(ast, callsiteId)
         local res
 
         if n.kind=="binop" then
-          table.insert(resDeclarations, declareReg( n.type:baseType(), n:cname(c) ))
+          table.insert(resDeclarations, declareReg( n.type:baseType(), callsite..n:cname(c) ))
 
           if n.op=="<" or n.op==">" or n.op=="<=" or n.op==">=" then
             if n.type:baseType():isBool() and n.lhs.type:baseType():isInt() and n.rhs.type:baseType():isInt() then
-              table.insert(resClockedLogic, n:name().."_c"..c.." <= ($signed("..inputs.lhs[c]..")"..n.op.."$signed("..inputs.rhs[c].."));\n")
+              table.insert(resClockedLogic, callsite..n:name().."_c"..c.." <= ($signed("..inputs.lhs[c]..")"..n.op.."$signed("..inputs.rhs[c].."));\n")
             elseif n.type:baseType():isBool() and n.lhs.type:baseType():isUint() and n.rhs.type:baseType():isUint() then
-              table.insert(resClockedLogic, n:name().."_c"..c.." <= (("..inputs.lhs[c]..")"..n.op.."("..inputs.rhs[c].."));\n")
+              table.insert(resClockedLogic, callsite..n:name().."_c"..c.." <= (("..inputs.lhs[c]..")"..n.op.."("..inputs.rhs[c].."));\n")
             else
               print( n.type:baseType():isBool() , n.lhs.type:baseType():isInt() , n.rhs.type:baseType():isInt(),n.type:baseType():isBool() , n.lhs.type:baseType():isUint() , n.rhs.type:baseType():isUint())
               assert(false)
@@ -342,7 +353,7 @@ local function codegen(ast, callsiteId)
           elseif n.type:isBool() then
             local op = binopToVerilogBoolean[n.op]
             if type(op)~="string" then print("OP_BOOLEAN",n.op); assert(false) end
-            table.insert(resClockedLogic, n:name().."_c"..c.." <= "..inputs.lhs[c]..op..inputs.rhs[c]..";\n")
+            table.insert(resClockedLogic, callsite..n:name().."_c"..c.." <= "..inputs.lhs[c]..op..inputs.rhs[c]..";\n")
           else
             local op = binopToVerilog[n.op]
             if type(op)~="string" then print("OP",n.op); assert(false) end
@@ -350,35 +361,35 @@ local function codegen(ast, callsiteId)
             if n.lhs.type:baseType():isInt() then lhs = "$signed("..lhs..")" end
             local rhs = inputs.rhs[c]
             if n.rhs.type:baseType():isInt() then rhs = "$signed("..rhs..")" end
-            table.insert(resClockedLogic, n:name().."_c"..c.." <= "..lhs..op..rhs..";\n")
+            table.insert(resClockedLogic, callsite..n:name().."_c"..c.." <= "..lhs..op..rhs..";\n")
           end
 
-          res = n:name().."_c"..c
+          res = callsite..n:name().."_c"..c
         elseif n.kind=="unary" then
           if n.op=="abs" then
             if n.type:baseType():isInt() then
-              table.insert(resDeclarations, declareReg( n.type:baseType(), n:cname(c) ))
-              table.insert(resClockedLogic, n:cname(c).." <= ("..inputs.expr[c].."["..(n.type:baseType():sizeof()*8-1).."])?(-"..inputs.expr[c].."):("..inputs.expr[c].."); //abs\n")
-              res = n:cname(c)
+              table.insert(resDeclarations, declareReg( n.type:baseType(), callsite..n:cname(c) ))
+              table.insert(resClockedLogic, callsite..n:cname(c).." <= ("..inputs.expr[c].."["..(n.type:baseType():sizeof()*8-1).."])?(-"..inputs.expr[c].."):("..inputs.expr[c].."); //abs\n")
+              res = callsite..n:cname(c)
             else
               return inputs.expr[c] -- must be unsigned
             end
           elseif n.op=="-" then
             assert(n.type:baseType():isInt())
-            table.insert(resDeclarations, declareReg(n.type:baseType(),n:cname(c)))
-            table.insert(resClockedLogic, n:cname(c).." <= -"..inputs.expr[c].."; // unary sub\n")
-            res = n:cname(c)
+            table.insert(resDeclarations, declareReg(n.type:baseType(), callsite..n:cname(c)))
+            table.insert(resClockedLogic, callsite..n:cname(c).." <= -"..inputs.expr[c].."; // unary sub\n")
+            res = callsite..n:cname(c)
           else
             print(n.op)
             assert(false)
           end
         elseif n.kind=="select" or n.kind=="vectorSelect" then
-          table.insert(resDeclarations,declareReg( n.type:baseType(), n:cname(c), "", " // "..n.kind.." result" ))
+          table.insert(resDeclarations,declareReg( n.type:baseType(), callsite..n:cname(c), "", " // "..n.kind.." result" ))
           local condC = 1
           if n.kind=="vectorSelect" then condC=c end
 
-          table.insert(resClockedLogic, n:cname(c).." <= ("..inputs.cond[condC]..")?("..inputs.a[c].."):("..inputs.b[c].."); // "..n.kind.."\n")
-          res = n:cname(c)
+          table.insert(resClockedLogic, callsite..n:cname(c).." <= ("..inputs.cond[condC]..")?("..inputs.a[c].."):("..inputs.b[c].."); // "..n.kind.."\n")
+          res = callsite..n:cname(c)
         elseif n.kind=="cast" then
           local expr
           local cmt = " // cast "..tostring(n.expr.type).." to "..tostring(n.type)
@@ -394,9 +405,9 @@ local function codegen(ast, callsiteId)
             expr = "{ {"..(8*(n.type:sizeof()-n.expr.type:sizeof())).."{"..expr.."["..(n.expr.type:sizeof()*8-1).."]}},"..expr.."["..(n.expr.type:sizeof()*8-1)..":0]}"
           end
           
-          table.insert(resDeclarations, declareWire(n.type:baseType(), n:cname(c), "",cmt))
-          table.insert(resDeclarations, "assign "..n:cname(c).." = "..expr..";"..cmt.."\n")
-          res = n:cname(c)
+          table.insert(resDeclarations, declareWire( n.type:baseType(), callsite..n:cname(c), "",cmt))
+          table.insert(resDeclarations, "assign "..callsite..n:cname(c).." = "..expr..";"..cmt.."\n")
+          res = callsite..n:cname(c)
         elseif n.kind=="value" then
           local v
           if type(n.value)=="table" then 
@@ -404,8 +415,8 @@ local function codegen(ast, callsiteId)
           else
             v = valueToVerilog(n.value, n.type:baseType())
           end
-          table.insert(resDeclarations,declareWire(n.type:baseType(), n:cname(c), v, " //value" ))
-          res = n:cname(c)
+          table.insert(resDeclarations,declareWire( n.type:baseType(), callsite..n:cname(c), v, " //value" ))
+          res = callsite..n:cname(c)
         elseif n.kind=="array" then
           res = inputs["expr"..c][1]
         elseif n.kind=="index" then
@@ -438,17 +449,9 @@ local function codegen(ast, callsiteId)
             res = n:cname(c)
           end]=]
         elseif n.kind=="readinput" then
-          if callsiteId~=nil then
-            res = "C"..callsiteId.."_"..n.inst.name
-          else
-            res = n.inst.name
-          end
+          res = callsite..n.inst.name
         elseif n.kind=="readreg" then
-          if callsiteId~=nil then
-            res = "C"..callsiteId.."_"..n.inst.name
-          else
-            res = n.inst.name
-          end
+          res = n.inst.name
         elseif n.kind=="readram128" then
           table.insert(resDeclarations,"assign "..n.inst.name.."_readAddr = "..inputs.addr[1]..";\n")
           res = n.inst.name.."_readOut"
@@ -462,7 +465,7 @@ local function codegen(ast, callsiteId)
             
             if n.func.output~=nil then
               res = n:name().."_"..c
-              table.insert(resDeclarations, declareWire(n.type,res,""," // pure function output"))
+              table.insert(resDeclarations, declareWire( n.type, res,""," // pure function output"))
               table.insert(fndecl, ", ."..n.func.output.name.."("..res..")")
             else
               res = "__NILVALUE_ERROR"
@@ -473,13 +476,18 @@ local function codegen(ast, callsiteId)
           else
             systolic.addDefinition( n.inst )
             
-            table.insert(resDeclarations, "assign "..n.inst.name.."_"..n.func.name.."_valid = "..inputs.valid[1]..";\n")
+            local call_callsite = ""
+            if #n.inst.callsites[n.functionname]>1 then
+              call_callsite = "C"..n.callsiteid.."_"
+            end
+
+            table.insert(resDeclarations, "assign "..n.inst.name.."_"..call_callsite..n.func.name.."_valid = "..inputs.valid[1]..";\n")
 
             map(n.func.inputs, function(v) 
-                  table.insert(resDeclarations, "assign "..n.inst.name.."_"..v.name.." = "..inputs["input_"..v.name][1]..";\n") end)
+                  table.insert(resDeclarations, "assign "..n.inst.name.."_"..call_callsite..v.name.." = "..inputs["input_"..v.name][1]..";\n") end)
 
             if n.func.output~=nil then
-              res = n.inst.name.."_"..n.func.output.name
+              res = n.inst.name.."_"..call_callsite..n.func.output.name
             else
               res = "__NILVALUE_ERROR"
             end
@@ -557,11 +565,12 @@ function systolicFunctionFunctions:getDefinition(callsites)
       local decl, clk, res = codegen(v.expr, sel(#callsites==1,nil,id) )
       t = concat(t,decl)
       clocked = concat(clocked,clk)
-      if v.dst.kind=="reg" then table.insert(t, declareWire(v.dst.type,callsite..v.dst.name)) end
-      if systolicAST.isSystolicAST(v.dst) then
-        table.insert(t, "assign "..callsite..v.dst:name().." = "..res..";\n")
-      else
+      if v.dst.kind=="reg" and self.pure~=true and #callsites>1 then table.insert(t, declareWire(v.dst.type,callsite..v.dst.name,""," // callsite local destination")) end
+
+      if (self.pure~=true and #callsites>1) or v.dst.kind=="output" then
         table.insert(t, "assign "..callsite..v.dst.name.." = "..res..";\n")
+      else
+        table.insert(clocked, v.dst.name.." <= "..res..";\n")
       end
     end
     
@@ -675,16 +684,16 @@ RAM128X1D ]]..self.name..[[  (
         if #self.callsites[fnname]==1 then callsite="" end
         table.insert(wires,"wire "..self.name.."_"..callsite..fnname.."_valid;\n")
         table.insert(arglist,", ."..callsite..fnname.."_valid("..self.name.."_"..callsite..fnname.."_valid)")
-        map(fn.inputs, function(v) table.insert(wires,declareWire( v.type, self.name.."_"..v.name )); table.insert(arglist,", ."..v.name.."("..self.name.."_"..v.name..")") end)
+        map(fn.inputs, function(v) table.insert(wires,declareWire( v.type, self.name.."_"..callsite..v.name )); table.insert(arglist,", ."..v.name..callsite.."("..self.name.."_"..callsite..v.name..")") end)
 
         if fn.output~=nil then
-          table.insert(wires, declareWire( fn.output.type, self.name.."_"..fn.output.name))
-          table.insert(arglist,", ."..fn.output.name.."("..self.name.."_"..fn.output.name..")")
+          table.insert(wires, declareWire( fn.output.type, self.name.."_"..callsite..fn.output.name))
+          table.insert(arglist,", ."..callsite..fn.output.name.."("..self.name.."_"..callsite..fn.output.name..")")
         end
       end
     end
 
-    return table.concat(wires)..self.module.name.." "..self.name.."(.CLK(CLK)"..table.concat(arglist)..");\n\n"
+    return table.concat(wires)..self:getDefinitionKey().." "..self.name.."(.CLK(CLK)"..table.concat(arglist)..");\n\n"
   else
     assert(false)
   end
@@ -944,23 +953,27 @@ end
 
 function systolic.reg( name, ty, initial )
   assert(type(name)=="string")
+  checkReserved(name)
   ty = darkroom.type.fromTerraType(ty, 0, 0, "")
   return systolicInstance.new({kind="reg",name=name,initial=initial,type=ty})
 end
 
 function systolic.ram128( name )
   assert(type(name)=="string")
+  checkReserved(name)
   return systolicInstance.new({kind="ram128",name=name,type=darkroom.type.null()})
 end
 
 function systolic.output(name, ty)
   assert(type(name)=="string")
+  checkReserved(name)
   ty = darkroom.type.fromTerraType(ty, 0, 0, "")
   return systolicInstance.new({kind="output",name=name,type=ty})
 end
 
 function systolic.input(name, ty)
   assert(type(name)=="string")
+  checkReserved(name)
   ty = darkroom.type.fromTerraType(ty, 0, 0, "")
   return systolicInstance.new({kind="input",name=name,type=ty})
 end

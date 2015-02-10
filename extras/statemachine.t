@@ -50,11 +50,11 @@ function stateMachineModuleFunctions:toVerilog()
 
   table.insert(t,"module "..self.name.."(input CLK")
   for _,input in pairs(self.inputs) do
-    table.insert(t,", input ["..(input.type:sizeof()*8-1)..":0] "..input.name)
+    table.insert(t,", "..declarePort( input.type, input.name, true))
   end
   
   for _,output in pairs(self.outputs) do
-    table.insert(t,", output ["..(output.type:sizeof()*8-1)..":0] "..output.name)
+    table.insert(t,", "..declarePort( output.type, output.name, false))
   end
   table.insert(t,");\n")
 
@@ -69,18 +69,18 @@ function stateMachineModuleFunctions:toVerilog()
       table.insert(t," // if "..typedASTPrintPrettys(v.cond).." then\n")
       table.insert(t," // "..typedASTPrintPrettys(v.launch).."\n")
       local launchstat, launchvar = v.launch:toVerilog({valid=v.cond},{self})
---      print("DO")
---      typedASTPrintPretty(v.launch)
---      local launchstat, launchvar = v.launch:toVerilog({valid=true},{self})
       t = concat(t,launchstat)
     elseif v.kind=="assign" then
       table.insert(t," // assign\n")
---      local predstat, predvar = self.mainblock.predicate:toVerilog({pipeline=false},{self})
---      t = concat(t,predstat)
       local exprstat, exprvar = v.expr:toVerilog({valid=true},{self})
       t = concat(t,exprstat)
---      table.insert( t, "if("..predvar..") begin "..v.dst.name.." <= "..exprvar.."; end\n" )
-      table.insert( t, v.dst.name.." <= "..exprvar..";\n" )
+      
+      if v.dst.kind=="output" then
+        table.insert( t, "assign "..v.dst.name.." = "..exprvar..";\n" )
+      else
+        assert(false)
+        table.insert( t, v.dst.name.." <= "..exprvar..";\n" )
+      end
     else
       assert(false)
     end

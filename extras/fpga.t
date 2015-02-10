@@ -150,7 +150,7 @@ function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffe
   local moduleInputs = {validIn}
   local inputIdsToSystolic = {}
   for k,v in pairs(inputs) do inputIdsToSystolic[k-1]=systolic.input("input"..k, darkroom.type.array(v[1].expr.type,{1,1})); table.insert(moduleInputs,inputIdsToSystolic[k-1]) end
-  local finalOut = systolic.output("output", kernelGraph.child1.kernel.type )
+  local finalOut = systolic.output("out", kernelGraph.child1.kernel.type )
   local moduleOutputs  = {validOut,finalOut}
   local pipelineMain = statemachine.block( "main", validIn:read() )
   local pipeline = statemachine.module("Pipeline", moduleInputs, moduleOutputs, pipelineMain)
