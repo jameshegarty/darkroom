@@ -131,11 +131,11 @@ end
 
 -- takes an array of values to a hash where the values are keys
 function invertTable(t)
-  for k,v in pairs(t) do assert(type(k)=="number") end
+--  for k,v in pairs(t) do assert(type(k)=="number") end
 
   local out = {}
-  for k,v in ipairs(t) do
-    assert(out[v]==nil)
+  for k,v in pairs(t) do
+    assert(out[v]==nil)  -- no duplicates
     out[v]=k
   end
 
@@ -427,6 +427,17 @@ function mapToArray(m)
   return t
 end
 
+stripkeys = mapToArray
+
 function sel(cond,a,b)
   if cond then return a else return b end
+end
+
+-- unlike lua's in place sort, this returns the sorted table
+function sort(a)
+  assert(type(a)=="table")
+  local t = {}
+  for k,v in pairs(a) do t[k] = v end
+  table.sort(t)
+  return t
 end

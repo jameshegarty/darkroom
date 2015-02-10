@@ -571,6 +571,10 @@ function typedASTPrintPrettys(root)
     out=out.."_input_"..self.id
   elseif self.kind=="readinput" then
     out = out.."_input_"..self.inst.name
+  elseif self.kind=="readreg" then
+    out = out.."_reg_"..self.inst.name
+  elseif self.kind=="readram128" then
+    out = out.."_readram128_"..self.inst.name
   elseif self.kind=="position" then
     out=out..self.coord
   elseif self.kind=="cast" then

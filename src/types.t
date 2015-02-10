@@ -415,6 +415,9 @@ function darkroom.type.checkExplicitCast(from, to, ast)
     if from:arrayOver():isBool() and from:channels()==to:sizeof()*8 then
       -- casting an array of bools to a type with the same number of bits is OK
       return true
+    elseif from:channels()==1 and darkroom.type.checkExplicitCast(from:arrayOver(),to,ast) then
+      -- can explicitly cast an array of size 1 to a compatible type
+      return true
     end
 
     darkroom.error("Can't cast an array type to a non-array type. "..tostring(from).." to "..tostring(to), ast:linenumber(), ast:offset(), ast:filename() )

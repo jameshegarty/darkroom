@@ -1,9 +1,9 @@
 import "darkroom"
-fpga = terralib.require("fpga")
-fpgaEstimate = terralib.require("fpgaEstimate")
-darkroomSimple = terralib.require("darkroomSimple")
-terralib.require("image")
-terralib.require("darkroomDebug")
+fpga = require("fpga")
+fpgaEstimate = require("fpgaEstimate")
+darkroomSimple = require("darkroomSimple")
+require("image")
+require("darkroomDebug")
 
 if arg[1]=="cpu" then
   testinput = darkroomSimple.load(arg[2])

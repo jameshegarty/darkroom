@@ -7,21 +7,8 @@ systolicInstanceFunctions = {}
 
 local definitionCache = {}
 function systolic.addDefinition(X)
-  if definitionCache[X]==nil then
-    if systolicFunction.isSystolicFunction(X) then
-      assert(X.pure)
-      definitionCache[X] = X:getDefinition()
-    elseif systolicInstance.isSystolicInstance(X) then
-      if X.kind=="module" then
-        -- we don't yet support multiple callsites
-        map(X.callsites, function(v) assert(#v==1) end)
-        definitionCache[X.module] = X:getDefinition()
-      else
-        assert(false)
-      end
-    else
-      assert(false)
-    end
+  if definitionCache[X:getDefinitionKey()]==nil then
+    definitionCache[X:getDefinitionKey()] = X:getDefinition()
   end
 end
 
@@ -101,7 +88,7 @@ end
 
 function systolic.module(name)
   assert(type(name)=="string")
-  local t = {name=name,regs={},functions={},ram128s={}, instanceMap={}, usedInstanceNames = {}}
+  local t = {name=name,instances={},functions={}, instanceMap={}, usedInstanceNames = {}}
   return setmetatable(t,systolicModuleMT)
 end
 
@@ -117,15 +104,8 @@ function systolicModuleFunctions:add(inst)
   self.instanceMap[inst] = 1
   self.usedInstanceNames[inst.name] = 1
 
-  if inst.kind=="reg" then
-    table.insert(self.regs,inst)
-    return inst
-  elseif inst.kind=="ram128" then
-    table.insert(self.ram128s,inst)
-    return inst
-  else
-    assert(false)
-  end
+  table.insert(self.instances,inst)
+  return inst
 end
 
 function valueToVerilogLL(value,signed,bits)
@@ -160,6 +140,12 @@ function valueToVerilog(value,ty)
     assert(type(value)=="number")
     assert(value>=0)
     return (ty:sizeof()*8).."'d"..value
+  elseif ty:isBool() then
+    if value then
+      return "1'd1"
+    else
+      return "1'd0"
+    end
   else
     assert(false)
   end
@@ -287,9 +273,7 @@ end
 function systolicFunctionFunctions:getDelay()
   local maxd = 0
   for _,v in pairs(self.assignments) do
-    print("GETDELAY",v.dst.varname,v.retiming[v.expr])
     if v.dst.kind=="output" and v.retiming[v.expr]>maxd then 
-
       maxd = v.retiming[v.expr] 
     end
   end
@@ -339,7 +323,6 @@ local function codegen(ast, callsiteId)
   local finalOut = ast:visitEach(
     function(n, inputs)
       local finalOut = {}
-      print("NK",n.kind)
 
       for c=1,n.type:channels() do
         local res
@@ -424,8 +407,6 @@ local function codegen(ast, callsiteId)
           table.insert(resDeclarations,declareWire(n.type:baseType(), n:cname(c), v, " //value" ))
           res = n:cname(c)
         elseif n.kind=="array" then
-          print("SST",inputs["expr"..c],c)
-          for k,v in pairs(inputs["expr"..c]) do print("ST",k,v) end
           res = inputs["expr"..c][1]
         elseif n.kind=="index" then
           local flatIdx = 0
@@ -469,8 +450,8 @@ local function codegen(ast, callsiteId)
             res = n.inst.name
           end
         elseif n.kind=="readram128" then
-          table.insert(resDeclarations,"assign "..n.inst.name.."_addr = "..inputs.addr[1]..";\n")
-          res = n.inst.name.."_out"
+          table.insert(resDeclarations,"assign "..n.inst.name.."_readAddr = "..inputs.addr[1]..";\n")
+          res = n.inst.name.."_readOut"
         elseif n.kind=="call" then
           if n.pure then
             systolic.addDefinition( n.func )
@@ -492,10 +473,10 @@ local function codegen(ast, callsiteId)
           else
             systolic.addDefinition( n.inst )
             
+            table.insert(resDeclarations, "assign "..n.inst.name.."_"..n.func.name.."_valid = "..inputs.valid[1]..";\n")
+
             map(n.func.inputs, function(v) 
-                  print("ADD INPUT",v.name)
-                  for k,v in pairs(inputs) do print("KV",k,v) end
-table.insert(resDeclarations, "assign "..n.inst.name.."_"..v.name.." = "..inputs["input_"..v.name][1]..";\n") end)
+                  table.insert(resDeclarations, "assign "..n.inst.name.."_"..v.name.." = "..inputs["input_"..v.name][1]..";\n") end)
 
             if n.func.output~=nil then
               res = n.inst.name.."_"..n.func.output.name
@@ -508,7 +489,6 @@ table.insert(resDeclarations, "assign "..n.inst.name.."_"..v.name.." = "..inputs
           assert(false)
         end
 
-        print("KND",n.kind)
         assert(type(res)=="string")
         assert(res:match("[%w%[%]]")) -- should only be alphanumeric
         finalOut[c] = res
@@ -531,48 +511,14 @@ function systolicFunctionFunctions:addAssert(expr)
   table.insert(self.asserts,expr)
 end
 
--- check that all of the variables refered to are actually in scope
-function systolicFunctionFunctions:checkVariables()
-  if self.pure then
-    -- pure functions must have inputs and outputs or it doesn't make sense
-    if keycount(self.inputs)==0 then
-      print("Error, pure function must have inputs, function ",self.name)
-      assert(false)
-    end
 
-    assert(systolicInstance.isSystolicInstance(self.output))
-  end
-
-  local function checkForInst(inst)
-    if self.instanceMap[inst]==nil and (self.pure==false and self.module.instanceMap[inst]==nil) then
-      print("missing instance "..inst.name.." (kind "..inst.kind..")")
-      assert(false)
-    end
-  end
-
-  local function astcheck(n)
-    if n.kind=="readinput" or n.kind=="readreg" or n.kind=="readram128" or (n.kind=="call" and n.pure==false) then
-      checkForInst(n.inst)
-    end
-  end
-
-  local drivenOutput = false
-  for _,v in pairs(self.assignments) do
-    checkForInst(v.dst)
-    if self.output~=nil and v.dst==self.output then drivenOutput = true end
-    v.expr:visitEach(astcheck)
-  end
-
-  if drivenOutput==false then
-    print("undriven output, function",self.name)
-  end
-
+function systolicFunctionFunctions:getDefinitionKey()
+  assert(self.pure)
+  return self
 end
 
 function systolicFunctionFunctions:getDefinition(callsites)
   local t = {}
-
-  self:checkVariables()
 
   if self.pure then
     table.insert(t,"module "..self.name.."(input CLK")
@@ -584,6 +530,14 @@ function systolicFunctionFunctions:getDefinition(callsites)
     end
     table.insert(t,");\n")
     callsites={"LOL"}
+
+    -- pure functions must have inputs and outputs or it doesn't make sense
+    if keycount(self.inputs)==0 then
+      print("Error, pure function must have inputs, function ",self.name)
+      assert(false)
+    end
+
+    assert(systolicInstance.isSystolicInstance(self.output))
   else
     assert(type(callsites)=="table")
   end
@@ -594,7 +548,12 @@ function systolicFunctionFunctions:getDefinition(callsites)
     table.insert(t,"  // function: "..self.name.." callsite "..id.." delay "..self:getDelay().."\n")
       
     local clocked = {}
+    local drivenOutput = false
+    local scopes = sel(self.pure,{self},{self,self.module})
     for k,v in pairs(self.assignments) do
+      checkForInst(v.dst, scopes)
+      v.expr:checkVariables(scopes)
+      if self.output~=nil and v.dst==self.output then drivenOutput = true end
       local decl, clk, res = codegen(v.expr, sel(#callsites==1,nil,id) )
       t = concat(t,decl)
       clocked = concat(clocked,clk)
@@ -606,6 +565,12 @@ function systolicFunctionFunctions:getDefinition(callsites)
       end
     end
     
+    if drivenOutput==false and self.output~=nil  then
+      print("undriven output, function",self.name)
+      if self.module~=nil then print("module",self.module.name) end
+      assert(false)
+    end
+
     table.insert(t,"always @ (posedge CLK) begin\n")
     t = concat(t, clocked)
     table.insert(t,"end\n")
@@ -614,7 +579,6 @@ function systolicFunctionFunctions:getDefinition(callsites)
   if self.pure then
     table.insert(t,"endmodule\n\n")
   elseif #callsites>1 then
-    assert(false)
     table.insert(t," // merge: "..self.name.."\n")
     for id,v in pairs(callsites) do
       for k,v in pairs(self.assignments) do
@@ -655,7 +619,7 @@ end
 local function convert(ast)
   if getmetatable(ast)==systolicASTMT then
     return ast
-  elseif type(ast)=="number" then
+  elseif type(ast)=="number" or type(ast)=="boolean" then
     local t = darkroom.ast.new({kind="value", value=ast}):setLinenumber(0):setOffset(0):setFilename("")
     return typecheck(t)
   else
@@ -682,9 +646,23 @@ end
 
 function systolicInstanceFunctions:toVerilog()
   if self.kind=="reg" then
-    assert(false)
+    return declareReg(self.type, self.name, self.initial)
   elseif self.kind=="ram128" then
-    assert(false)
+    return [[ wire ]]..self.name..[[_WE;
+wire ]]..self.name..[[_D;
+wire ]]..self.name..[[_writeOut;
+wire ]]..self.name..[[_readOut;
+wire [6:0] ]]..self.name..[[_writeAddr;
+wire [6:0] ]]..self.name..[[_readAddr;
+RAM128X1D ]]..self.name..[[  (
+  .WCLK(CLK),
+  .D(]]..self.name..[[_D),
+  .WE(]]..self.name..[[_WE),
+  .SPO(]]..self.name..[[_writeOut),
+  .DPO(]]..self.name..[[_readOut),
+  .A(]]..self.name..[[_writeAddr),
+  .DPRA(]]..self.name..[[_readAddr));
+]]
   elseif self.kind=="module" then
     local wires = {}
     local arglist = {}
@@ -712,11 +690,20 @@ function systolicInstanceFunctions:toVerilog()
   end
 end
 
+function systolicInstanceFunctions:getDefinitionKey()
+  assert(self.kind=="module")
+  local key = self.module.name
+  for k,v in pairs(sort(stripkeys(invertTable(self.module.functions)))) do
+    key = key.."_"..v..#self.callsites[v]
+  end
+  return key
+end
+
 function systolicInstanceFunctions:getDefinition()
   assert(self.kind=="module")
   local t = {}
 
-  table.insert(t,"module "..self.module.name.."(input CLK")
+  table.insert(t,"module "..self:getDefinitionKey().."(input CLK")
   
   for fnname,v in pairs(self.callsites) do
 
@@ -742,9 +729,8 @@ function systolicInstanceFunctions:getDefinition()
 
   table.insert(t," // state\n")
   
-  for k,v in pairs(self.module.regs) do
-    assert(v.kind=="reg")
-    table.insert(t, declareReg(v.type, v.name, v.initial))
+  for k,v in pairs(self.module.instances) do
+    table.insert(t, v:toVerilog() )
   end
 
   for k,v in pairs(self.module.functions) do
@@ -805,8 +791,12 @@ systolicASTFunctions = {}
 setmetatable(systolicASTFunctions,{__index=IRFunctions})
 systolicASTMT={__index = systolicASTFunctions,
 __add=function(l,r) return binop(l,r,"+") end, 
-__eq=function(l,r) return binop(l,r,"==") end, 
 __sub=function(l,r) return binop(l,r,"-") end}
+
+function systolicASTFunctions:init()
+  setmetatable(self,nil)
+  systolicAST.new(self)
+end
 
 -- ops
 function systolic.index( expr, idx )
@@ -863,8 +853,68 @@ function systolicASTFunctions:internalDelay()
   end
 end
 
-function systolicASTFunctions:toVerilog(options)
-  local decl, clocked, finalOut = codegen(self)
+function checkForInst(inst, scopes)
+  assert(systolicInstance.isSystolicInstance(inst))
+
+  local fnd = false
+  for k,scope in ipairs(scopes) do
+    fnd = fnd or scope.instanceMap[inst]~=nil
+  end
+  
+  if fnd==false then
+    print("missing instance "..inst.name.." (kind "..inst.kind..")")
+    map(scopes, function(n) print("scope",n.name) end)
+    assert(false)
+  end
+end
+
+-- check that all of the variables refered to are actually in scope
+-- scopes goes from innermost (index 1) to outermost (index n)
+function systolicASTFunctions:checkVariables(scopes)
+  assert(type(scopes)=="table")
+
+  local function astcheck(n)
+    if n.kind=="readinput" or n.kind=="readreg" or n.kind=="readram128" or (n.kind=="call" and n.pure~=true) then
+      checkForInst(n.inst, scopes)
+    end
+
+    if n.kind=="call" and n.pure~=true then
+      assert(systolicAST.isSystolicAST(n.valid))
+    end
+  end
+
+  self:visitEach(astcheck)
+end
+
+function systolicASTFunctions:toVerilog( options, scopes )
+  assert(type(scopes)=="table")
+
+  local function addValidBit(ast,valid)
+    valid = convert(valid)
+    return ast:S("call"):process(
+      function(n)
+        if n.pure~=true and n.valid==nil then
+          local nn = n:shallowcopy()
+          nn.valid = valid
+          assert(systolicAST.isSystolicAST(valid))
+          return systolicAST.new(nn):copyMetadataFrom(n)
+        end
+      end)
+  end
+
+  local ast = self
+  if options.valid~=nil then
+    -- obviously, if there are any function calls in the condition, we want them to always run
+    local valid = addValidBit(convert(options.valid),true)
+    ast = addValidBit(ast,valid)
+
+    print("ADDVALID")
+  else
+    print("SKIPVALID")
+  end
+
+  ast:checkVariables( scopes )
+  local decl, clocked, finalOut = codegen(ast)
 
   local t = decl
   if #clocked>0 then

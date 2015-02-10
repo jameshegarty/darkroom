@@ -537,6 +537,7 @@ function modules.linebuffer(maxDelayX, maxDelayY, datatype, stripWidth)
   -- ready
   local readyres = systolic.output("isReady", darkroom.type.bool() )
   local readyFn = lb:addFunction("ready",{},readyres)
+  readyFn:addAssign( readyres, systolic.gt(writeAddr:read(),readAddr:read()) )
 
   return lb
 end
@@ -573,7 +574,6 @@ function modules.fifo(ty)
       function(b) 
        return rams[(c-1)*bits+(b-1)+1]:read(readAddr:read())
       end)),ty:baseType()) end)))
-
 
   -- ready
   local readyres = systolic.output("isReady", darkroom.type.bool() )

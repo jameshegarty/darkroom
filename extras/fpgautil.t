@@ -1,5 +1,5 @@
 local fpgaUtil = {}
-terralib.require("image")
+require("image")
 
 local c = terralib.includecstring [[
 #include <stdio.h>

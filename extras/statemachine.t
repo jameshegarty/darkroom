@@ -16,10 +16,13 @@ end
 
 function statemachine.module( name, inputs, outputs, mainblock )
   assert(type(name)=="string")
-  map(inputs, function(v) assert(v.kind=="input") end)
-  map(outputs, function(v) assert(v.kind=="output") end)
   assert(statemachine.isBlock(mainblock))
-  return setmetatable({name=name, mainblock = mainblock, inputs=inputs, outputs=outputs, instances={}}, stateMachineModuleMT)
+  local t = {name=name, mainblock = mainblock, inputs=inputs, outputs=outputs, instances={}, instanceMap={}, usedInstanceNames = {}}
+
+  map(inputs, function(v) assert(v.kind=="input"); assert(t.usedInstanceNames[v]==nil); t.instanceMap[v]=1; t.usedInstanceNames[v]=1 end)
+  map(outputs, function(v) assert(v.kind=="output"); assert(t.usedInstanceNames[v]==nil); t.instanceMap[v]=1; t.usedInstanceNames[v]=1 end)
+
+  return setmetatable(t, stateMachineModuleMT)
 end
 
 function statemachine.block(name, predicate)
@@ -31,7 +34,15 @@ end
 
 function stateMachineModuleFunctions:add( inst )
   assert(systolicInstance.isSystolicInstance(inst))
+
+  if self.usedInstanceNames[inst.name]~=nil then
+    print("Error, inst name",inst.name,"used twice!")
+    assert(false)
+  end
+
   table.insert(self.instances, inst)
+  self.instanceMap[inst] = 1
+  self.usedInstanceNames[inst.name] = 1
 end
 
 function stateMachineModuleFunctions:toVerilog()
@@ -57,13 +68,16 @@ function stateMachineModuleFunctions:toVerilog()
       table.insert(t," // if launch\n")
       table.insert(t," // if "..typedASTPrintPrettys(v.cond).." then\n")
       table.insert(t," // "..typedASTPrintPrettys(v.launch).."\n")
-      local launchstat, launchvar = v.launch:toVerilog({validbit=systolic.__and(v.cond, self.mainblock.predicate)})
+      local launchstat, launchvar = v.launch:toVerilog({valid=v.cond},{self})
+--      print("DO")
+--      typedASTPrintPretty(v.launch)
+--      local launchstat, launchvar = v.launch:toVerilog({valid=true},{self})
       t = concat(t,launchstat)
     elseif v.kind=="assign" then
       table.insert(t," // assign\n")
-      local predstat, predvar = self.mainblock.predicate:toVerilog({pipeline=false})
-      t = concat(t,predstat)
-      local exprstat, exprvar = v.expr:toVerilog({pipeline=false})
+--      local predstat, predvar = self.mainblock.predicate:toVerilog({pipeline=false},{self})
+--      t = concat(t,predstat)
+      local exprstat, exprvar = v.expr:toVerilog({valid=true},{self})
       t = concat(t,exprstat)
 --      table.insert( t, "if("..predvar..") begin "..v.dst.name.." <= "..exprvar.."; end\n" )
       table.insert( t, v.dst.name.." <= "..exprvar..";\n" )
@@ -103,7 +117,11 @@ function stateMachineBlockFunctions:addAssign( dst, expr )
   assert(systolicAST.isSystolicAST(expr))
 
   if dst.type~=expr.type then
-    assert( darkroom.type.checkImplicitCast( expr.type, dst.type, expr ) )
+    if darkroom.type.checkImplicitCast( expr.type, dst.type, expr )==false then
+      print("Error, could not cast ",expr.type,"to",dst.type)
+      assert(false)
+    end
+
     expr = systolic.cast( expr, dst.type )
   end
 
