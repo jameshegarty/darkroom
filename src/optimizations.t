@@ -211,7 +211,7 @@ end
 
 -- ast should be a typed ast
 function darkroom.optimize.optimize(ast, options)
-  assert(darkroom.typedAST.isTypedAST(ast))
+  assert(darkroom.typedAST.isTypedAST(ast) or systolicAST.isSystolicAST(ast))
   assert(type(options)=="table")
 
   if options.printstage then
@@ -233,8 +233,12 @@ function darkroom.optimize.optimize(ast, options)
         -- only do the optimization if the value isn't modified by it
         if (vf==0 and n.type==darkroom.type.uint(8) and ast.expr.value >=0 and ast.expr.value <256) or
           (vf==0 and n.type==darkroom.type.uint(16) and ast.expr.value >=0 and ast.expr.value < math.pow(2,16)) or
-          (vf==0 and n.type==darkroom.type.uint(32) and ast.expr.value >=0 and ast.expr.value < math.pow(2,32)) then
-          return darkroom.typedAST.new(n):copyMetadataFrom(ast.expr)
+          (vf==0 and n.type==darkroom.type.uint(32) and ast.expr.value >=0 and ast.expr.value < math.pow(2,32)) or
+          (vf==0 and n.type==darkroom.type.int(16) and ast.expr.value >=-32768 and ast.expr.value < 32767) then
+--          return darkroom.typedAST.new(n):copyMetadataFrom(ast.expr)
+          setmetatable(n, getmetatable(ast))
+          n:init()
+          return n:copyMetadataFrom(ast)
         end
       end
     end)

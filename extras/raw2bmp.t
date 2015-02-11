@@ -1,6 +1,6 @@
 darkroom={}
-terralib.require("common")
-terralib.require("image")
+require("common")
+require("image")
 cstdlib = terralib.includec("stdlib.h")
 cstdio = terralib.includec("stdio.h")
 

@@ -5,8 +5,36 @@ systolicModuleMT={__index=systolicModuleFunctions}
 
 systolicInstanceFunctions = {}
 
+local function typecheck(ast)
+  assert(darkroom.ast.isAST(ast))
+
+  if ast.kind=="readram128" then
+    local t = ast:shallowcopy()
+    t.type=darkroom.type.bool()
+    return systolicAST.new(t):copyMetadataFrom(ast)
+  elseif ast.kind=="readreg" or ast.kind=="readinput" then
+    local t = ast:shallowcopy()
+    t.type = t.inst.type
+    return systolicAST.new(t):copyMetadataFrom(ast)
+  else
+    return darkroom.typedAST.typecheckAST(ast, filter(ast,function(n) return systolicAST.isSystolicAST(n) end), systolicAST.new )
+  end
+end
+
+local function convert(ast)
+  if getmetatable(ast)==systolicASTMT then
+    return ast
+  elseif type(ast)=="number" or type(ast)=="boolean" then
+    local t = darkroom.ast.new({kind="value", value=ast}):setLinenumber(0):setOffset(0):setFilename("")
+    return typecheck(t)
+  else
+    print(type(ast))
+    assert(false)
+  end
+end
+
 function checkReserved(k)
-  if k=="input" or k=="output" then
+  if k=="input" or k=="output" or k=="reg" then
     print("Error, variable name ",k," is a reserved keyword in verilog")
     assert(false)
   end
@@ -40,7 +68,7 @@ function declareReg(ty, name, initial, comment)
   if initial==nil or initial=="" then 
     initial=""
   else
-    initial = " = "..initial
+    initial = " = "..valueToVerilog(initial,ty)
   end
 
   if ty:isBool() then
@@ -307,8 +335,7 @@ end
 
 function systolicFunctionFunctions:addAssign( dst, expr )
   assert(systolicInstance.isSystolicInstance(dst) or (dst.kind=="output" or dst.kind=="reg"))
-  assert(systolicAST.isSystolicAST(expr))
-  
+  expr = convert(expr)
   table.insert(self.assignments,{dst=dst,expr=expr,retiming=retime(expr)})
 end
 
@@ -328,11 +355,40 @@ local function codegen(ast, callsiteId)
   local callsite = ""
   if type(callsiteId)=="number" then callsite = "C"..callsiteId.."_" end
 
-  local resDeclarations = {}
-  local resClockedLogic = {}
 
   local finalOut = ast:visitEach(
-    function(n, inputs)
+    function(n, args)
+      local inputs = {}
+      local inputResDeclarations = {}
+      local inputResClockedLogic = {}
+      
+      map( args, function(v,k) inputs[k]=v[1]; inputResDeclarations[k]=v[2]; inputResClockedLogic[k]=v[3]; end)
+
+      -- 'used' are declarations from inputs that we actually end up using
+      -- 'res' are declarations from this node
+      local usedResDeclarations = {}
+      local usedResDeclarationsSeen = {}
+      local usedResClockedLogic = {}
+      local usedResClockedLogicSeen = {}
+      local resDeclarations = {}
+      local resClockedLogic = {}
+
+      local function addInput(key)
+        for k,v in pairs(inputResDeclarations[key]) do
+          if usedResDeclarationsSeen[v]==nil then
+            table.insert(usedResDeclarations,v)
+          end
+          usedResDeclarationsSeen[v] = 1
+        end
+
+        for k,v in pairs(inputResClockedLogic[key]) do
+          if usedResClockedLogicSeen[v]==nil then
+            table.insert(usedResClockedLogic,v)
+          end
+          usedResClockedLogicSeen[v] = 1
+        end
+      end
+
       local finalOut = {}
 
       for c=1,n.type:channels() do
@@ -340,6 +396,8 @@ local function codegen(ast, callsiteId)
 
         if n.kind=="binop" then
           table.insert(resDeclarations, declareReg( n.type:baseType(), callsite..n:cname(c) ))
+          addInput("lhs")
+          addInput("rhs")
 
           if n.op=="<" or n.op==">" or n.op=="<=" or n.op==">=" then
             if n.type:baseType():isBool() and n.lhs.type:baseType():isInt() and n.rhs.type:baseType():isInt() then
@@ -384,6 +442,7 @@ local function codegen(ast, callsiteId)
             assert(false)
           end
         elseif n.kind=="select" or n.kind=="vectorSelect" then
+          addInput("cond"); addInput("a"); addInput("b");
           table.insert(resDeclarations,declareReg( n.type:baseType(), callsite..n:cname(c), "", " // "..n.kind.." result" ))
           local condC = 1
           if n.kind=="vectorSelect" then condC=c end
@@ -391,6 +450,7 @@ local function codegen(ast, callsiteId)
           table.insert(resClockedLogic, callsite..n:cname(c).." <= ("..inputs.cond[condC]..")?("..inputs.a[c].."):("..inputs.b[c].."); // "..n.kind.."\n")
           res = callsite..n:cname(c)
         elseif n.kind=="cast" then
+          addInput("expr")
           local expr
           local cmt = " // cast "..tostring(n.expr.type).." to "..tostring(n.type)
           if n.type:isArray() and n.expr.type:isArray()==false then
@@ -461,7 +521,7 @@ local function codegen(ast, callsiteId)
             
             local fndecl = {}
             table.insert(fndecl, n.func.name.." "..n:name().."(.CLK(CLK)")
-            map(n.func.inputs, function(v) table.insert(fndecl, ", ."..v.name.."("..inputs["input_"..v.name][1]..")") end)
+            map(n.func.inputs, function(v) addInput("input_"..v.name); table.insert(fndecl, ", ."..v.name.."("..inputs["input_"..v.name][1]..")") end)
             
             if n.func.output~=nil then
               res = n:name().."_"..c
@@ -481,9 +541,11 @@ local function codegen(ast, callsiteId)
               call_callsite = "C"..n.callsiteid.."_"
             end
 
+            addInput("valid")
             table.insert(resDeclarations, "assign "..n.inst.name.."_"..call_callsite..n.func.name.."_valid = "..inputs.valid[1]..";\n")
 
             map(n.func.inputs, function(v) 
+                  addInput("input_"..v.name)
                   table.insert(resDeclarations, "assign "..n.inst.name.."_"..call_callsite..v.name.." = "..inputs["input_"..v.name][1]..";\n") end)
 
             if n.func.output~=nil then
@@ -503,8 +565,12 @@ local function codegen(ast, callsiteId)
       end
 
       assert(keycount(finalOut)>0)
-      return finalOut
+      return {finalOut, concat(usedResDeclarations, resDeclarations), concat(usedResClockedLogic, resClockedLogic)}
     end)
+
+  local resDeclarations = finalOut[2]
+  local resClockedLogic = finalOut[3]
+  finalOut = finalOut[1]
 
   if ast.type:isArray() then
     finalOut = "{"..table.concat(finalOut,",").."}"
@@ -562,7 +628,8 @@ function systolicFunctionFunctions:getDefinition(callsites)
       checkForInst(v.dst, scopes)
       v.expr:checkVariables(scopes)
       if self.output~=nil and v.dst==self.output then drivenOutput = true end
-      local decl, clk, res = codegen(v.expr, sel(#callsites==1,nil,id) )
+      local expr = darkroom.optimize.optimize( v.expr, {})
+      local decl, clk, res = codegen(expr, sel(#callsites==1,nil,id) )
       t = concat(t,decl)
       clocked = concat(clocked,clk)
       if v.dst.kind=="reg" and self.pure~=true and #callsites>1 then table.insert(t, declareWire(v.dst.type,callsite..v.dst.name,""," // callsite local destination")) end
@@ -609,33 +676,7 @@ function systolicFunctionFunctions:getDefinition(callsites)
   return t
 end
 
-local function typecheck(ast)
-  assert(darkroom.ast.isAST(ast))
 
-  if ast.kind=="readram128" then
-    local t = ast:shallowcopy()
-    t.type=darkroom.type.bool()
-    return systolicAST.new(t):copyMetadataFrom(ast)
-  elseif ast.kind=="readreg" or ast.kind=="readinput" then
-    local t = ast:shallowcopy()
-    t.type = t.inst.type
-    return systolicAST.new(t):copyMetadataFrom(ast)
-  else
-    return darkroom.typedAST.typecheckAST(ast, filter(ast,function(n) return systolicAST.isSystolicAST(n) end), systolicAST.new )
-  end
-end
-
-local function convert(ast)
-  if getmetatable(ast)==systolicASTMT then
-    return ast
-  elseif type(ast)=="number" or type(ast)=="boolean" then
-    local t = darkroom.ast.new({kind="value", value=ast}):setLinenumber(0):setOffset(0):setFilename("")
-    return typecheck(t)
-  else
-    print(type(ast))
-    assert(false)
-  end
-end
 
 local function binop(lhs, rhs, op)
   lhs = convert(lhs)
@@ -778,13 +819,13 @@ __index = function(tab,key)
     -- try to find key in function tab
     local fn = rawget(tab,"module").functions[key]
     if fn~=nil then
-      return function(self, args)
+      return function(self, args, valid)
         assert(type(args)=="table" or args==nil)
         
         tab.callsites[fn.name] = tab.callsites[fn.name] or {}
         table.insert(tab.callsites[fn.name],1)
         
-        local t = {kind="call",inst=self,func=fn,functionname=fn.name,callsiteid = #tab.callsites[fn.name]}
+        local t = {kind="call",inst=self,valid=valid,func=fn,functionname=fn.name,callsiteid = #tab.callsites[fn.name]}
         
         checkArgList( fn, args, t )
         
@@ -817,8 +858,11 @@ function systolic.index( expr, idx )
 end
 
 function systolic.cast( expr, ty )
-  assert(systolicAST.isSystolicAST(expr))
-  assert(darkroom.type.isType(ty))
+  expr = convert(expr)
+  ty = darkroom.type.fromTerraType(ty,0,0,"")
+
+  --assert(systolicAST.isSystolicAST(expr))
+  --assert(darkroom.type.isType(ty))
   return typecheck(darkroom.ast.new({kind="cast",expr=expr,type=ty}):copyMetadataFrom(expr))
 end
 

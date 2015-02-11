@@ -696,7 +696,7 @@ function IRFunctions:linenumber()
   if type(darkroom.IR._linenumbers[getmetatable(self)][self])~="number" then
     print("Line number missing")
     print(debug.traceback())
-    self:printpretty()
+    map(self,print)
   end
   
   assert(type(darkroom.IR._linenumbers[getmetatable(self)][self])=="number")

@@ -584,6 +584,33 @@ function modules.fifo(ty)
 end
 modules.fifo = memoize(modules.fifo)
 
+function modules.fifonoop(ty)
+  assert(darkroom.type.isType(ty))
+
+  local fifo = systolic.module("fifo")
+  local reg = fifo:add(systolic.reg("data", ty))
+  local hasData = fifo:add(systolic.reg("hasData", darkroom.type.bool(), false))
+
+  -- pushBack
+  local input = systolic.input("indata", ty)
+  local pushBack = fifo:addFunction("pushBack",{input},nil)
+  pushBack:addAssign( reg, input:read() )
+  pushBack:addAssign( hasData, true )
+
+  -- popFront
+  local out = systolic.output("outdata", ty)
+  local popFront = fifo:addFunction("popFront",{},out)
+  popFront:addAssign( out, reg:read() )
+
+  -- ready
+  local readyres = systolic.output("isReady", darkroom.type.bool() )
+  local ready = fifo:addFunction("ready",{},readyres)
+  ready:addAssign( readyres, hasData:read() )
+
+  return fifo
+end
+modules.fifo = memoize(modules.fifonoop)
+
 function modules.xygen(W,H)
   assert(type(W)=="number")
   assert(type(H)=="number")
@@ -596,8 +623,8 @@ function modules.xygen(W,H)
   local xout = systolic.output("xout", int16 )
   local x = xygen:addFunction("x",{},xout)
   x:addAssign(xout, xreg:read())
-  x:addAssign(xreg, systolic.select(systolic.eq(xreg:read(),W),0,xreg:read()+1))
-  x:addAssign(yreg, systolic.select(systolic.eq(xreg:read(),W),yreg:read()+1,yreg:read()))
+  x:addAssign(xreg, systolic.select(systolic.eq(xreg:read(),systolic.cast(W,int16)),systolic.cast(0,int16),xreg:read()+systolic.cast(1,int16)))
+  x:addAssign(yreg, systolic.select(systolic.eq(xreg:read(),systolic.cast(W,int16)),yreg:read()+systolic.cast(1,int16),yreg:read()))
 
   -- y fn
   local yout = systolic.output("yout", int16 )
@@ -740,7 +767,7 @@ module sim;
   reg [12:0] posX = 0;
   reg [12:0] posY = 0;
   reg [7:0] cycle = 0;
-  reg validInNextCycle = 0;
+  reg validIn = 0;
   wire validOut;
   integer realX = ]=]..(stripWidth+metadata.padMaxX-1)..[=[;
   integer realY = ]=]..(metadata.padMinY-1)..[=[;
@@ -783,19 +810,13 @@ module sim;
      posX = realX;
      posY = realY;
      cycle = ]=]..(metadata.cycles-1)..[=[;
-     validInNextCycle = 0;
+     validIn = 0;
      CLK = 0;
      #10
      CLK = 1;
      #10
      addrT = addrT-1;
    end
-
-   validInNextCycle = 1;
-   CLK = 0;
-   #10
-   CLK = 1;
-   #10
 
    realY = ]=]..(metadata.padMinY)..[=[;
    while (realY < ]=]..(imageHeight+metadata.padMaxY)..[=[) begin
@@ -823,7 +844,7 @@ table.insert( res, [=[       end else begin
        while (cycle < ]=]..metadata.cycles..[=[) begin
        posX = realX;
        posY = realY;
-       validInNextCycle = 1;
+       validIn = 1;
        CLK = 0;
        #10
        CLK = 1;
@@ -835,6 +856,7 @@ table.insert( res, [=[       end else begin
            $fwrite(fileout, "%c", pipelineOutput[i*8+:8]); 
            i = i + 1;
          end
+         $display("outvalid %d",outputPixelsSeen);
          outputPixelsSeen = outputPixelsSeen + 1;
        end
 
@@ -855,7 +877,7 @@ table.insert( res, [=[       end else begin
        pipelineInput = 0;
        posX = realX;
        posY = realY;
-       validInNextCycle = 1;
+       validIn = 1;
        CLK = 0;
        #10
        CLK = 1;
