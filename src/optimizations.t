@@ -4,6 +4,8 @@ darkroom.optimize={}
 darkroom.optimize.verbose = true
 
 -- lua doesn't iterate over keys in a consistant order
+-- we allow nodes to have different keys, but for a given key _count_, the
+-- keys have to be the same
 darkroom.optimize._keyOrderCache = {}
 function darkroom.optimize.keyOrder(ast)
   assert(type(ast.kind)=="string")
@@ -49,7 +51,7 @@ function darkroom.optimize.CSEHash(ast)
       assert(false)
     end
 
-    hash = hash..tostring(ast[k])
+    hash = hash..tostring(ast[k]).."_"
   end
 
   return hash

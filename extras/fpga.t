@@ -12,9 +12,9 @@ function fpga.codegenKernel( kernel, inputLinebufferFifos, imageWidth, imageHeig
 
   local x,y = systolic.input("x",int16), systolic.input("y",int16)
 
-  local moduleInputs = {x=x,y=y}
+  local moduleInputs = {x,y}
   local datasourceToInput = {}
-  map( inputLinebufferFifos, function(v,k) moduleInputs[v.key] = systolic.input(v.key,v.type); datasourceToInput[k] = moduleInputs[v.key]:read() end )
+  map( inputLinebufferFifos, function(v,k) table.insert(moduleInputs,systolic.input(v.key,v.type)); datasourceToInput[k] = moduleInputs[#moduleInputs]:read() end )
 
 
   local systolicFn = kernel.kernel:visitEach(

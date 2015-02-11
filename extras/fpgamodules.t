@@ -502,7 +502,7 @@ function modules.linebuffer(maxDelayX, maxDelayY, datatype, stripWidth)
   do -- store
     local I = systolic.input( "indata", datatype )
     local storeFn = lb:addFunction("store",{I},nil)
-    storeFn:addAssign(writeAddr,writeAddr:read()+1)
+    storeFn:addAssign(writeAddr,writeAddr:read()+systolic.cast(1,uint16))
 
     for y=-maxDelayY,0 do
       for x=-maxDelayX,0 do
@@ -521,7 +521,7 @@ function modules.linebuffer(maxDelayX, maxDelayY, datatype, stripWidth)
   do -- load
     local strideX = systolic.input("strideX",uint8)
     local loadFn = lb:addFunction("load",{},O)
-    loadFn:addAssign(readAddr, readAddr:read()+1)
+    loadFn:addAssign(readAddr, readAddr:read()+systolic.cast(1,uint16))
     loadFn:addAssert(writeAddr==readAddr)
 
     local Oflat = {}

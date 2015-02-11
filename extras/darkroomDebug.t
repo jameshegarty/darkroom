@@ -687,10 +687,10 @@ function typedASTPrintPrettys(root)
     if self.pure then
       out = self.func.name.."("
     else
-      out = self.inst.name..":"..self.functionname.."("
+      out = self.inst.name..":"..self.func.name.."("
     end
 
-    for k,v in pairs(self.func.inputs) do out = out..k.."="..inputs["input_"..v.name].."," end
+    for k,v in pairs(self.func.inputs) do out = out..k.."="..inputs["input"..k].."," end
     out = out..")"
   else
     print(self.kind)  

@@ -242,7 +242,7 @@ local function checkArgList( fn, args, calltable )
   map(fn.inputs, function(v,k) 
         assert(systolicInstance.isSystolicInstance(v))
         correct = correct and args[v.name]~=nil and (args[v.name].type==v.type)
-        calltable["input_"..v.name] = args[v.name]
+        calltable["input"..k] = args[v.name]
                  end)
   
   if correct==false then
@@ -259,7 +259,7 @@ systolicFunctionFunctions = {}
 systolicFunctionMT={__index=systolicFunctionFunctions, 
                     __call = function(self,args) -- args is a table of key,value pairs for the named arguments
                       assert(self.pure)
-                      local t = {kind="call",func=self,pure=true,type=self.outputtype}
+                      local t = {kind="call",func=self,pure=true,type=self.outputtype,valid="placeholder"}
                       checkArgList( self, args, t)
                       return systolicAST.new(t):setLinenumber(0):setOffset(0):setFilename("")
                     end
@@ -270,12 +270,20 @@ function systolicFunction.isSystolicFunction(t)
   return getmetatable(t)==systolicFunctionMT
 end
 
-function systolic.makeFunction(name, inputs, output)
+function systolic.makeFunction(name, inputs, output, valid)
   assert(type(inputs)=="table")
-  for k,v in pairs(inputs) do assert(type(k)=="string" or type(k)=="number");assert(systolicInstance.isSystolicInstance(v));assert(v.kind=="input") end
+  assert(#inputs==keycount(inputs))
+  for k,v in ipairs(inputs) do assert(type(k)=="number");assert(systolicInstance.isSystolicInstance(v));assert(v.kind=="input") end
   assert(systolicInstance.isSystolicInstance(output) or output==nil)
 
-  local t = {name=name, inputs=inputs, output=output, assignments={}, ram128assignments={}, asserts={}, pure=true, usedInstanceNames = {}, instanceMap = {}}
+  if valid==nil then
+    valid = systolic.input("valid",darkroom.type.bool())
+  end
+
+  local t = {name=name, inputs=inputs, output=output, assignments={}, ram128assignments={}, asserts={}, pure=true, usedInstanceNames = {}, instanceMap = {}, valid=valid:read()}
+
+  t.instanceMap[valid] = 1
+  t.usedInstanceNames[valid.name] = 1
 
   if output~=nil then
     t.instanceMap[output] = 1
@@ -292,7 +300,10 @@ function systolic.makeFunction(name, inputs, output)
 end
 
 function systolicModuleFunctions:addFunction( name, inputs, output )
-  local fn = systolic.makeFunction( name, inputs, output )
+  assert(type(name)=="string")
+
+  local valid = systolic.input(name.."_valid", darkroom.type.bool())
+  local fn = systolic.makeFunction( name, inputs, output, valid )
 
   assert(systolicFunction.isSystolicFunction(fn))
   if self.usedInstanceNames[fn.name]~=nil then
@@ -395,7 +406,7 @@ local function codegen(ast, callsiteId)
         local res
 
         if n.kind=="binop" then
-          table.insert(resDeclarations, declareReg( n.type:baseType(), callsite..n:cname(c) ))
+          table.insert(resDeclarations, declareReg( n.type:baseType(), callsite..n:cname(c),"", " // binop "..n.op.." result" ))
           addInput("lhs")
           addInput("rhs")
 
@@ -478,6 +489,7 @@ local function codegen(ast, callsiteId)
           table.insert(resDeclarations,declareWire( n.type:baseType(), callsite..n:cname(c), v, " //value" ))
           res = callsite..n:cname(c)
         elseif n.kind=="array" then
+          addInput("expr"..c)
           res = inputs["expr"..c][1]
         elseif n.kind=="index" then
           local flatIdx = 0
@@ -490,6 +502,7 @@ local function codegen(ast, callsiteId)
             dim = dim + 1
           end
 
+          addInput("expr")
           res = inputs["expr"][flatIdx+1]
 
 --[=[          else
@@ -521,7 +534,7 @@ local function codegen(ast, callsiteId)
             
             local fndecl = {}
             table.insert(fndecl, n.func.name.." "..n:name().."(.CLK(CLK)")
-            map(n.func.inputs, function(v) addInput("input_"..v.name); table.insert(fndecl, ", ."..v.name.."("..inputs["input_"..v.name][1]..")") end)
+            map(n.func.inputs, function(v,k) addInput("input"..k); table.insert(fndecl, ", ."..v.name.."("..inputs["input"..k][1]..")") end)
             
             if n.func.output~=nil then
               res = n:name().."_"..c
@@ -537,16 +550,16 @@ local function codegen(ast, callsiteId)
             systolic.addDefinition( n.inst )
             
             local call_callsite = ""
-            if #n.inst.callsites[n.functionname]>1 then
+            if #n.inst.callsites[n.func.name]>1 then
               call_callsite = "C"..n.callsiteid.."_"
             end
 
             addInput("valid")
             table.insert(resDeclarations, "assign "..n.inst.name.."_"..call_callsite..n.func.name.."_valid = "..inputs.valid[1]..";\n")
 
-            map(n.func.inputs, function(v) 
-                  addInput("input_"..v.name)
-                  table.insert(resDeclarations, "assign "..n.inst.name.."_"..call_callsite..v.name.." = "..inputs["input_"..v.name][1]..";\n") end)
+            map(n.func.inputs, function(v,k) 
+                  addInput("input"..k)
+                  table.insert(resDeclarations, "assign "..n.inst.name.."_"..call_callsite..v.name.." = "..inputs["input"..k][1]..";\n") end)
 
             if n.func.output~=nil then
               res = n.inst.name.."_"..call_callsite..n.func.output.name
@@ -554,6 +567,48 @@ local function codegen(ast, callsiteId)
               res = "__NILVALUE_ERROR"
             end
           end
+        elseif n.kind=="fndefn" then
+          for id=1,n.callsites do
+            table.insert(resDeclarations,"  // function: "..n.fn.name.." callsite "..id.." delay ".."".."\n")
+
+            local assn = 1
+            while n["dst"..assn] do
+              local callsite = "C"..id.."_"
+              if n.callsites==1 then callsite="" end
+              
+              addInput("expr"..assn)
+              if n["dst"..assn].kind=="reg" and n.callsites>1 then table.insert( resDeclarations, declareWire(n["dst"..assn].type,callsite..n["dst"..assn].name,""," // callsite local destination")) end
+              
+              if (n.callsites>1) or n["dst"..assn].kind=="output" then
+                table.insert(resDeclarations, "assign "..callsite..n["dst"..assn].name.." = "..inputs["expr"..assn][1]..";  // function output assignment\n")
+              else
+                table.insert(resClockedLogic, "if ("..inputs.valid[1]..") begin "..n["dst"..assn].name.." <= "..inputs["expr"..assn][1].."; end  // function register assignment\n")
+              end
+              assn = assn + 1
+            end
+          end
+
+          if n.callsites>1 then
+            table.insert(resDeclarations," // merge: "..n.fn.name.."\n")
+            for id=1,n.callsites do
+              local assn = 1
+              while n["dst"..assn] do
+                if id==1 then
+                  if n["dst"..assn].kind=="reg" then
+--                    table.insert(t, "always @ (posedge CLK) begin "..v.dst.varname.." <= C"..id.."_"..v.dst.varname.."; end\n")
+                  elseif n["dst"..assn].kind=="output" then
+                  else
+                    print("VDK",v.dst.kind)
+                    assert(false)
+                  end
+                end
+                assn = assn + 1
+              end
+
+            end
+          end
+
+          res = "_ERR_NULL_FNDEFN"
         else
           print(n.kind)
           assert(false)
@@ -591,10 +646,31 @@ function systolicFunctionFunctions:getDefinitionKey()
   return self
 end
 
+function systolicFunctionFunctions:lower(callsites)
+  local node = {kind="fndefn", callsites=#callsites,fn=self,type=darkroom.type.null(),valid=self.valid}
+
+  local cnt = 1
+  local drivenOutput = false
+  for k,v in pairs(self.assignments) do
+    if self.output~=nil and v.dst==self.output then drivenOutput = true end
+    node["dst"..cnt] = v.dst
+    node["expr"..cnt] = v.expr
+    cnt = cnt+1
+  end
+  
+  if drivenOutput==false and self.output~=nil  then
+    print("undriven output, function",self.name)
+    if self.module~=nil then print("module",self.module.name) end
+    assert(false)
+  end
+
+  return systolicAST.new(node):copyMetadataFrom(node.expr1)
+end
+
 function systolicFunctionFunctions:getDefinition(callsites)
+  assert(self.pure)
   local t = {}
 
-  if self.pure then
     table.insert(t,"module "..self.name.."(input CLK")
     map(self.inputs, function(v) table.insert(t, ", "..declarePort(v.type, v.name, true)) end)
     if systolicInstance.isSystolicInstance(self.output) then
@@ -612,66 +688,9 @@ function systolicFunctionFunctions:getDefinition(callsites)
     end
 
     assert(systolicInstance.isSystolicInstance(self.output))
-  else
-    assert(type(callsites)=="table")
-  end
 
-  for id,_ in pairs(callsites) do
-    local callsite = "C"..id.."_"
-    if self.pure or #callsites==1 then callsite="" end
-    table.insert(t,"  // function: "..self.name.." callsite "..id.." delay "..self:getDelay().."\n")
-      
-    local clocked = {}
-    local drivenOutput = false
-    local scopes = sel(self.pure,{self},{self,self.module})
-    for k,v in pairs(self.assignments) do
-      checkForInst(v.dst, scopes)
-      v.expr:checkVariables(scopes)
-      if self.output~=nil and v.dst==self.output then drivenOutput = true end
-      local expr = darkroom.optimize.optimize( v.expr, {})
-      local decl, clk, res = codegen(expr, sel(#callsites==1,nil,id) )
-      t = concat(t,decl)
-      clocked = concat(clocked,clk)
-      if v.dst.kind=="reg" and self.pure~=true and #callsites>1 then table.insert(t, declareWire(v.dst.type,callsite..v.dst.name,""," // callsite local destination")) end
-
-      if (self.pure~=true and #callsites>1) or v.dst.kind=="output" then
-        table.insert(t, "assign "..callsite..v.dst.name.." = "..res..";\n")
-      else
-        table.insert(clocked, v.dst.name.." <= "..res..";\n")
-      end
-    end
-    
-    if drivenOutput==false and self.output~=nil  then
-      print("undriven output, function",self.name)
-      if self.module~=nil then print("module",self.module.name) end
-      assert(false)
-    end
-
-    table.insert(t,"always @ (posedge CLK) begin\n")
-    t = concat(t, clocked)
-    table.insert(t,"end\n")
-  end
-
-  if self.pure then
-    table.insert(t,"endmodule\n\n")
-  elseif #callsites>1 then
-    table.insert(t," // merge: "..self.name.."\n")
-    for id,v in pairs(callsites) do
-      for k,v in pairs(self.assignments) do
-        if id==1 then
-          if v.dst.kind=="reg" then
-            table.insert(t, "always @ (posedge CLK) begin "..v.dst.varname.." <= C"..id.."_"..v.dst.varname.."; end\n")
-          elseif v.dst.kind=="output" then
-            --          table.insert(t, "assign "..v.dst.varname.." = C"..id.."_"..v.dst.varname..";\n")
-          else
-            print("VDK",v.dst.kind)
-            assert(false)
-            --        table.insert(t, "assign "..v.dst.varname.." = C"..id.."_"..v.dst.varname..";\n")
-          end
-        end
-      end
-    end
-  end
+    t = concat( t, self:lower(callsites):toVerilog({},{self}) )
+  table.insert(t,"endmodule\n\n")
 
   return t
 end
@@ -785,7 +804,7 @@ function systolicInstanceFunctions:getDefinition()
 
   for k,v in pairs(self.module.functions) do
     if type(self.callsites[v.name])=="table" then -- only codegen stuff we actually used
-      t=concat(t,v:getDefinition(self.callsites[v.name]))
+      t = concat(t,v:lower(self.callsites[v.name]):toVerilog({},{v,self.module}))
     end
   end
 
@@ -824,8 +843,9 @@ __index = function(tab,key)
         
         tab.callsites[fn.name] = tab.callsites[fn.name] or {}
         table.insert(tab.callsites[fn.name],1)
-        
-        local t = {kind="call",inst=self,valid=valid,func=fn,functionname=fn.name,callsiteid = #tab.callsites[fn.name]}
+        if valid==nil then valid="placeholder" end
+
+        local t = {kind="call",inst=self,valid=valid,func=fn,callsiteid = #tab.callsites[fn.name]}
         
         checkArgList( fn, args, t )
         
@@ -931,6 +951,14 @@ function systolicASTFunctions:checkVariables(scopes)
       checkForInst(n.inst, scopes)
     end
 
+    if n.kind=="fndefn" then
+      local i=1
+      while n["dst"..i] do
+        checkForInst(n["dst"..i], scopes)
+        i = i + 1
+      end
+    end
+
     if n.kind=="call" and n.pure~=true then
       assert(systolicAST.isSystolicAST(n.valid))
     end
@@ -946,7 +974,7 @@ function systolicASTFunctions:toVerilog( options, scopes )
     valid = convert(valid)
     return ast:S("call"):process(
       function(n)
-        if n.pure~=true and n.valid==nil then
+        if n.pure~=true and systolicAST.isSystolicAST(n.valid)==false then
           local nn = n:shallowcopy()
           nn.valid = valid
           assert(systolicAST.isSystolicAST(valid))
@@ -967,6 +995,8 @@ function systolicASTFunctions:toVerilog( options, scopes )
   end
 
   ast:checkVariables( scopes )
+  ast = darkroom.optimize.optimize( ast, {})
+
   local decl, clocked, finalOut = codegen(ast)
 
   local t = decl
