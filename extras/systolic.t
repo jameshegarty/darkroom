@@ -550,12 +550,14 @@ local function codegen(ast, callsiteId)
             systolic.addDefinition( n.inst )
             
             local call_callsite = ""
-            if #n.inst.callsites[n.func.name]>1 then
+            if #n.inst.callsites[n.func.name]>1 and n.func:isAccessor()==false then
               call_callsite = "C"..n.callsiteid.."_"
             end
 
-            addInput("valid")
-            table.insert(resDeclarations, "assign "..n.inst.name.."_"..call_callsite..n.func.name.."_valid = "..inputs.valid[1]..";\n")
+            if n.func:isPure()==false then
+              addInput("valid")
+              table.insert(resDeclarations, "assign "..n.inst.name.."_"..call_callsite..n.func.name.."_valid = "..inputs.valid[1]..";\n")
+            end
 
             map(n.func.inputs, function(v,k) 
                   addInput("input"..k)
@@ -634,6 +636,16 @@ local function codegen(ast, callsiteId)
   end
 
   return resDeclarations, resClockedLogic, finalOut
+end
+
+-- some functions don't modify state. These do not need a valid bit
+function systolicFunctionFunctions:isPure()
+  return foldl( andop, true, map( self.assignments, function(n) return n.dst.kind=="output" end ) )
+end
+
+-- this is a pure function with no inputs. It only ever needs one callsite
+function systolicFunctionFunctions:isAccessor()
+  return self:isPure() and #self.inputs==0
 end
 
 function systolicFunctionFunctions:addAssert(expr)
@@ -736,14 +748,15 @@ RAM128X1D ]]..self.name..[[  (
     local wires = {}
     local arglist = {}
     
-    for fnname,v in pairs(self.callsites) do
-      for id,vv in pairs(v) do
-        local fn = self.module.functions[fnname]
+    for fnname,fn in pairs(self.module.functions) do
+      local callsitecnt = #self.callsites[fnname]
+      if fn:isAccessor() then callsitecnt=1 end
 
+      for id=1,callsitecnt do
         local callsite = "C"..id.."_"
-        if #self.callsites[fnname]==1 then callsite="" end
+        if #self.callsites[fnname]==1 or fn:isAccessor() then callsite="" end
         table.insert(wires,"wire "..self.name.."_"..callsite..fnname.."_valid;\n")
-        table.insert(arglist,", ."..callsite..fnname.."_valid("..self.name.."_"..callsite..fnname.."_valid)")
+        if fn:isPure()==false then table.insert(arglist,", ."..callsite..fnname.."_valid("..self.name.."_"..callsite..fnname.."_valid)") end
         map(fn.inputs, function(v) table.insert(wires,declareWire( v.type, self.name.."_"..callsite..v.name )); table.insert(arglist,", ."..v.name..callsite.."("..self.name.."_"..callsite..v.name..")") end)
 
         if fn.output~=nil then
@@ -763,7 +776,9 @@ function systolicInstanceFunctions:getDefinitionKey()
   assert(self.kind=="module")
   local key = self.module.name
   for k,v in pairs(sort(stripkeys(invertTable(self.module.functions)))) do
-    key = key.."_"..v..#self.callsites[v]
+    local callsitecnt = #self.callsites[v]
+    if self.module.functions[v]:isAccessor() then callsitecnt=1 end
+    key = key.."_"..v..callsitecnt
   end
   return key
 end
@@ -783,7 +798,7 @@ function systolicInstanceFunctions:getDefinition()
       local callsite = "C"..id.."_"
       if #self.callsites[fnname]==1 then callsite="" end
 
-      table.insert(t,", input "..callsite..fnname.."_valid")
+      if fn:isPure()==false then table.insert(t,", input "..callsite..fnname.."_valid") end
       
       for _,input in pairs(fn.inputs) do
         table.insert(t,", input ["..(input.type:sizeof()*8-1)..":0] "..callsite..input.name)

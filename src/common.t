@@ -441,3 +441,19 @@ function sort(a)
   table.sort(t)
   return t
 end
+
+function foldl( fn, base, t )
+  assert(type(fn)=="function")
+  assert(type(t)=="table")
+  assert(#t==keycount(t))
+  assert(type(base)==type(t[1]))
+
+  local res = base
+  for k,v in ipairs(t) do
+    res = fn(res,v)
+  end
+
+  return res
+end
+
+function andop(a,b) return a and b end
