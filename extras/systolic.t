@@ -317,16 +317,6 @@ function systolicModuleFunctions:addFunction( name, inputs, output )
   return fn
 end
 
-function systolicFunctionFunctions:getDelay()
-  local maxd = 0
-  for _,v in pairs(self.assignments) do
-    if v.dst.kind=="output" and v.retiming[v.expr]>maxd then 
-      maxd = v.retiming[v.expr] 
-    end
-  end
-  return maxd
-end
-
 local function retime(expr)
   local retiming = {}
 
@@ -367,13 +357,16 @@ local function codegen(ast, callsiteId)
   if type(callsiteId)=="number" then callsite = "C"..callsiteId.."_" end
 
 
+  local delay = {}
   local finalOut = ast:visitEach(
     function(n, args)
       local inputs = {}
       local inputResDeclarations = {}
       local inputResClockedLogic = {}
-      
-      map( args, function(v,k) inputs[k]=v[1]; inputResDeclarations[k]=v[2]; inputResClockedLogic[k]=v[3]; end)
+      local thisDelay = 0
+      delay[n] = 0
+
+      map( args, function(v,k) inputResDeclarations[k]=v[2]; inputResClockedLogic[k]=v[3]; end)
 
       -- 'used' are declarations from inputs that we actually end up using
       -- 'res' are declarations from this node
@@ -384,7 +377,9 @@ local function codegen(ast, callsiteId)
       local resDeclarations = {}
       local resClockedLogic = {}
 
+      local usedInputs = {}
       local function addInput(key)
+        usedInputs[key] = 1
         for k,v in pairs(inputResDeclarations[key]) do
           if usedResDeclarationsSeen[v]==nil then
             table.insert(usedResDeclarations,v)
@@ -400,15 +395,43 @@ local function codegen(ast, callsiteId)
         end
       end
 
+      local function getInputs()
+        local maxd = foldl( math.max, 0, stripkeys(map( usedInputs, function(v,k) return delay[n[k]] end )) )
+        delay[n] = maxd
+
+        for k,_ in pairs(usedInputs) do
+          inputs[k]=args[k][1]
+          local input = n[k]
+          local delayby = maxd-delay[input]
+          for d=1,delayby do
+            for c=1,input.type:channels() do
+              -- type is determined by producer, b/c consumer op can change type
+              local decl = declareReg( input.type:baseType(), inputs[k][c].."_retime"..d, "", " // retiming "..delay[input].." to "..maxd)
+              local cl = inputs[k][c].."_retime"..d.." <= "..sel(d>1,inputs[k][c].."_retime"..(d-1),inputs[k][c]).."; // retiming\n"
+              table.insert(usedResDeclarations, decl)
+              table.insert(usedResClockedLogic, cl)
+            end
+          end
+          if delayby>0 then
+            for c=1,input.type:channels() do
+              inputs[k][c] = inputs[k][c].."_retime"..delayby
+            end
+          end
+        end
+      end
+
       local finalOut = {}
 
       for c=1,n.type:channels() do
         local res
 
         if n.kind=="binop" then
-          table.insert(resDeclarations, declareReg( n.type:baseType(), callsite..n:cname(c),"", " // binop "..n.op.." result" ))
           addInput("lhs")
           addInput("rhs")
+          getInputs()
+          thisDelay = 1
+
+          table.insert(resDeclarations, declareReg( n.type:baseType(), callsite..n:cname(c),"", " // binop "..n.op.." result" ))
 
           if n.op=="<" or n.op==">" or n.op=="<=" or n.op==">=" then
             if n.type:baseType():isBool() and n.lhs.type:baseType():isInt() and n.rhs.type:baseType():isInt() then
@@ -435,6 +458,10 @@ local function codegen(ast, callsiteId)
 
           res = callsite..n:name().."_c"..c
         elseif n.kind=="unary" then
+          addInput("expr")
+          getInputs()
+          thisDelay = 1
+
           if n.op=="abs" then
             if n.type:baseType():isInt() then
               table.insert(resDeclarations, declareReg( n.type:baseType(), callsite..n:cname(c) ))
@@ -454,6 +481,9 @@ local function codegen(ast, callsiteId)
           end
         elseif n.kind=="select" or n.kind=="vectorSelect" then
           addInput("cond"); addInput("a"); addInput("b");
+          getInputs()
+          thisDelay = 1
+
           table.insert(resDeclarations,declareReg( n.type:baseType(), callsite..n:cname(c), "", " // "..n.kind.." result" ))
           local condC = 1
           if n.kind=="vectorSelect" then condC=c end
@@ -462,6 +492,7 @@ local function codegen(ast, callsiteId)
           res = callsite..n:cname(c)
         elseif n.kind=="cast" then
           addInput("expr")
+          getInputs()
           local expr
           local cmt = " // cast "..tostring(n.expr.type).." to "..tostring(n.type)
           if n.type:isArray() and n.expr.type:isArray()==false then
@@ -490,8 +521,12 @@ local function codegen(ast, callsiteId)
           res = callsite..n:cname(c)
         elseif n.kind=="array" then
           addInput("expr"..c)
+          getInputs()
           res = inputs["expr"..c][1]
         elseif n.kind=="index" then
+          addInput("expr")
+          getInputs()
+
           local flatIdx = 0
 
           local dim = 1
@@ -502,7 +537,6 @@ local function codegen(ast, callsiteId)
             dim = dim + 1
           end
 
-          addInput("expr")
           res = inputs["expr"][flatIdx+1]
 
 --[=[          else
@@ -529,12 +563,15 @@ local function codegen(ast, callsiteId)
           table.insert(resDeclarations,"assign "..n.inst.name.."_readAddr = "..inputs.addr[1]..";\n")
           res = n.inst.name.."_readOut"
         elseif n.kind=="call" then
+          thisDelay = n.func:getDelay()
           if n.pure then
             systolic.addDefinition( n.func )
+            map(n.func.inputs, function(v,k) addInput("input"..k) end)
+            getInputs()
             
             local fndecl = {}
             table.insert(fndecl, n.func.name.." "..n:name().."(.CLK(CLK)")
-            map(n.func.inputs, function(v,k) addInput("input"..k); table.insert(fndecl, ", ."..v.name.."("..inputs["input"..k][1]..")") end)
+            map(n.func.inputs, function(v,k) table.insert(fndecl, ", ."..v.name.."("..inputs["input"..k][1]..")") end)
             
             if n.func.output~=nil then
               res = n:name().."_"..c
@@ -548,19 +585,20 @@ local function codegen(ast, callsiteId)
             resDeclarations = concat(resDeclarations, fndecl)
           else
             systolic.addDefinition( n.inst )
-            
+            if n.func:isPure()==false then addInput("valid") end
+            map( n.func.inputs, function(v,k) addInput("input"..k) end)
+            getInputs()
+
             local call_callsite = ""
             if #n.inst.callsites[n.func.name]>1 and n.func:isAccessor()==false then
               call_callsite = "C"..n.callsiteid.."_"
             end
 
             if n.func:isPure()==false then
-              addInput("valid")
               table.insert(resDeclarations, "assign "..n.inst.name.."_"..call_callsite..n.func.name.."_valid = "..inputs.valid[1]..";\n")
             end
 
             map(n.func.inputs, function(v,k) 
-                  addInput("input"..k)
                   table.insert(resDeclarations, "assign "..n.inst.name.."_"..call_callsite..v.name.." = "..inputs["input"..k][1]..";\n") end)
 
             if n.func.output~=nil then
@@ -571,14 +609,17 @@ local function codegen(ast, callsiteId)
           end
         elseif n.kind=="fndefn" then
           for id=1,n.callsites do
-            table.insert(resDeclarations,"  // function: "..n.fn.name.." callsite "..id.." delay ".."".."\n")
+            n:map( "dst", function(n,k) addInput("expr"..k) end)
+            if n.fn:isPure()==false then addInput("valid") end
+            getInputs()
+
+            table.insert(resDeclarations,"  // function: "..n.fn.name.." callsite "..id.." delay "..delay[n].."\n")
 
             local assn = 1
             while n["dst"..assn] do
               local callsite = "C"..id.."_"
               if n.callsites==1 then callsite="" end
               
-              addInput("expr"..assn)
               if n["dst"..assn].kind=="reg" and n.callsites>1 then table.insert( resDeclarations, declareWire(n["dst"..assn].type,callsite..n["dst"..assn].name,""," // callsite local destination")) end
               
               if (n.callsites>1) or n["dst"..assn].kind=="output" then
@@ -622,6 +663,7 @@ local function codegen(ast, callsiteId)
       end
 
       assert(keycount(finalOut)>0)
+      delay[n] = delay[n] + thisDelay
       return {finalOut, concat(usedResDeclarations, resDeclarations), concat(usedResClockedLogic, resClockedLogic)}
     end)
 
@@ -635,8 +677,14 @@ local function codegen(ast, callsiteId)
     finalOut = finalOut[1]
   end
 
-  return resDeclarations, resClockedLogic, finalOut
+  return resDeclarations, resClockedLogic, finalOut, delay[ast]
 end
+
+function systolicFunctionFunctions:getDelay()
+  local _,_,_,delay = codegen(self:lower({"LOL"}),1)
+  return delay
+end
+
 
 -- some functions don't modify state. These do not need a valid bit
 function systolicFunctionFunctions:isPure()

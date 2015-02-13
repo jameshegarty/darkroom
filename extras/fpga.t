@@ -22,7 +22,7 @@ function fpga.codegenKernel( kernel, inputLinebufferFifos, imageWidth, imageHeig
       if node.kind=="load" then
         return systolic.index( datasourceToInput[node.from], {inputs.relX, inputs.relY})
       elseif node.kind=="crop" then
-        local cond = systolic.__or(systolic.ge(x:read()-systolic.cast(node.shiftX,int16),systolic.cast(imageWidth,int16)),systolic.ge(y:read()-systolic.cast(node.shiftY,int16),systolic.cast(imageWidth,int16)))
+        local cond = systolic.__or(systolic.ge(x:read()-systolic.cast(node.shiftX,int16),systolic.cast(imageWidth,int16)),systolic.ge(y:read()-systolic.cast(node.shiftY,int16),systolic.cast(imageHeight,int16)))
         assert(systolicAST.isSystolicAST(cond))
         assert(systolicAST.isSystolicAST(inputs.expr))
         return systolic.select(cond , systolic.cast(0,inputs.expr.type), inputs.expr )

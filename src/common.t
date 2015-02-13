@@ -446,6 +446,9 @@ function foldl( fn, base, t )
   assert(type(fn)=="function")
   assert(type(t)=="table")
   assert(#t==keycount(t))
+  
+  if #t==0 then return base end
+
   assert(type(base)==type(t[1]))
 
   local res = base
