@@ -727,36 +727,6 @@ function systolicFunctionFunctions:lower(callsites)
   return systolicAST.new(node):copyMetadataFrom(node.expr1)
 end
 
-function systolicFunctionFunctions:getDefinition(callsites)
-  assert(self.pure)
-  local t = {}
-
-    table.insert(t,"module "..self.name.."(input CLK")
-    map(self.inputs, function(v) table.insert(t, ", "..declarePort(v.type, v.name, true)) end)
-    if systolicInstance.isSystolicInstance(self.output) then
-      table.insert(t, ", "..declarePort(self.output.type, self.output.name, false))
-    elseif type(self.outputs)=="table" then 
-      map(self.outputs, function(v) table.insert(t, ", "..declarePort(v.type, v.varname, false)) end) 
-    end
-    table.insert(t,");\n")
-    callsites={"LOL"}
-
-    -- pure functions must have inputs and outputs or it doesn't make sense
-    if keycount(self.inputs)==0 then
-      print("Error, pure function must have inputs, function ",self.name)
-      assert(false)
-    end
-
-    assert(systolicInstance.isSystolicInstance(self.output))
-
-    t = concat( t, self:lower(callsites):toVerilog({},{self}) )
-  table.insert(t,"endmodule\n\n")
-
-  return t
-end
-
-
-
 local function binop(lhs, rhs, op)
   lhs = convert(lhs)
   rhs = convert(rhs)

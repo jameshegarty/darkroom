@@ -36,10 +36,11 @@ function fpga.codegenKernel( kernel, inputLinebufferFifos, imageWidth, imageHeig
     end)
 
   local out = systolic.output( "out", kernel.kernel.type )
-  local kernelFn = systolic.makeFunction( kernel:name(), moduleInputs, out )
+  local kernelModule = systolic.module( kernel:name() )
+  local kernelFn = kernelModule:addFunction( "process", moduleInputs, out )
   kernelFn:addAssign( out, systolicFn )
 
-  return kernelFn
+  return kernelModule
 end
 
 function fpga.allocateLinebuffers( kernelGraph, options, pipeline, pipelineMain, moduleInputs, validIn )
@@ -159,12 +160,14 @@ function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffe
   kernelGraph:visitEach(
     function(node, inputArgs)
       if node.kernel~=nil then
-        local kernelFunction = fpga.codegenKernel( node, inputLinebufferFifos[node], imageWidth, imageHeight )
+        local kernelModule = fpga.codegenKernel( node, inputLinebufferFifos[node], imageWidth, imageHeight )
+        local kernelModuleInst = kernelModule:instantiate(node:name())
+        pipeline:add( kernelModuleInst )
         local xygen = fpga.modules.xygen(imageWidth, imageHeight ):instantiate("xygen_"..node:name())
         pipeline:add(xygen)
         local kernelArgs = {x=xygen:x(), y=xygen:y()}
         map( inputLinebufferFifos[node], function(v) kernelArgs[v.key] = v.inst:popFront() end )
-        local kernelCall = kernelFunction( kernelArgs )
+        local kernelCall = kernelModuleInst:process( kernelArgs )
         local fifoReady = mapToArray(map(inputLinebufferFifos[node], function(n) return n.inst:ready() end))
         local allFifosReady = foldt( fifoReady, function(a,b) if b==nil then return a else return systolic.__and(a,b) end end)
         assert(systolicAST.isSystolicAST(allFifosReady))
