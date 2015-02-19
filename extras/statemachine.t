@@ -72,7 +72,13 @@ function stateMachineModuleFunctions:toVerilog()
       t = concat(t,launchstat)
     elseif v.kind=="assign" then
       table.insert(t," // assign\n")
-      local exprstat, exprvar = v.expr:toVerilog({valid=true},{self})
+      local exprstat, exprvar,_,totalDelay = v.expr:toVerilog({valid=true},{self})
+
+      if totalDelay~=0 then
+        print("Assignment has nonzero delay ",totalDelay,"dst",v.dst.name)
+        assert(false)
+      end
+
       t = concat(t,exprstat)
       
       if v.dst.kind=="output" then

@@ -246,7 +246,7 @@ local function checkArgList( fn, args, calltable )
                  end)
   
   if correct==false then
-    print("Error, pure function call incorrect argument type")
+    print("Error, pure function call incorrect argument type, function", fn.name,"module",fn.module.name)
     print("Expected:")
     map(fn.inputs,function(v,k) print(v.name..":"..tostring(v.type)) end)
     print("Actual:")
@@ -299,7 +299,7 @@ function systolic.makeFunction(name, inputs, output, valid)
   return setmetatable(t,systolicFunctionMT)
 end
 
-function systolicModuleFunctions:addFunction( name, inputs, output )
+function systolicModuleFunctions:addFunction( name, inputs, output, options )
   assert(type(name)=="string")
 
   local valid = systolic.input(name.."_valid", darkroom.type.bool())
@@ -314,6 +314,13 @@ function systolicModuleFunctions:addFunction( name, inputs, output )
   self.functions[fn.name]=fn
   fn.pure = false
   fn.module = self
+
+  if options~=nil and options.pipeline~=nil and options.pipeline==false then 
+    fn.pipeline = false 
+  else
+    fn.pipeline = true
+  end
+
   return fn
 end
 
@@ -415,6 +422,18 @@ local function codegen(ast, callsiteId)
 
       local finalOut = {}
 
+      local function addstat( pipeline, dst, expr )
+        assert(type(pipeline)=="boolean")
+        assert(type(dst)=="string")
+        assert(type(expr)=="string")
+        
+        if pipeline then
+          table.insert(resClockedLogic, dst.." <= "..expr)
+        else
+          table.insert(resDeclarations, "assign "..dst.." = "..expr)
+        end
+      end
+
       for c=1,n.type:channels() do
         local res
 
@@ -422,15 +441,20 @@ local function codegen(ast, callsiteId)
           addInput("lhs")
           addInput("rhs")
           getInputs()
-          thisDelay = 1
 
-          table.insert(resDeclarations, declareReg( n.type:baseType(), callsite..n:cname(c),"", " // binop "..n.op.." result" ))
+          if n.pipeline then
+            thisDelay = 1
+            table.insert(resDeclarations, declareReg( n.type:baseType(), callsite..n:cname(c),"", " // binop "..n.op.." result" ))
+          else
+            thisDelay = 0
+            table.insert(resDeclarations, declareWire( n.type:baseType(), callsite..n:cname(c),"", " // binop "..n.op.." result" ))
+          end
 
           if n.op=="<" or n.op==">" or n.op=="<=" or n.op==">=" then
             if n.type:baseType():isBool() and n.lhs.type:baseType():isInt() and n.rhs.type:baseType():isInt() then
-              table.insert(resClockedLogic, callsite..n:name().."_c"..c.." <= ($signed("..inputs.lhs[c]..")"..n.op.."$signed("..inputs.rhs[c].."));\n")
+              addstat( n.pipeline, callsite..n:name().."_c"..c, "($signed("..inputs.lhs[c]..")"..n.op.."$signed("..inputs.rhs[c].."));\n")
             elseif n.type:baseType():isBool() and n.lhs.type:baseType():isUint() and n.rhs.type:baseType():isUint() then
-              table.insert(resClockedLogic, callsite..n:name().."_c"..c.." <= (("..inputs.lhs[c]..")"..n.op.."("..inputs.rhs[c].."));\n")
+              addstat( n.pipeline, callsite..n:name().."_c"..c, "(("..inputs.lhs[c]..")"..n.op.."("..inputs.rhs[c].."));\n")
             else
               print( n.type:baseType():isBool() , n.lhs.type:baseType():isInt() , n.rhs.type:baseType():isInt(),n.type:baseType():isBool() , n.lhs.type:baseType():isUint() , n.rhs.type:baseType():isUint())
               assert(false)
@@ -438,7 +462,7 @@ local function codegen(ast, callsiteId)
           elseif n.type:isBool() then
             local op = binopToVerilogBoolean[n.op]
             if type(op)~="string" then print("OP_BOOLEAN",n.op); assert(false) end
-            table.insert(resClockedLogic, callsite..n:name().."_c"..c.." <= "..inputs.lhs[c]..op..inputs.rhs[c]..";\n")
+            addstat(n.pipeline, callsite..n:name().."_c"..c, inputs.lhs[c]..op..inputs.rhs[c]..";\n")
           else
             local op = binopToVerilog[n.op]
             if type(op)~="string" then print("OP",n.op); assert(false) end
@@ -446,7 +470,7 @@ local function codegen(ast, callsiteId)
             if n.lhs.type:baseType():isInt() then lhs = "$signed("..lhs..")" end
             local rhs = inputs.rhs[c]
             if n.rhs.type:baseType():isInt() then rhs = "$signed("..rhs..")" end
-            table.insert(resClockedLogic, callsite..n:name().."_c"..c.." <= "..lhs..op..rhs..";\n")
+            addstat( n.pipeline, callsite..n:name().."_c"..c, lhs..op..rhs..";\n")
           end
 
           res = callsite..n:name().."_c"..c
@@ -572,7 +596,13 @@ local function codegen(ast, callsiteId)
           table.insert(resDeclarations,"assign "..n.inst.name.."_readAddr = "..inputs.addr[1]..";\n")
           res = n.inst.name.."_readOut"
         elseif n.kind=="call" then
+
           thisDelay = n.inst:getDelay(n.func)
+
+          if n.pipeline==false and thisDelay>0 then
+            print("Error, calling pipelined function ",n.func.name," in a section of code w/ pipeling disabled, module",n.inst.name)
+            assert(false)
+          end
 
           systolic.addDefinition( n.inst )
           if n.func:isPure()==false then addInput("valid") end
@@ -650,6 +680,11 @@ local function codegen(ast, callsiteId)
           res = "__ERR_NULL_MODULE"
         else
           print(n.kind)
+          assert(false)
+        end
+
+        if n.pipeline==false and thisDelay>0 then
+          print("Error, something that shouldn't be pipelined is! kind ",n.kind)
           assert(false)
         end
 
@@ -733,7 +768,12 @@ function systolicInstanceFunctions:lower()
         if fn.output~=nil and assn.dst==fn.output then 
           drivenOutput = true 
           node["dst"..cnt] = assn.dst
-          node["expr"..cnt] = assn.expr
+          if fn.pipeline then
+            node["expr"..cnt] = assn.expr
+          else
+            node["expr"..cnt] = assn.expr:disablePipelining()
+          end
+
           cnt = cnt+1
         elseif assn.dst.kind=="reg" then
           
@@ -762,7 +802,6 @@ function systolicInstanceFunctions:lower()
   -- we have to do two passes here b/c in the first part we drop in expressions that may include
   -- register reads, which we also need to tie to the correct input.
   for i=1,2 do
-    print("ROUND",i)
     for _,fn in pairs(self.module.functions) do
       if type(self.callsites[fn.name])=="table" then -- only codegen stuff we actually used
         for _,assn in pairs( fn.assignments ) do
@@ -822,8 +861,9 @@ function systolicInstanceFunctions:lower()
 
   mod:S("reg"):process(
     function(n)
-      if systolicAST.isSystolicAST(n.expr)==false then
+      if systolicAST.isSystolicAST(n.expr1)==false then
         print("ERR, reg", n.inst.name, "module", self.module.name, "is not assigned to?")
+        assert(false)
       end
     end)
 
@@ -1094,6 +1134,15 @@ function systolicASTFunctions:checkVariables(scopes)
   self:visitEach(astcheck)
 end
 
+function systolicASTFunctions:disablePipelining()
+  return self:S("*"):process(
+    function(n)
+      local nn = n:shallowcopy()
+      nn.pipeline=false
+      return systolicAST.new(nn):copyMetadataFrom(n)
+    end)
+end
+
 function systolicASTFunctions:toVerilog( options, scopes )
   assert(type(scopes)=="table" or scopes==nil)
 
@@ -1114,6 +1163,7 @@ function systolicASTFunctions:toVerilog( options, scopes )
   if options.valid~=nil then
     -- obviously, if there are any function calls in the condition, we want them to always run
     local valid = addValidBit(convert(options.valid),true)
+    valid = valid:disablePipelining()
     ast = addValidBit(ast,valid)
   end
 
@@ -1133,9 +1183,10 @@ function systolicASTFunctions:toVerilog( options, scopes )
   ast:S("fndefn"):process(
     function(n)
       fndelays[n.fn] = delays[n]
+      if n.fn.pipeline==false then assert(delays[n]==0) end
     end)
 
-  return t, finalOut, fndelays
+  return t, finalOut, fndelays, delays[ast]
 end
 
 systolicAST = {}
@@ -1150,6 +1201,7 @@ function systolicAST.new(tab)
   if tab.scaleN2==nil then tab.scaleN2=0 end
   if tab.scaleD2==nil then tab.scaleD2=0 end
   assert(darkroom.type.isType(tab.type))
+  if tab.pipeline==nil then tab.pipeline=true end
   darkroom.IR.new(tab)
   return setmetatable(tab,systolicASTMT)
 end

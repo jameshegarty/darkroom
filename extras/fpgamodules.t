@@ -469,14 +469,13 @@ function modules.linebuffer(maxdelayX, maxdelayY, datatype, stripWidth, consumer
   return name, t
 end
 
-function modules.linebuffer(maxDelayX, maxDelayY, datatype, stripWidth)
+function modules.linebuffer( maxDelayX, maxDelayY, datatype, stripWidth )
   assert(type(maxDelayX)=="number")
   assert(type(maxDelayY)=="number")
   assert(maxDelayX>=0)
   assert(maxDelayY>=0)
   assert(darkroom.type.isType(datatype))
 
-  local O = systolic.output("out", darkroom.type.array(datatype,{maxDelayX+1,maxDelayY+1}))
   local OR = {}
   local BRAM = {}
   local writeAddr = systolic.reg("writeAddr", uint16, 0)
@@ -520,7 +519,8 @@ function modules.linebuffer(maxDelayX, maxDelayY, datatype, stripWidth)
 
   do -- load
     local strideX = systolic.input("strideX",uint8)
-    local loadFn = lb:addFunction("load",{},O)
+    local Output = systolic.output("out", darkroom.type.array(datatype,{maxDelayX+1,maxDelayY+1}))
+    local loadFn = lb:addFunction("load",{},Output)
     loadFn:addAssignBy( "sum", readAddr, systolic.cast(1,uint16) )
     loadFn:addAssert(writeAddr==readAddr)
 
@@ -530,13 +530,13 @@ function modules.linebuffer(maxDelayX, maxDelayY, datatype, stripWidth)
         table.insert(Oflat, OR[y][x]:read())
       end
     end
-    loadFn:addAssign(O,systolic.array(Oflat))
+    loadFn:addAssign(Output,systolic.array(Oflat))
   end
 
 
   -- ready
   local readyres = systolic.output("isReady", darkroom.type.bool() )
-  local readyFn = lb:addFunction("ready",{},readyres)
+  local readyFn = lb:addFunction("ready",{},readyres,{pipeline=false})
   readyFn:addAssign( readyres, systolic.gt(writeAddr:read(),readAddr:read()) )
 
   return lb
