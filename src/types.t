@@ -582,7 +582,7 @@ function TypeFunctions:toTerraType(pointer, vectorN)
   elseif self:isArray() then
     ttype = self:arrayOver():toTerraType( pointer, vectorN )[self:channels()]
   else
-    print(darkroom.type.typeToString(_type))
+    print(self)
     print(debug.traceback())
     assert(false)
   end

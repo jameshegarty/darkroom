@@ -502,7 +502,7 @@ function modules.linebuffer(maxDelayX, maxDelayY, datatype, stripWidth)
   do -- store
     local I = systolic.input( "indata", datatype )
     local storeFn = lb:addFunction("store",{I},nil)
-    storeFn:addAssign(writeAddr,writeAddr:read()+systolic.cast(1,uint16))
+    storeFn:addAssignBy( "sum", writeAddr, systolic.cast(1,uint16) )
 
     for y=-maxDelayY,0 do
       for x=-maxDelayX,0 do
@@ -521,7 +521,7 @@ function modules.linebuffer(maxDelayX, maxDelayY, datatype, stripWidth)
   do -- load
     local strideX = systolic.input("strideX",uint8)
     local loadFn = lb:addFunction("load",{},O)
-    loadFn:addAssign(readAddr, readAddr:read()+systolic.cast(1,uint16))
+    loadFn:addAssignBy( "sum", readAddr, systolic.cast(1,uint16) )
     loadFn:addAssert(writeAddr==readAddr)
 
     local Oflat = {}
@@ -557,7 +557,7 @@ function modules.fifo(ty)
   local flatinputs = systolic.cast( input:read(), darkroom.type.array( ty:baseType(), {ty:channels()} ) )
   local pushBack = fifo:addFunction("pushBack",{input},nil)
   pushBack:addAssert( systolic.lt(writeAddr:read() - readAddr:read(), 128), "attempting to push to a full fifo" )
-  pushBack:addAssign( writeAddr, writeAddr:read() + 1)
+  pushBack:addAssignBy( "sum", writeAddr, systolic.cast(1, uint16) )
   for c=1,ty:channels()-1 do
     for b=1,bits do
       pushBack:writeRam128( rams[(c-1)*bits+(b-1)+1], writeAddr, systolic.index(systolic.index(input,{c-1}),{b-1}) )
@@ -568,7 +568,7 @@ function modules.fifo(ty)
   local out = systolic.output("outdata", ty)
   local popFront = fifo:addFunction("popFront",{},out)
   popFront:addAssert( writeAddr ~= readAddr, "attempting to pop from an empty fifo" )
-  popFront:addAssign( readAddr, readAddr:read() + 1)
+  popFront:addAssignBy( "sum", readAddr, systolic.cast(1,uint16) )
   popFront:addAssign( out, systolic.array( map( range(ty:channels()), function(c)
     return systolic.cast(systolic.array(map( range(bits), 
       function(b) 
@@ -623,8 +623,8 @@ function modules.xygen(W,H)
   local xout = systolic.output("xout", int16 )
   local x = xygen:addFunction("x",{},xout)
   x:addAssign(xout, xreg:read())
-  x:addAssign(xreg, systolic.select(systolic.eq(xreg:read(),systolic.cast(W,int16)),systolic.cast(0,int16),xreg:read()+systolic.cast(1,int16)))
-  x:addAssign(yreg, systolic.select(systolic.eq(xreg:read(),systolic.cast(W,int16)),yreg:read()+systolic.cast(1,int16),yreg:read()))
+  x:addAssignBy( "sumwrap", xreg, systolic.cast(1,int16), systolic.cast(W,int16) )
+  x:addAssignBy( "sum", yreg, systolic.select(systolic.eq(xreg:read(),systolic.cast(W,int16)), systolic.cast(1,int16), systolic.cast(0,int16)) )
 
   -- y fn
   local yout = systolic.output("yout", int16 )

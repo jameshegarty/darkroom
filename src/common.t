@@ -237,13 +237,6 @@ terra downToNearestTerra(roundto:int,x:int)
   return ox
 end
 
--- a hack to have assert print a traceback
-local oldassert = assert
-function assert(x)
-  if x==false then print(debug.traceback()) end
-  oldassert(x)
-end
-
 local Ctmp = terralib.includecstring [[
 #include <stdio.h>
 #include <stdlib.h>
