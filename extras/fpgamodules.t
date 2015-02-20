@@ -588,7 +588,7 @@ modules.fifo = memoize(modules.fifo)
 function modules.fifonoop(ty)
   assert(darkroom.type.isType(ty))
 
-  local fifo = systolic.module("fifo")
+  local fifo = systolic.module("fifo_"..sanitize(tostring(ty)))
   local reg = fifo:add(systolic.reg("data", ty))
   local hasData = fifo:add(systolic.reg("hasData", darkroom.type.bool(), false))
 
@@ -857,7 +857,7 @@ table.insert( res, [=[       end else begin
            $fwrite(fileout, "%c", pipelineOutput[i*8+:8]); 
            i = i + 1;
          end
-         $display("outvalid %d",outputPixelsSeen);
+//         $display("outvalid %d",outputPixelsSeen);
          outputPixelsSeen = outputPixelsSeen + 1;
        end
 

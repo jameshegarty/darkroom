@@ -350,10 +350,9 @@ end
 function index(t,idx)
   assert(type(t)=="table")
   assert(type(idx)=="table")
-  
   local T = t
   for k,v in ipairs(idx) do
-    T = T[k]
+    T = T[v]
     if type(T)~="table" then return nil end
   end
   return T

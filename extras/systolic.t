@@ -5,6 +5,13 @@ systolicModuleMT={__index=systolicModuleFunctions}
 
 systolicInstanceFunctions = {}
 
+function sanitize(s)
+  s = s:gsub("%[","_")
+  s = s:gsub("%]","_")
+  s = s:gsub("%,","_")
+  return s
+end
+
 local function typecheck(ast)
   assert(darkroom.ast.isAST(ast))
 
@@ -121,8 +128,15 @@ function pointerToVarname(x)
   return tostring(x):sub(10)
 end
 
+local __usedModuleNames = {}
 function systolic.module(name)
   assert(type(name)=="string")
+  if __usedModuleNames[name]~=nil then
+    print("Module name ",name, "already used")
+    assert(false)
+  end
+
+  __usedModuleNames[name]=1
   local t = {name=name,instances={},functions={}, instanceMap={}, usedInstanceNames = {}}
   return setmetatable(t,systolicModuleMT)
 end
@@ -405,7 +419,8 @@ local function codegen(ast, callsiteId)
             for c=1,input.type:channels() do
               -- type is determined by producer, b/c consumer op can change type
               if input.type~=darkroom.type.null() then
-                local decl = declareReg( input.type:baseType(), inputs[k][c].."_retime"..d, "", " // retiming "..delay[input].." to "..maxd)
+--                local decl = declareReg( input.type:baseType(), inputs[k][c].."_retime"..d, "", " // retiming "..delay[input].." to "..maxd)
+                local decl = declareReg( input.type:baseType(), inputs[k][c].."_retime"..d, "")
                 local cl = inputs[k][c].."_retime"..d.." <= "..sel(d>1,inputs[k][c].."_retime"..(d-1),inputs[k][c]).."; // retiming\n"
                 table.insert(usedResDeclarations, decl)
                 table.insert(usedResClockedLogic, cl)
@@ -628,17 +643,20 @@ local function codegen(ast, callsiteId)
           end
 
         elseif n.kind=="fndefn" then
-          for id=1,n.callsites do
+          local callsitecnt = n.callsites
+          if n.fn:isAccessor() then callsitecnt=1 end
+
+          for id=1,callsitecnt do
             n:map( "dst", function(n,k) addInput("expr"..k) end)
             if n.fn:isPure()==false then addInput("valid") end
             getInputs()
 
-            table.insert(resDeclarations,"  // function: "..n.fn.name.." callsite "..id.." delay "..delay[n].."\n")
+            table.insert(resDeclarations,"  // function: "..n.fn.name.." callsite "..id.." delay "..delay[n]..", pure="..tostring(n.fn:isPure())..", accessor="..tostring(n.fn:isAccessor()).."\n")
 
             local assn = 1
             while n["dst"..assn] do
               local callsite = "C"..id.."_"
-              if n.callsites==1 then callsite="" end
+              if n.callsites==1 or n.fn:isAccessor() then callsite="" end
               
               if n["dst"..assn].kind=="reg" and n.callsites>1 then table.insert( resDeclarations, declareWire(n["dst"..assn].type,callsite..n["dst"..assn].name,""," // callsite local destination")) end
               
@@ -649,7 +667,7 @@ local function codegen(ast, callsiteId)
             end
           end
 
-          if n.callsites>1 then
+          if callsitecnt>1 then
             table.insert(resDeclarations," // merge: "..n.fn.name.."\n")
             for id=1,n.callsites do
               local assn = 1
@@ -847,8 +865,8 @@ function systolicInstanceFunctions:lower()
               end)
             
             if regFound==false then
-              print("Error, register ",assn.dst.name,"is never read from. bug?")
-              assert(false)
+              print("Error, register ",assn.dst.name,"function",fn.name,"is never read from. bug?")
+--              assert(false)
             end
           else
             assert(false)
@@ -873,7 +891,12 @@ end
 local function binop(lhs, rhs, op)
   lhs = convert(lhs)
   rhs = convert(rhs)
-  return typecheck(darkroom.ast.new({kind="binop",op=op,lhs=lhs,rhs=rhs,type=lhs.type}):copyMetadataFrom(lhs))
+  return typecheck(darkroom.ast.new({kind="binop",op=op,lhs=lhs,rhs=rhs}):copyMetadataFrom(lhs))
+end
+
+local function unary(expr, op)
+  expr = convert(expr)
+  return typecheck(darkroom.ast.new({kind="unary",op=op,expr=expr}):copyMetadataFrom(expr))
 end
 
 systolic._callsites = {}
@@ -910,19 +933,21 @@ RAM128X1D ]]..self.name..[[  (
     local arglist = {}
     
     for fnname,fn in pairs(self.module.functions) do
-      local callsitecnt = #self.callsites[fnname]
-      if fn:isAccessor() then callsitecnt=1 end
-
-      for id=1,callsitecnt do
-        local callsite = "C"..id.."_"
-        if #self.callsites[fnname]==1 or fn:isAccessor() then callsite="" end
-        table.insert(wires,"wire "..self.name.."_"..callsite..fnname.."_valid;\n")
-        if fn:isPure()==false then table.insert(arglist,", ."..callsite..fnname.."_valid("..self.name.."_"..callsite..fnname.."_valid)") end
-        map(fn.inputs, function(v) table.insert(wires,declareWire( v.type, self.name.."_"..callsite..v.name )); table.insert(arglist,", ."..v.name..callsite.."("..self.name.."_"..callsite..v.name..")") end)
-
-        if fn.output~=nil then
-          table.insert(wires, declareWire( fn.output.type, self.name.."_"..callsite..fn.output.name))
-          table.insert(arglist,", ."..callsite..fn.output.name.."("..self.name.."_"..callsite..fn.output.name..")")
+      if self.callsites[fnname]~=nil then
+        local callsitecnt = #self.callsites[fnname]
+        if fn:isAccessor() then callsitecnt=1 end
+        
+        for id=1,callsitecnt do
+          local callsite = "C"..id.."_"
+          if #self.callsites[fnname]==1 or fn:isAccessor() then callsite="" end
+          table.insert(wires,"wire "..self.name.."_"..callsite..fnname.."_valid;\n")
+          if fn:isPure()==false then table.insert(arglist,", ."..callsite..fnname.."_valid("..self.name.."_"..callsite..fnname.."_valid)") end
+          map(fn.inputs, function(v) table.insert(wires,declareWire( v.type, self.name.."_"..callsite..v.name )); table.insert(arglist,", ."..v.name..callsite.."("..self.name.."_"..callsite..v.name..")") end)
+          
+          if fn.output~=nil then
+            table.insert(wires, declareWire( fn.output.type, self.name.."_"..callsite..fn.output.name))
+            table.insert(arglist,", ."..callsite..fn.output.name.."("..self.name.."_"..callsite..fn.output.name..")")
+          end
         end
       end
     end
@@ -937,9 +962,13 @@ function systolicInstanceFunctions:getDefinitionKey()
   assert(self.kind=="module")
   local key = self.module.name
   for k,v in pairs(sort(stripkeys(invertTable(self.module.functions)))) do
-    local callsitecnt = #self.callsites[v]
-    if self.module.functions[v]:isAccessor() then callsitecnt=1 end
-    key = key.."_"..v..callsitecnt
+    if self.callsites[v]~=nil then
+      local callsitecnt = #self.callsites[v]
+      if self.module.functions[v]:isAccessor() then callsitecnt=1 end
+      key = key.."_"..v..callsitecnt
+    else
+      key = key.."_"..v.."0"
+    end
   end
   return key
 end
@@ -950,23 +979,25 @@ function systolicInstanceFunctions:getDefinition()
 
   table.insert(t,"module "..self:getDefinitionKey().."(input CLK")
   
-  for fnname,v in pairs(self.callsites) do
+  for fnname,fn in pairs(self.module.functions) do
+    if self.callsites[fnname]~=nil then
+      local callsitecnt = #self.callsites[fnname]
+      if fn:isAccessor() then callsitecnt=1 end
 
-    for id,vv in pairs(v) do
-      local fn = self.module.functions[fnname]
-      assert(fn~=nil)
-      
-      local callsite = "C"..id.."_"
-      if #self.callsites[fnname]==1 then callsite="" end
-
-      if fn:isPure()==false then table.insert(t,", input "..callsite..fnname.."_valid") end
-      
-      for _,input in pairs(fn.inputs) do
-        table.insert(t,", input ["..(input.type:sizeof()*8-1)..":0] "..callsite..input.name)
-      end
-      
-      if fn.output~=nil then
-        table.insert(t,", "..declarePort(fn.output.type,callsite..fn.output.name,false))
+      for id=1,callsitecnt do
+        
+        local callsite = "C"..id.."_"
+        if #self.callsites[fnname]==1 or fn:isAccessor() then callsite="" end
+        
+        if fn:isPure()==false then table.insert(t,", input "..callsite..fnname.."_valid") end
+        
+        for _,input in pairs(fn.inputs) do
+          table.insert(t,", input ["..(input.type:sizeof()*8-1)..":0] "..callsite..input.name)
+        end
+        
+        if fn.output~=nil then
+          table.insert(t,", "..declarePort(fn.output.type,callsite..fn.output.name,false))
+        end
       end
     end
   end
@@ -1087,6 +1118,7 @@ function systolic.ge(lhs, rhs) return binop(lhs,rhs,">=") end
 function systolic.gt(lhs, rhs) return binop(lhs,rhs,">") end
 function systolic.__or(lhs, rhs) return binop(lhs,rhs,"or") end
 function systolic.__and(lhs, rhs) return binop(lhs,rhs,"and") end
+function systolic.neg(expr) return unary(expr,"-") end
 
 function systolicASTFunctions:cname(c)
   return self:name().."_c"..c
