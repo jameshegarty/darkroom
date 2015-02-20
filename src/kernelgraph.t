@@ -63,6 +63,21 @@ function kernelGraphFunctions:bufferSize(root, HWWidth)
   return bufferSize
 end
 
+function kernelGraphFunctions:bufferSize2d(root)
+  local x,y = 0,0
+  for v,_ in self:parents(root) do
+    local nx = -v:minUse(1,self)
+    local ny = -v:minUse(2,self)
+    assert(v:maxUse(1,self)<=0)
+    assert(v:maxUse(2,self)<=0)
+    x=math.max(x,nx)
+    y=math.max(y,ny)
+  end
+  return x,y
+end
+
+function kernelGraphFunctions:isOutput(root) for v,k in self:parents(root) do if v.kernel==nil then return true end return false end end
+
 function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
   assert(darkroom.typedAST.isTypedAST(typedAST))
   assert(type(options)=="table")
@@ -90,6 +105,17 @@ function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
   end
 
   local largestEffectiveCycles = 1
+
+  local inputKernelGraphNodes = {}
+  local function getInput( id, ty )
+    assert(type(id)=="number")
+    assert(darkroom.type.isType(ty))
+    if inputKernelGraphNodes[id]==nil then
+      -- fill in a fake kernel to keep up the illusion that this is a regular image
+      inputKernelGraphNodes[id] = darkroom.kernelGraph.new({isInputImage=id,kernel={type=ty,scaleN2=1,scaleD2=1,scaleN1=1,scaleD1=1}}):setLinenumber(0):setFilename(""):setOffset(0)
+    end
+    return inputKernelGraphNodes[id]
+  end
 
   -- We do this with a traverse instead of a process b/c we're converting
   -- from one type of AST to another
@@ -133,6 +159,22 @@ function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
         function(n)
           assert(n._input.kind=="load")
           return darkroom.typedAST.new({kind="load",from=n._input.from,type=n.type,relX=n.x,relY=n.y, scaleN1=n.scaleN1, scaleD1=n.scaleD1, scaleN2=n.scaleN2, scaleD2=n.scaleD2, maxX=n.maxX, minX=n.minX, maxY=n.maxY, minY=n.minY}):copyMetadataFrom(n)
+        end)
+
+      -- we want to add input images as inputs as well
+      local addedInputs = {}
+      kernel = kernel:S("load"):process(
+        function(n)
+          if type(n.from)=="number" and addedInputs[n.from]==nil then
+            newnode["child"..childCount] = getInput(n.from, n.type)
+            childCount = childCount + 1
+            addedInputs[n.from] = 1
+          end
+          if type(n.from)=="number" then
+            local nn = n:shallowcopy()
+            nn.from = getInput(n.from, n.type)
+            return darkroom.typedAST.new(nn):copyMetadataFrom(n)
+          end
         end)
 
       -- we do this typechecking here, b/c cycle delay depends on how we split up the kernels

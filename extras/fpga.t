@@ -60,13 +60,26 @@ function fpga.allocateLinebuffers( kernelGraph, options, pipeline, pipelineMain,
   local outputLinebuffers = {}
 
   local inputFifos = {}
+  local outputFifos = {}
   local function allocateALinebuffer( src, kind )
     assert(type(kind)=="string")
 
     local key
     if type(src)=="number" then
       key = "input"..src
+
       if inputFifos[src]==nil then
+        local input = moduleInputs[src]
+        local fifo = fpga.modules.fifo( input.type ):instantiate("fifo_input"..src)
+        inputFifos[src] = fifo
+        pipeline:add(fifo)
+        pipelineMain:addIfLaunch( validIn:read(), fifo:pushBack({indata=input:read()}) )
+      end
+      return inputFifos[src], key
+    elseif src:isOutput(kernelGraph) then
+      key = "output"..src
+
+      if outputFifos[src]==nil then
         local input = moduleInputs[src]
         local fifo = fpga.modules.fifo( input.type ):instantiate("fifo_input"..src)
         inputFifos[src] = fifo
@@ -77,14 +90,14 @@ function fpga.allocateLinebuffers( kernelGraph, options, pipeline, pipelineMain,
     elseif darkroom.kernelGraph.isKernelGraph(src) then
       key = src:name().."_regular"
       if outputLinebuffers[src][key]==nil then
-        assert(src:maxUse(1)<=0)
-        assert(src:maxUse(2)<=0)
-        outputLinebuffers[src][key] = fpga.modules.linebuffer( -src:minUse(1), -src:minUse(2), src.kernel.type, options.stripWidth):instantiate("linebuffer_"..key)
+        local bx, by = src:bufferSize2d( kernelGraph )
+        print("LB SRC",src:name(),bx,by)
+        outputLinebuffers[src][key] = fpga.modules.linebuffer( bx, by, src.kernel.type, options.stripWidth):instantiate("linebuffer_"..key)
         pipeline:add(outputLinebuffers[src][key])
       end
       return outputLinebuffers[src][key], key
     else
-        assert(false)
+      assert(false)
     end
   end
 
@@ -95,13 +108,15 @@ function fpga.allocateLinebuffers( kernelGraph, options, pipeline, pipelineMain,
     assert( systolicInstance.isSystolicInstance( LB ) )
 
     if regularInputLinebuffers[dst][src]==nil then
-      if type(src)=="number" then
+      if type(src)=="number" or src:isOutput(kernelGraph) then
         -- this is already a fifo
         regularInputLinebuffers[dst][src] = {inst=LB,key=key,type=moduleInputs[src].type}
       else
         local lowX, lowY = 0,0
-        if dst.kernel~=nil then lowX, lowY = src:minUse(1, dst), src:minUse(2, dst) end
-        local ty = darkroom.type.array( src.kernel.type, {-lowX+1,-lowY+1} )
+        print("SRC",src:name())
+        if src.kernel~=nil then lowX, lowY = src:bufferSize2d( kernelGraph ) end
+        print("SRC",src:name(),"TO",dst:name(),lowX,lowY)
+        local ty = darkroom.type.array( src.kernel.type, {lowX+1,lowY+1} )
         local fifo = fpga.modules.fifo( ty ):instantiate("fifo_"..key.."_to_"..dst:name())
         pipeline:add(fifo)
         pipelineMain:addIfLaunch( LB:ready() , fifo:pushBack( {indata=LB:load()} ) )
@@ -127,6 +142,7 @@ function fpga.allocateLinebuffers( kernelGraph, options, pipeline, pipelineMain,
             addFifo( v.from, node, key, LB )
           end)
       else
+        -- this is the output node
         for k,v in node:inputs() do
           local LB, key = allocateALinebuffer( v, "regular" )
           addFifo( v, node, key, LB )

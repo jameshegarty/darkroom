@@ -84,7 +84,7 @@ function shift(graph, shifts, largestScaleY, HWWidth)
 
   local newGraph = graph:S("*"):process(
     function(kernelGraphNode, orig)
-      if kernelGraphNode.kernel~=nil then
+      if kernelGraphNode.kernel~=nil and kernelGraphNode.isInputImage==nil then
         local newKernelGraphNode = kernelGraphNode:shallowcopy()
         
         -- eliminate transforms
@@ -152,7 +152,8 @@ function shift(graph, shifts, largestScaleY, HWWidth)
           function(nn)
             if nn.kind=="load" then
 
-              if type(nn.from)=="table" then
+              -- only apply shift to calculated images. Input images are read a different way
+              if nn.from.isInputImage==nil then
                 local r = nn:shallowcopy()
                 
                 if type(HWWidth)=="number" then
@@ -190,7 +191,7 @@ function shift(graph, shifts, largestScaleY, HWWidth)
                   end
                 end
 
-                if type(nn.from)=="table" then r.from = oldToNewRemap[nn.from]; assert(r.from~=nil) end
+                if nn.from.isInputImage==nil then r.from = oldToNewRemap[nn.from]; assert(r.from~=nil) end
 
                 return darkroom.typedAST.new(r):copyMetadataFrom(nn)
               end

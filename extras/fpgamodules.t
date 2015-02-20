@@ -481,7 +481,8 @@ function modules.linebuffer( maxDelayX, maxDelayY, datatype, stripWidth )
   local writeAddr = systolic.reg("writeAddr", uint16, 0)
   local readAddr = systolic.reg("readAddr", uint16, 0)
 
-  local lb = systolic.module("Linebuffer_"..numToVarname(maxDelayX).."delayX_"..numToVarname(maxDelayY).."delayY_"..datatype:sizeof().."bpp_"..stripWidth.."w_"..lbCnt)
+  local modname = "Linebuffer_"..numToVarname(maxDelayX).."delayX_"..numToVarname(maxDelayY).."delayY_"..datatype:sizeof().."bpp_"..stripWidth.."w_"..lbCnt
+  local lb = systolic.module(modname)
   lbCnt = lbCnt + 1
   lb:add(writeAddr)
   lb:add(readAddr)
@@ -511,7 +512,7 @@ function modules.linebuffer( maxDelayX, maxDelayY, datatype, stripWidth )
           local evicted = storeFn:bramWriteAndReturnOriginal(BRAM[y+1])
           storeFn:addAssign(OR[y][x],evicted)
         else
-          storeFn:addAssign(OR[y][x],OR[y][x+1])
+          storeFn:addAssign(OR[y][x],OR[y][x+1]:read())
         end
       end
     end

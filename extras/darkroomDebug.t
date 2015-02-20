@@ -522,7 +522,11 @@ end
 -- assignments: varname -> string
 function typedASTPrintPrettys(root)
   if type(root)=="number" then return tostring(root) end
-  assert(darkroom.typedAST.isTypedAST(root) or systolicAST.isSystolicAST(root))
+  if rawget(_G,"systolicAST")==nil then
+    assert(darkroom.typedAST.isTypedAST(root))
+  else
+    assert(darkroom.typedAST.isTypedAST(root) or systolicAST.isSystolicAST(root))
+  end
 
   local assignments = {}
   local res = root:visitEach(
@@ -757,7 +761,7 @@ function kernelGraphPrintPretty(root)
                    if node.kernel==nil then
                      print("(OUTPUT NODE)")
                      node:map("child",function(n) print(n:name()) end)
-                   else
+                   elseif node.isInputImage==nil then
                      print("scale: ",node.kernel.scaleN1.."/"..node.kernel.scaleD1, node.kernel.scaleN2.."/"..node.kernel.scaleD2)
                      typedASTPrintPretty(node.kernel)
                    end

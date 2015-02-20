@@ -1496,7 +1496,7 @@ function darkroom.terracompiler.codegenInnerLoop(
 
   kernelGraph:S("*"):traverse(
     function(n)
-      if n==kernelGraph then -- root is just a list of inputs
+      if n==kernelGraph or n.isInputImage~=nil then -- root is just a list of inputs, inputs are fake
 return
       end
 
@@ -1714,15 +1714,6 @@ function darkroom.terracompiler.allocateImageWrappers(
   end
 
   local inputWrappers = {}
-  local function getInputWrapper(id,type)
-    if inputWrappers[id]==nil then
-      inputWrappers[id] = {}
-      -- we don't actually care about the alignment of inputs b/c we do unaligned loads
-      for c = 1,type:channels() do inputWrappers[id][c] = newImageWrapper( channelPointer(c-1,inputImageSymbolMap[id], type:baseType():toTerraType(), options.width, options.height), type:baseType(), options.width, options.debug ,1,1,1,1, largestScaleY, false) end
-      setmetatable(inputWrappers[id],pointwiseDispatchMT)
-    end
-    return inputWrappers[id]
-  end
 
   local function parentIsOutput(node)
     for v,k in node:parents(kernelGraph) do if v==kernelGraph then return k end end
@@ -1739,16 +1730,18 @@ function darkroom.terracompiler.allocateImageWrappers(
               inputs[n][child] = outputs[child]
                      end)
 
-      if n~=kernelGraph then -- root is just a list of outputs
+      if n.isInputImage~=nil then
+        -- this node provides an input file
+        if inputWrappers[n.isInputImage]==nil then
+          inputWrappers[n.isInputImage] = {}
+          local type = n.kernel.type
+          -- we don't actually care about the alignment of inputs b/c we do unaligned loads
+          for c = 1,type:channels() do inputWrappers[n.isInputImage][c] = newImageWrapper( channelPointer(c-1,inputImageSymbolMap[n.isInputImage], type:baseType():toTerraType(), options.width, options.height), type:baseType(), options.width, options.debug ,1,1,1,1, largestScaleY, false) end
+          setmetatable(inputWrappers[n.isInputImage],pointwiseDispatchMT)
+        end
+        outputs[n] = inputWrappers[n.isInputImage]
 
-        -- if this uses any input files, we need to add those too
-        n.kernel:S("load"):traverse(
-          function(node)
-            if type(node.from)=="number" then
-              inputs[n][node.from] = getInputWrapper(node.from, node.type)
-            end
-          end)
-
+      elseif n~=kernelGraph then -- root is just a list of outputs
         -- make the output
         if parentIsOutput(n)~=nil then
           outputs[n] = {}
