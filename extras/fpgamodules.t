@@ -526,9 +526,9 @@ function modules.linebuffer( maxDelayX, maxDelayY, datatype, stripWidth )
     loadFn:addAssert(writeAddr==readAddr)
 
     local Oflat = {}
-    for y=-maxDelayY,0 do
-      for x=-maxDelayX,0 do
-        table.insert(Oflat, OR[y][x]:read())
+    for y=0,maxDelayY do
+      for x=0,maxDelayX do
+        table.insert(Oflat, OR[-y][-x]:read())
       end
     end
     loadFn:addAssign(Output,systolic.array(Oflat))

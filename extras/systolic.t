@@ -117,6 +117,19 @@ function declarePort(ty,name,isInput)
   return t
 end
 
+function channelIndex( ty, c )
+  assert(darkroom.type.isType(ty))
+  assert(type(c)=="number")
+
+  if ty:channels()==1 then
+    return ""
+  elseif ty:baseType():isBool() then
+    assert(false)
+  else
+    return "["..(c*ty:baseType():sizeof()*8-1)..":"..((c-1)*ty:baseType():sizeof()*8).."]"
+  end
+end
+
 function numToVarname(x)
   if x>0 then return x end
   if x==0 then return "0" end
@@ -588,17 +601,24 @@ local function codegen(ast, callsiteId)
             res = n:cname(c)
           end]=]
         elseif n.kind=="readinput" then
-          res = callsite..n.inst.name
+          if n.type:channels()==1 then
+            res = callsite..n.inst.name
+          else
+            table.insert(resDeclarations, declareWire(n.type:baseType(), n:cname(c),"", "// input"))
+            table.insert(resDeclarations, "assign "..n:cname(c).." = "..callsite..n.inst.name..channelIndex( n.inst.type, c).."; // input \n")
+            res = n:cname(c)
+          end
         elseif n.kind=="reg" then
           addInput("expr1")
           if n.expr2~=nil then addInput("expr2") end
           addInput("valid")
           getInputs()
 
+
           if n.by=="always" then
-            table.insert(resClockedLogic, "if ("..inputs.valid[1]..") begin "..n.inst.name.." <= "..inputs["expr1"][1].."; end  // function register assignment\n")
+            table.insert(resClockedLogic, "if ("..inputs.valid[1]..") begin "..n.inst.name..channelIndex( n.inst.type, c).." <= "..inputs["expr1"][c].."; end  // function register assignment\n")
           elseif n.by=="sum" then
-            table.insert(resClockedLogic, "if ("..inputs.valid[1]..") begin "..n.inst.name.." <= "..n.inst.name.."+"..inputs["expr1"][1].."; end  // function register assignment by sum\n")
+            table.insert(resClockedLogic, "if ("..inputs.valid[1]..") begin "..n.inst.name..channelIndex( n.inst.type, c).." <= "..n.inst.name.."+"..inputs["expr1"][c].."; end  // function register assignment by sum\n")
           elseif n.by=="sumwrap" then
             table.insert(resClockedLogic, "if ("..inputs.valid[1]..") begin "..n.inst.name.." <= ("..n.inst.name.."=="..inputs.expr2[1]..")?("..n.inst.name.."+"..inputs["expr1"][1].."):("..valueToVerilog(0,n.type).."); end  // function register assignment by sumwrap\n")
           else
@@ -606,7 +626,13 @@ local function codegen(ast, callsiteId)
             assert(false)
           end
 
-          res = n.inst.name
+          if n.type:channels()>1 then
+            table.insert(resDeclarations, declareWire(n.type:baseType(), n:cname(c),"", "// register output channelselect"))
+            table.insert(resDeclarations, "assign "..n:cname(c).." = "..n.inst.name..channelIndex( n.inst.type, c).."; // register output channelselect\n")
+            res = n:cname(c)
+          else
+            res = n.inst.name
+          end
         elseif n.kind=="readram128" then
           table.insert(resDeclarations,"assign "..n.inst.name.."_readAddr = "..inputs.addr[1]..";\n")
           res = n.inst.name.."_readOut"
@@ -661,7 +687,9 @@ local function codegen(ast, callsiteId)
               if n["dst"..assn].kind=="reg" and n.callsites>1 then table.insert( resDeclarations, declareWire(n["dst"..assn].type,callsite..n["dst"..assn].name,""," // callsite local destination")) end
               
               if (n.callsites>1) or n["dst"..assn].kind=="output" then
-                table.insert(resDeclarations, "assign "..callsite..n["dst"..assn].name.." = "..inputs["expr"..assn][1]..";  // function output assignment\n")
+                for c=1,n["expr"..assn].type:channels() do
+                  table.insert(resDeclarations, "assign "..callsite..n["dst"..assn].name..channelIndex(n["dst"..assn].type,c).." = "..inputs["expr"..assn][c]..";  // function output assignment\n")
+                end
               end
               assn = assn + 1
             end
