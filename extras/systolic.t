@@ -656,14 +656,21 @@ local function codegen(ast, callsiteId)
           end
           
           if n.func:isPure()==false then
-            table.insert(resDeclarations, "assign "..n.inst.name.."_"..call_callsite..n.func.name.."_valid = "..inputs.valid[1]..";\n")
+            table.insert(resDeclarations, "assign "..n.inst.name.."_"..call_callsite..n.func.name.."_valid = "..inputs.valid[1].."; // call valid\n")
           end
           
           map(n.func.inputs, function(v,k) 
-                table.insert(resDeclarations, "assign "..n.inst.name.."_"..call_callsite..v.name.." = "..inputs["input"..k][1]..";\n") end)
+                for cc=1,n["input"..k].type:channels() do
+                  table.insert(resDeclarations, "assign "..n.inst.name.."_"..call_callsite..v.name..channelIndex(n["input"..k].type, cc).." = "..inputs["input"..k][cc].."; // call input\n") 
+                end
+                             end)
           
-          if n.func.output~=nil then
+          if n.func.output~=nil and n.type:channels()==1 then
             res = n.inst.name.."_"..call_callsite..n.func.output.name
+          elseif n.func.output~=nil and n.type:channels()>1 then
+            table.insert(resDeclarations, declareWire(n.type:baseType(), n:cname(c),"", "// call output channelselect"))
+            table.insert(resDeclarations, "assign "..n:cname(c).." = "..n.inst.name.."_"..call_callsite..n.func.output.name..channelIndex(n.type,c).."; // call output channelselect\n")
+            res = n:cname(c)
           else
             res = "__NILVALUE_ERROR"
           end
