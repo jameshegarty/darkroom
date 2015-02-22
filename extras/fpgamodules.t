@@ -591,23 +591,28 @@ function modules.fifonoop(ty)
 
   local fifo = systolic.module("fifo_"..sanitize(tostring(ty)))
   local reg = fifo:add(systolic.reg("data", ty))
-  local hasData = fifo:add(systolic.reg("hasData", darkroom.type.bool(), false))
+  local writeAddr = fifo:add(systolic.reg("writeAddr", uint16, 0))
+  local readAddr = fifo:add(systolic.reg("readAddr", uint16, 0))
 
   -- pushBack
   local input = systolic.input("indata", ty)
   local pushBack = fifo:addFunction("pushBack",{input},nil)
   pushBack:addAssign( reg, input:read() )
-  pushBack:addAssign( hasData, true )
+  pushBack:addAssignBy( "sum", writeAddr, systolic.cast(1, uint16) )
+  pushBack:addAssert( systolic.lt( writeAddr:read(),readAddr:read()+systolic.cast(2,uint16) ), "write to full fifo!")
 
   -- popFront
   local out = systolic.output("outdata", ty)
   local popFront = fifo:addFunction("popFront",{},out)
   popFront:addAssign( out, reg:read() )
+  popFront:addAssignBy( "sum", readAddr, systolic.cast(1,uint16) )
+  popFront:addAssert( systolic.gt( writeAddr:read(),readAddr:read()), "read from fifo when it doesnt have data")
+  popFront:addAssert( systolic.eq( writeAddr:read(),readAddr:read()+systolic.cast(1,uint16)), "read from fifo too late!")
 
   -- ready
   local readyres = systolic.output("isReady", darkroom.type.bool() )
-  local ready = fifo:addFunction("ready",{},readyres)
-  ready:addAssign( readyres, hasData:read() )
+  local ready = fifo:addFunction("ready",{},readyres,{pipeline=false})
+  ready:addAssign( readyres, systolic.gt(writeAddr:read()-readAddr:read(),0) )
 
   return fifo
 end
@@ -879,7 +884,7 @@ table.insert( res, [=[       end else begin
        pipelineInput = 0;
        posX = realX;
        posY = realY;
-       validIn = 1;
+       validIn = 0;
        CLK = 0;
        #10
        CLK = 1;

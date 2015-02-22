@@ -38,7 +38,7 @@ end
 function darkroom.optimize.CSEHash(ast)
 
   local hash = ""
-  
+--[=[  
   local keyOrder = darkroom.optimize.keyOrder(ast)
 
   for _,k in ipairs(keyOrder) do
@@ -52,6 +52,11 @@ function darkroom.optimize.CSEHash(ast)
     end
 
     hash = hash..tostring(ast[k]).."_"
+  end
+  ]=]
+
+  for k,v in pairs(sort(invertAndStripKeys(ast))) do
+    hash = hash..v.."_"..tostring(ast[v]).."_"
   end
 
   return hash

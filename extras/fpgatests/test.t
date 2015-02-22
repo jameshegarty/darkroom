@@ -77,9 +77,9 @@ function test(inast, inputList)
       opt = fpga.util.deviceToOptions(arg[3])
     end
 
-    opt.debugImages = true
-    local v, metadata = fpga.compile(hwinputs, hwoutputs, 128, 64, opt)
     s = string.sub(arg[0],1,#arg[0]-4)..s
+    opt.debugImages = s..".debugimage."
+    local v, metadata = fpga.compile(hwinputs, hwoutputs, 128, 64, opt)
     io.output("out/"..s..".v")
     io.write(v)
     io.close()

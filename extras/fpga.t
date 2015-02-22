@@ -78,6 +78,9 @@ function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffe
         pipeline:add(fifo)
         pipelineMain:addIfLaunch( validIn:read(), fifo:pushBack({indata=input:read()}) )
 
+        if options.debugImages~=nil then pipelineMain:addIfFwrite(options.debugImages.."input"..node.isInputImage..".raw", fifo:ready(), fifo:popFront() ) end
+        if options.debugImages~=nil then pipelineMain:addIfFwrite(options.debugImages.."input"..node.isInputImage.."_IN.raw", validIn:read(), input:read() ) end
+
         local outputList = {}
         for v,_ in node:parents(kernelGraph) do outputList[v] = fifo end
         return outputList
@@ -107,7 +110,7 @@ function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffe
           local bx, by = node:bufferSize2d( kernelGraph )
           local lb = fpga.modules.linebuffer( bx, by, node.kernel.type, options.stripWidth ):instantiate("linebuffer_"..node:name())
           pipeline:add(lb)
-          if options.debugImages then pipelineMain:addIfFwrite(node:name()..".raw", lb:ready(), systolic.index(lb:load(),{0,0})) end
+          if options.debugImages~=nil then pipelineMain:addIfFwrite(options.debugImages..node:name()..".raw", lb:ready(), systolic.index(lb:load(),{0,0})) end
 
           -- add a fifo for each consumer
           local outputList = {}

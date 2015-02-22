@@ -663,7 +663,7 @@ local function codegen(ast, callsiteId)
               table.insert(resDeclarations, declareWire(darkroom.type.bool(),n.fn.name.."_valid",""," // valid bit merge"))
               table.insert(resDeclarations, "assign "..n.fn.name.."_valid = C1_"..n.fn.name.."_valid; // valid bit merge (chosen arbitrarily)\n")
               for id=2,n.callsites do
-                table.insert(resDeclarations,"always @ (posedge CLK) begin if ("..n.fn.name.."_valid!=C"..id..[[_load_valid) begin $display("ERROR, load valid doesnt match, function ]]..n.fn.name..[[, module ]]..n.fn.module.name..[["); $stop(); end end]].."\n")
+                table.insert(resDeclarations,"always @ (posedge CLK) begin if ("..n.fn.name.."_valid!=C"..id..[[_]]..n.fn.name..[[_valid) begin $display("ERROR, ]]..n.fn.name..[[ valid doesnt match, function ]]..n.fn.name..[[, module ]]..n.fn.module.name..[["); $stop(); end end]].."\n")
                 
               end
             end
@@ -681,7 +681,7 @@ local function codegen(ast, callsiteId)
 
           local asst = 1
           while n["assert"..asst] do
-            table.insert(resDeclarations,"always @ (posedge CLK) begin if ("..n.fn.name.."_valid && "..inputs["assert"..asst][1]..[[==1'd0) begin $display("ASSERT FAILED, function ]]..n.fn.name..[[, module ]]..n.fn.module.name..[[,]]..n["assertError"..asst]..[["); $stop(); end end]].."\n")
+            table.insert(resDeclarations,"always @ (posedge CLK) begin if ("..n.fn.name.."_valid && "..inputs["assert"..asst][1]..[[==1'd0) begin $display("ASSERT FAILED, function ]]..n.fn.name..[[, module ]]..n.fn.module.name..[[,]]..n["assertError"..asst]..[[ inst %s",INSTANCE_NAME); $stop(); end end]].."\n")
             asst = asst + 1
           end
 
@@ -946,7 +946,11 @@ RAM128X1D ]]..self.name..[[  (
         for id=1,callsitecnt do
           local callsite = "C"..id.."_"
           if callsitecnt==1 then callsite="" end
-          if fn:isPure()==false then table.insert(arglist,", ."..callsite..fnname.."_valid("..self.name.."_"..callsite..fnname.."_valid)") end
+          if fn:isPure()==false then 
+            table.insert(wires,declareWire( darkroom.type.bool(), self.name.."_"..callsite..fnname.."_valid" ))
+            table.insert(arglist,", ."..callsite..fnname.."_valid("..self.name.."_"..callsite..fnname.."_valid)") 
+          end
+
           map(fn.inputs, function(v) table.insert(wires,declareWire( v.type, self.name.."_"..callsite..v.name )); table.insert(arglist,", ."..v.name..callsite.."("..self.name.."_"..callsite..v.name..")") end)
         end
 
@@ -958,7 +962,7 @@ RAM128X1D ]]..self.name..[[  (
       end
     end
 
-    return table.concat(wires)..self:getDefinitionKey().." "..self.name.."(.CLK(CLK)"..table.concat(arglist)..");\n\n"
+    return table.concat(wires)..self:getDefinitionKey()..[[ #(.INSTANCE_NAME("]]..self.name..[[")) ]]..self.name.."(.CLK(CLK)"..table.concat(arglist)..");\n\n"
   else
     assert(false)
   end
@@ -1010,7 +1014,7 @@ function systolicInstanceFunctions:getDefinition()
     end
   end
   table.insert(t,");\n")
-
+  table.insert(t,[[parameter INSTANCE_NAME="INST";]].."\n")
   table.insert(t," // state\n")
   
   for k,v in pairs(self.module.instances) do

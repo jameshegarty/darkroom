@@ -421,6 +421,12 @@ end
 
 stripkeys = mapToArray
 
+function invertAndStripKeys(t)
+  local r = {}
+  for k,v in pairs(t) do table.insert(r,k) end
+  return r
+end
+
 function sel(cond,a,b)
   if cond then return a else return b end
 end
