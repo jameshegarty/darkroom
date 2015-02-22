@@ -523,7 +523,8 @@ function modules.linebuffer( maxDelayX, maxDelayY, datatype, stripWidth )
     local Output = systolic.output("out", darkroom.type.array(datatype,{maxDelayX+1,maxDelayY+1}))
     local loadFn = lb:addFunction("load",{},Output)
     loadFn:addAssignBy( "sum", readAddr, systolic.cast(1,uint16) )
-    loadFn:addAssert(writeAddr==readAddr)
+    loadFn:addAssert(systolic.gt(writeAddr:read(),readAddr:read()), "read from linebuffer when it doesnt have data")
+    loadFn:addAssert(systolic.eq(writeAddr:read(),readAddr:read()+systolic.cast(1,uint16)), "read from linebuffer too late!")
 
     local Oflat = {}
     for y=0,maxDelayY do

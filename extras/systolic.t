@@ -9,6 +9,7 @@ function sanitize(s)
   s = s:gsub("%[","_")
   s = s:gsub("%]","_")
   s = s:gsub("%,","_")
+  s = s:gsub("%.","_")
   return s
 end
 
@@ -218,37 +219,6 @@ function systolicModuleFunctions:instantiate(name)
   assert(type(name)=="string")
   return systolicInstance.new({kind="module",module=self,name=name,callsites={}})
 end
-
-function systolicModuleFunctions:getInstance(instname,callsites)
-  local t = {}
-  table.insert(t,self.name.." "..instname.."(.CLK(CLK)")
-
-  for fnname,v in pairs(callsites) do
-    assert(type(v)=="table")
-    local fn = self.functions[fnname]
-    assert(fn~=nil)
-
-    for id,vv in pairs(v) do
-      assert(type(vv[1].valid)=="string")
-      table.insert(t,", .C"..id.."_"..fnname.."_valid("..vv[1].valid..")")
-
-      for _,inout in pairs(joinTables(fn.inputs,fn.outputs)) do
-        assert(inout.kind=="input" or inout.kind=="output")
-        local actual = vv[1][inout.varname]
-        if actual==nil then actual = vv[2][inout.varname] else assert(vv[2][inout.varname]==nil) end
-        if type(actual)~="string" and type(actual)~="number" then
-          print("Error, missing input/output ",inout.varname," on function ",fnname)
-        end
-        
-        table.insert(t,", .C"..id.."_"..inout.varname.."("..actual..")")
-      end
-    end
-  end
-
-  table.insert(t,");\n")
-  return t
-end
-
 
 local function checkArgList( fn, args, calltable )
   assert(systolicFunction.isSystolicFunction(fn))
@@ -651,7 +621,7 @@ local function codegen(ast, callsiteId)
           getInputs()
           
           local call_callsite = ""
-          if #n.inst.callsites[n.func.name]>1 and n.func:isAccessor()==false then
+          if #n.inst.callsites[n.func.name]>1 then
             call_callsite = "C"..n.callsiteid.."_"
           end
           
@@ -666,60 +636,46 @@ local function codegen(ast, callsiteId)
                              end)
           
           if n.func.output~=nil and n.type:channels()==1 then
-            res = n.inst.name.."_"..call_callsite..n.func.output.name
+            res = n.inst.name.."_"..n.func.output.name
           elseif n.func.output~=nil and n.type:channels()>1 then
             table.insert(resDeclarations, declareWire(n.type:baseType(), n:cname(c),"", "// call output channelselect"))
-            table.insert(resDeclarations, "assign "..n:cname(c).." = "..n.inst.name.."_"..call_callsite..n.func.output.name..channelIndex(n.type,c).."; // call output channelselect\n")
+            table.insert(resDeclarations, "assign "..n:cname(c).." = "..n.inst.name.."_"..n.func.output.name..channelIndex(n.type,c).."; // call output channelselect\n")
             res = n:cname(c)
           else
             res = "__NILVALUE_ERROR"
           end
 
         elseif n.kind=="fndefn" then
-          local callsitecnt = n.callsites
-          if n.fn:isAccessor() then callsitecnt=1 end
+          n:map( "dst", function(n,k) addInput("expr"..k) end)
+          if n.fn:isPure()==false then addInput("valid") end
+          getInputs()
 
-          for id=1,callsitecnt do
-            n:map( "dst", function(n,k) addInput("expr"..k) end)
-            if n.fn:isPure()==false then addInput("valid") end
-            getInputs()
 
-            table.insert(resDeclarations,"  // function: "..n.fn.name.." callsite "..id.." delay "..delay[n]..", pure="..tostring(n.fn:isPure())..", accessor="..tostring(n.fn:isAccessor()).."\n")
+          table.insert(resDeclarations,"  // function: "..n.fn.name.." callsites "..n.callsites.." delay "..delay[n]..", pure="..tostring(n.fn:isPure()).."\n")
 
-            local assn = 1
-            while n["dst"..assn] do
-              local callsite = "C"..id.."_"
-              if n.callsites==1 or n.fn:isAccessor() then callsite="" end
-              
-              if n["dst"..assn].kind=="reg" and n.callsites>1 then table.insert( resDeclarations, declareWire(n["dst"..assn].type,callsite..n["dst"..assn].name,""," // callsite local destination")) end
-              
-              if (n.callsites>1) or n["dst"..assn].kind=="output" then
-                for c=1,n["expr"..assn].type:channels() do
-                  table.insert(resDeclarations, "assign "..callsite..n["dst"..assn].name..channelIndex(n["dst"..assn].type,c).." = "..inputs["expr"..assn][c]..";  // function output assignment\n")
-                end
+          if n.callsites>1 and (n.fn:isAccessor()==false or n.fn:isPure()==false) then
+            table.insert(resDeclarations," // merge: "..n.fn.name.."\n")
+            assert(n.fn:isAccessor())
+
+            -- valid bit merge
+            if n.fn:isPure()==false then
+              table.insert(resDeclarations, declareWire(darkroom.type.bool(),n.fn.name.."_valid",""," // valid bit merge"))
+              table.insert(resDeclarations, "assign "..n.fn.name.."_valid = C1_"..n.fn.name.."_valid; // valid bit merge (chosen arbitrarily)\n")
+              for id=2,n.callsites do
+                table.insert(resDeclarations,"always @ (posedge CLK) begin if ("..n.fn.name.."_valid!=C"..id..[[_load_valid) begin $display("ERROR, load valid doesnt match, function ]]..n.fn.name..[[, module ]]..n.fn.module.name..[["); $stop(); end end]].."\n")
+                
               end
-              assn = assn + 1
             end
           end
 
-          if callsitecnt>1 then
-            table.insert(resDeclarations," // merge: "..n.fn.name.."\n")
-            for id=1,n.callsites do
-              local assn = 1
-              while n["dst"..assn] do
-                if id==1 then
-                  if n["dst"..assn].kind=="reg" then
---                    table.insert(t, "always @ (posedge CLK) begin "..v.dst.varname.." <= C"..id.."_"..v.dst.varname.."; end\n")
-                  elseif n["dst"..assn].kind=="output" then
-                  else
-                    print("VDK",v.dst.kind)
-                    assert(false)
-                  end
-                end
-                assn = assn + 1
+          local assn = 1
+          while n["dst"..assn] do
+            if n["dst"..assn].kind=="output" then
+              for c=1,n["expr"..assn].type:channels() do
+                table.insert(resDeclarations, "assign "..callsite..n["dst"..assn].name..channelIndex(n["dst"..assn].type,c).." = "..inputs["expr"..assn][c]..";  // function output assignment\n")
               end
-
             end
+            assn = assn + 1
           end
 
           res = "_ERR_NULL_FNDEFN"
@@ -755,11 +711,11 @@ local function codegen(ast, callsiteId)
   local resClockedLogic = finalOut[3]
   finalOut = finalOut[1]
 
-  if ast.type:isArray() then
-    finalOut = "{"..table.concat(finalOut,",").."}"
-  else
-    finalOut = finalOut[1]
-  end
+--  if ast.type:isArray()==false then
+--    finalOut = "{"..table.concat(finalOut,",").."}"
+--  else
+--    finalOut = finalOut[1]
+--  end
 
   return resDeclarations, resClockedLogic, finalOut, delay
 end
@@ -777,13 +733,14 @@ function systolicFunctionFunctions:isPure()
   return foldl( andop, true, map( self.assignments, function(n) return n.dst.kind=="output" end ) )
 end
 
--- this is a pure function with no inputs. It only ever needs one callsite
 function systolicFunctionFunctions:isAccessor()
-  return self:isPure() and #self.inputs==0
+  return #self.inputs==0
 end
 
-function systolicFunctionFunctions:addAssert(expr)
-  table.insert(self.asserts,expr)
+function systolicFunctionFunctions:addAssert(expr, s)
+  assert(systolicAST.isSystolicAST(expr))
+  assert(type(s)=="string")
+  table.insert(self.asserts,{expr=expr,error=s})
 end
 
 
@@ -970,20 +927,20 @@ RAM128X1D ]]..self.name..[[  (
     for fnname,fn in pairs(self.module.functions) do
       if self.callsites[fnname]~=nil then
         local callsitecnt = #self.callsites[fnname]
-        if fn:isAccessor() then callsitecnt=1 end
-        
+        if fn:isPure() and fn:isAccessor() then callsitecnt=1 end
+
         for id=1,callsitecnt do
           local callsite = "C"..id.."_"
-          if #self.callsites[fnname]==1 or fn:isAccessor() then callsite="" end
-          table.insert(wires,"wire "..self.name.."_"..callsite..fnname.."_valid;\n")
+          if callsitecnt==1 then callsite="" end
           if fn:isPure()==false then table.insert(arglist,", ."..callsite..fnname.."_valid("..self.name.."_"..callsite..fnname.."_valid)") end
           map(fn.inputs, function(v) table.insert(wires,declareWire( v.type, self.name.."_"..callsite..v.name )); table.insert(arglist,", ."..v.name..callsite.."("..self.name.."_"..callsite..v.name..")") end)
-          
-          if fn.output~=nil then
-            table.insert(wires, declareWire( fn.output.type, self.name.."_"..callsite..fn.output.name))
-            table.insert(arglist,", ."..callsite..fn.output.name.."("..self.name.."_"..callsite..fn.output.name..")")
-          end
         end
+
+        if fn.output~=nil then
+          table.insert(wires, declareWire( fn.output.type, self.name.."_"..fn.output.name))
+          table.insert(arglist,", ."..fn.output.name.."("..self.name.."_"..fn.output.name..")")
+        end
+        
       end
     end
 
@@ -999,7 +956,8 @@ function systolicInstanceFunctions:getDefinitionKey()
   for k,v in pairs(sort(stripkeys(invertTable(self.module.functions)))) do
     if self.callsites[v]~=nil then
       local callsitecnt = #self.callsites[v]
-      if self.module.functions[v]:isAccessor() then callsitecnt=1 end
+      -- no inputs or valid bit: we can just ignore callsites
+      if self.module.functions[v]:isAccessor() and self.module.functions[v]:isPure() then callsitecnt=1 end
       key = key.."_"..v..callsitecnt
     else
       key = key.."_"..v.."0"
@@ -1017,12 +975,11 @@ function systolicInstanceFunctions:getDefinition()
   for fnname,fn in pairs(self.module.functions) do
     if self.callsites[fnname]~=nil then
       local callsitecnt = #self.callsites[fnname]
-      if fn:isAccessor() then callsitecnt=1 end
 
       for id=1,callsitecnt do
         
         local callsite = "C"..id.."_"
-        if #self.callsites[fnname]==1 or fn:isAccessor() then callsite="" end
+        if #self.callsites[fnname]==1 then callsite="" end
         
         if fn:isPure()==false then table.insert(t,", input "..callsite..fnname.."_valid") end
         
@@ -1030,10 +987,12 @@ function systolicInstanceFunctions:getDefinition()
           table.insert(t,", input ["..(input.type:sizeof()*8-1)..":0] "..callsite..input.name)
         end
         
-        if fn.output~=nil then
-          table.insert(t,", "..declarePort(fn.output.type,callsite..fn.output.name,false))
-        end
       end
+
+      if fn.output~=nil then
+        table.insert(t,", "..declarePort(fn.output.type,fn.output.name,false))
+      end
+
     end
   end
   table.insert(t,");\n")

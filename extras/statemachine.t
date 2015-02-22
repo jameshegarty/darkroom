@@ -82,11 +82,36 @@ function stateMachineModuleFunctions:toVerilog()
       t = concat(t,exprstat)
       
       if v.dst.kind=="output" then
-        table.insert( t, "assign "..v.dst.name.." = "..exprvar..";\n" )
+        table.insert( t, "assign "..v.dst.name.." = "..exprvar[1]..";\n" )
       else
         assert(false)
-        table.insert( t, v.dst.name.." <= "..exprvar..";\n" )
+        table.insert( t, v.dst.name.." <= "..exprvar[1]..";\n" )
       end
+    elseif v.kind=="fwrite" then
+      local varname = "fileout_"..sanitize(v.filename)
+      table.insert(t,"  // fwrite\n")
+      table.insert(t,"integer "..varname..";\n")
+      table.insert(t,"initial begin "..varname..[[ = $fopen("]]..v.filename..[[","w"); end]].."\n")
+
+      local condstat, condvar,_,condDelay = v.cond:toVerilog({valid=true},{self})
+      local exprstat, exprvar,_,exprDelay = v.expr:toVerilog({valid=v.cond},{self})
+
+      assert(condDelay==0)
+      assert(exprDelay==0)
+
+      t = concat(t,condstat)
+      t = concat(t,exprstat)
+
+      table.insert(t,[=[always @ (posedge CLK) begin
+      if (]=]..condvar[1]..[=[) begin]=].."\n")
+
+      for c=1,v.expr.type:channels() do
+        table.insert(t,[=[         $fwrite(]=]..varname..[=[, "%c", ]=]..exprvar[c]..[=[); ]=].."\n")
+      end
+
+table.insert(t,[=[      end
+   end]=].."\n")
+
     else
       assert(false)
     end
@@ -132,6 +157,12 @@ function stateMachineBlockFunctions:addAssign( dst, expr )
   end
 
   table.insert(self.statements,{kind="assign",dst=dst,expr=expr})
+end
+
+function stateMachineBlockFunctions:addIfFwrite( filename, cond, expr )
+  assert(type(filename)=="string")
+  assert(systolicAST.isSystolicAST(expr))
+  table.insert(self.statements,{kind="fwrite",filename=filename,cond=cond,expr=expr})
 end
 
 return statemachine

@@ -107,7 +107,8 @@ function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffe
           local bx, by = node:bufferSize2d( kernelGraph )
           local lb = fpga.modules.linebuffer( bx, by, node.kernel.type, options.stripWidth ):instantiate("linebuffer_"..node:name())
           pipeline:add(lb)
-          
+          if options.debugImages then pipelineMain:addIfFwrite(node:name()..".raw", lb:ready(), systolic.index(lb:load(),{0,0})) end
+
           -- add a fifo for each consumer
           local outputList = {}
           for v,_ in node:parents(kernelGraph) do
