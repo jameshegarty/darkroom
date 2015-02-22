@@ -878,7 +878,7 @@ table.insert( res, [=[       end else begin
    // drain pipe
 
    realX = ]=]..(metadata.padMinX)..[=[;
-   while (outputPixelsSeen < ]=]..(imageHeight*stripWidth)..[=[) begin
+   while (outputPixelsSeen < ]=]..(metadata.stripWidth*metadata.stripHeight)..[=[) begin
      cycle = 0;
      while (cycle < ]=]..metadata.cycles..[=[) begin
        pipelineInput = 0;

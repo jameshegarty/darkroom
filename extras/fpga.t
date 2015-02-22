@@ -180,7 +180,6 @@ function fpga.codegenHarness( inputs, outputs, kernelGraph, shifts, options, lar
     end
 
     -- sim framework assumes this is the case
-    print(imageWidth,imageHeight,options.stripWidth, options.stripHeight)
     assert(imageWidth+metadata.padMaxX-metadata.padMinX==options.stripWidth)
     assert(imageHeight+metadata.padMaxY-metadata.padMinY==options.stripHeight)
     return fpga.modules.sim(totalInputBytes, outputBytes, imageWidth, imageHeight, shifts[kernelGraph.child1], metadata), metadata
