@@ -647,6 +647,7 @@ local function codegen(ast, callsiteId)
 
         elseif n.kind=="fndefn" then
           n:map( "dst", function(n,k) addInput("expr"..k) end)
+          n:map( "assert", function(n,k) addInput("assert"..k) end)
           if n.fn:isPure()==false then addInput("valid") end
           getInputs()
 
@@ -676,6 +677,12 @@ local function codegen(ast, callsiteId)
               end
             end
             assn = assn + 1
+          end
+
+          local asst = 1
+          while n["assert"..asst] do
+            table.insert(resDeclarations,"always @ (posedge CLK) begin if ("..n.fn.name.."_valid && "..inputs["assert"..asst][1]..[[==1'd0) begin $display("ASSERT FAILED, function ]]..n.fn.name..[[, module ]]..n.fn.module.name..[[,]]..n["assertError"..asst]..[["); $stop(); end end]].."\n")
+            asst = asst + 1
           end
 
           res = "_ERR_NULL_FNDEFN"
@@ -794,6 +801,13 @@ function systolicInstanceFunctions:lower()
         assn.expr:checkVariables( {fn, self.module} )
       end
       
+      local acnt = 1
+      for _,asst in pairs( fn.asserts ) do
+        node["assert"..acnt] = asst.expr:disablePipelining()
+        node["assertError"..acnt] = asst.error
+        acnt = acnt + 1
+      end
+
       if drivenOutput==false and fn.output~=nil  then
         print( "undriven output, function", fn.name )
         if self.module~=nil then print( "module", self.module.name ) end
