@@ -97,6 +97,8 @@ function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffe
         local allFifosReady = foldt( fifoReady, function(a,b) if b==nil then return a else return systolic.__and(a,b) end end)
         assert(systolicAST.isSystolicAST(allFifosReady))
 
+--        if options.debugImages~=nil then map( inputs, function(v,k) pipelineMain:addIfFwrite(options.debugImages..node:name().."_input_"..k:name()..".raw", allFifosReady, systolic.index(v[node]:popFront(),{0,0})) end) end
+
         if node:isOutput(kernelGraph) then
           -- for outputs we just make a fifo. no linebuffer
           local fifo = fpga.modules.fifo( node.kernel.type ):instantiate("outputfifo_"..node:name())
@@ -105,6 +107,8 @@ function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffe
 
           pipelineMain:addAssign( validOut, fifo:ready())
           pipelineMain:addAssign( finalOut, fifo:popFront({},fifo:ready()) )
+
+          if options.debugImages~=nil then pipelineMain:addIfFwrite(options.debugImages..node:name()..".raw", fifo:ready(), fifo:popFront({},fifo:ready()) ) end
         else
           -- allocate linebuffer for this node
           local bx, by = node:bufferSize2d( kernelGraph )

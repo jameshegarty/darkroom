@@ -12,7 +12,7 @@ terra raw2bmp(infile : &int8, outfile : &int8)
 --  inp:loadRaw(infile,128,64,8)
   var totalSize = metadata.stripWidth*metadata.stripHeight*metadata.outputBytes
   inp.dataPtr = cstdlib.malloc(totalSize)
-  inp.data = [&uint8](inp.dataPtr) + [(-metadata.padMinY/metadata.downsampleY)*(metadata.stripWidth/metadata.downsampleX) + (-metadata.padMinX/metadata.downsampleX)]*metadata.outputBytes
+  inp.data = [&uint8](inp.dataPtr) + [metadata.outputShift] + [(-metadata.padMinY/metadata.downsampleY)*(metadata.stripWidth/metadata.downsampleX) + (-metadata.padMinX/metadata.downsampleX)]*metadata.outputBytes
 
   var imgIn = cstdio.fopen(infile, "rb");
   cstdio.fread(inp.dataPtr,1,totalSize,imgIn)
