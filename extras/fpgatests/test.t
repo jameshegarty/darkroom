@@ -99,7 +99,7 @@ function test(inast, inputList)
       img:free()
     end
 
-    local tprog = darkroomSimple.compile(cpuinast,{debug=true, verbose=true, printruntime=true})
+    local tprog = darkroomSimple.compile(cpuinast,{debug=true, verbose=true, printruntime=true, debugImages="out/"..arg[0]..".debugimage."})
 
     local res = pack(unpacktuple(tprog()))
     for k,v in ipairs(res) do

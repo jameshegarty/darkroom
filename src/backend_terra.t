@@ -172,7 +172,7 @@ LineBufferWrapperMT={__index=LineBufferWrapperFunctions}
 linebufferCount = 7 -- just start with a random id to make the debug checks more effective
 function isLineBufferWrapper(b) return getmetatable(b)==LineBufferWrapperMT end
 
-function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightStencil, debug, scaleN1, scaleD1, scaleN2, scaleD2, largestScaleY, V )
+function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightStencil, debug, scaleN1, scaleD1, scaleN2, scaleD2, largestScaleY, V, debugImagePath, debugBounds )
   assert(type(lines)=="number")
   assert(type(leftStencil)=="number")
   assert(type(stripWidth)=="number")
@@ -199,7 +199,7 @@ function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightS
                stripWidth = stripWidth, 
                rightStencil=rightStencil,
                linebufferPosition = 0,
-               debug=debug,
+               debug=debug or debugImagePath~=nil,
                scaleN1=scaleN1,
                scaleD1=scaleD1,
                scaleN2=scaleN2,
@@ -215,7 +215,9 @@ function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightS
                ivDebugX = {}, 
                ivDebugY={}, 
                ivDebugId = {}, 
-               posX={}, posY={}}
+               posX={}, posY={},
+               debugImagePath = debugImagePath,
+               debugBounds = debugBounds}
 
   linebufferCount = linebufferCount + 1
 
@@ -299,6 +301,11 @@ function LineBufferWrapperFunctions:declare( loopid, xStripRelative, y, clock, c
 
   end
 
+  if self.debugImagePath~=nil then
+    self.debugImageFile = symbol()
+    table.insert(res, quote  var [self.debugImageFile] = cstdio.fopen([self.debugImagePath..".raw"],"wb")  end)
+  end
+
   return quote res end
 end
 
@@ -339,7 +346,32 @@ function LineBufferWrapperFunctions:set( loopid, value, V )
 
   table.insert(res,quote @[&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]]) = value end)
 
+  if self.debugImagePath~=nil then
+    table.insert( res, self:debugImageWrite( loopid, value, V ) )
+  end
+
   return quote res end
+end
+
+function LineBufferWrapperFunctions:debugImageWrite( loopid, value, V )
+  return quote 
+    var debugImageData : vector(self.orionType:toTerraType(),V) = value
+    
+    for i=0,V do
+      var x = [self.posX[loopid]]+i
+      var y = [self.posY[loopid]]
+      var w = [self.debugBounds.maxX-self.debugBounds.minX]
+      var h = [self.debugBounds.maxY-self.debugBounds.minY]
+      
+      if x >= self.debugBounds.minX and x < self.debugBounds.maxX and
+        y >= self.debugBounds.minY and y < self.debugBounds.maxY then
+        
+        cstdio.fseek( self.debugImageFile, sizeof([self.orionType:toTerraType()])*((y-self.debugBounds.minY)*w+(x-self.debugBounds.minX)), cstdio.SEEK_SET )
+        var d = debugImageData[i]
+        cstdio.fwrite( &d, sizeof([self.orionType:toTerraType()]), 1, self.debugImageFile ) 
+      end
+    end 
+  end
 end
 
 -- relX and relY should be integer constants relative to
@@ -1689,6 +1721,20 @@ function darkroom.terracompiler.codegenThread(
 
 end
 
+function choosePadding( kernelGraph, imageWidth, imageHeight, smallestScaleX, smallestScaleY)
+  assert(type(imageWidth)=="number")
+  assert(type(imageHeight)=="number")
+  assert(type(smallestScaleX)=="number")
+  assert(type(smallestScaleY)=="number")
+
+  local maxStencil = kernelGraph:maxStencil()
+
+  local padMinX = downToNearest(smallestScaleX,maxStencil:min(1))
+  local padMaxX = upToNearest(smallestScaleX,maxStencil:max(1))
+  local padMinY = downToNearest(smallestScaleY,maxStencil:min(2))
+  local padMaxY = upToNearest(smallestScaleY,maxStencil:max(2))
+  return imageWidth+padMaxX-padMinX, imageHeight+padMaxY-padMinY, padMinX, padMaxX, padMinY, padMaxY
+end
 
 function darkroom.terracompiler.allocateImageWrappers(
     kernelGraph, 
@@ -1718,6 +1764,12 @@ function darkroom.terracompiler.allocateImageWrappers(
   local function parentIsOutput(node)
     for v,k in node:parents(kernelGraph) do if v==kernelGraph then return k end end
     return nil
+  end
+
+  local debugBounds
+  if options.debugImages~=nil then
+    local _,_, padMinX, padMaxX, padMinY, padMaxY = choosePadding( kernelGraph, options.width, options.height, 1, 1)
+    debugBounds = {minX=padMinX, maxX=options.width+padMaxX, minY=padMinY, maxY=options.height+padMaxY}
   end
 
   kernelGraph:S("*"):traverse(
@@ -1758,6 +1810,11 @@ function darkroom.terracompiler.allocateImageWrappers(
           outputs[n] = {}
 
           for c = 1, n.kernel.type:channels() do
+            local debugImagesStr
+            if options.debugImages~=nil then 
+              debugImagesStr = options.debugImages..n:name().."_"..c 
+            end
+
             outputs[n][c] = newLineBufferWrapper(
               n:bufferSize(kernelGraph), 
               n.kernel.type:baseType(),
@@ -1770,7 +1827,9 @@ function darkroom.terracompiler.allocateImageWrappers(
               n.kernel.scaleN2, 
               n.kernel.scaleD2,
               largestScaleY,
-              options.V)
+              options.V,
+              debugImagesStr,
+              debugBounds)
 
             linebufferSize = linebufferSize + outputs[n][c]:allocateSize()
           end

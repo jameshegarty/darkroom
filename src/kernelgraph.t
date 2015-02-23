@@ -76,6 +76,16 @@ function kernelGraphFunctions:bufferSize2d(root)
   return x,y
 end
 
+function kernelGraphFunctions:maxStencil()
+  local maxStencil = Stencil.new()
+  self:visitEach(
+    function(node)
+      if node.kernel~=nil then maxStencil = maxStencil:unionWith(neededStencil(true,self,node,1,nil)) end
+    end)
+  return maxStencil
+end
+
+
 function kernelGraphFunctions:isOutput(root) for v,k in self:parents(root) do if v.kernel==nil then return true end return false end end
 
 function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)

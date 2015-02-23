@@ -133,15 +133,6 @@ function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffe
   return pipeline
 end
 
-local function calcMaxStencil( kernelGraph )
-  local maxStencil = Stencil.new()
-  kernelGraph:visitEach(
-    function(node)
-      if node.kernel~=nil then maxStencil = maxStencil:unionWith(neededStencil(true,kernelGraph,node,1,nil)) end
-    end)
-  return maxStencil
-end
-
 function delayToXY(delay, width)
   local lines = math.floor(delay/width)
   local xpixels = delay - lines*width
@@ -152,7 +143,7 @@ end
 function fpga.codegenHarness( inputs, outputs, kernelGraph, shifts, options, largestEffectiveCycles, padMinX, padMinY, padMaxX, padMaxY, imageWidth, imageHeight)
   assert(type(padMaxY)=="number")
 
-  local maxStencil = calcMaxStencil(kernelGraph)
+  local maxStencil = kernelGraph:maxStencil()
 
   local shiftX, shiftY = delayToXY(shifts[kernelGraph.child1], options.stripWidth)
   maxStencil = maxStencil:translate(shiftX,shiftY,0)
@@ -194,21 +185,6 @@ function fpga.codegenHarness( inputs, outputs, kernelGraph, shifts, options, lar
     assert(false)
   end
 
-end
-
-local function choosePadding( kernelGraph, imageWidth, imageHeight, smallestScaleX, smallestScaleY)
-  assert(type(imageWidth)=="number")
-  assert(type(imageHeight)=="number")
-  assert(type(smallestScaleX)=="number")
-  assert(type(smallestScaleY)=="number")
-
-  local maxStencil=calcMaxStencil(kernelGraph)
-
-  local padMinX = downToNearest(smallestScaleX,maxStencil:min(1))
-  local padMaxX = upToNearest(smallestScaleX,maxStencil:max(1))
-  local padMinY = downToNearest(smallestScaleY,maxStencil:min(2))
-  local padMaxY = upToNearest(smallestScaleY,maxStencil:max(2))
-  return imageWidth+padMaxX-padMinX, imageHeight+padMaxY-padMinY, padMinX, padMaxX, padMinY, padMaxY
 end
 
 function fpga.compile(inputs, outputs, imageWidth, imageHeight, options)
