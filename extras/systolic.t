@@ -345,15 +345,22 @@ function systolicFunctionFunctions:writeRam128( ram128, addr, expr )
 end
 
 function systolicFunctionFunctions:bramWriteAndReturnOriginal( bram, addr, expr, ty )
-  assert(systolicInstance.isSystolicInstance(bram))
+  assert( systolicInstance.isSystolicInstance(bram) )
   assert( darkroom.type.isType(ty) )
   assert(bram.kind=="bram")
   addr = convert(addr)
   expr = convert(expr)
 
+  if bram.typeA~=nil then
+    print("Error, double assign to bram")
+    assert(false)
+  end
+
+  bram.typeA = ty
+
   table.insert( self.assignments, { dst=bram, expr=expr, addr=addr, op="writeAndReturnOriginal" } )
 
-  return systolicAST.new({kind="bram", writeAddr = addr, writeExpr = expr, portMode="writeAndReturnOriginal", type = ty}):copyMetadataFrom(expr)
+  return systolicAST.new({kind="bram", inst=bram, writeAddr = addr, writeExpr = expr, portMode="writeAndReturnOriginal", type = ty}):copyMetadataFrom(expr)
 end
 
 local function codegen(ast, callsiteId)
@@ -738,6 +745,20 @@ local function codegen(ast, callsiteId)
           end
           getInputs()
           res = "__ERR_NULL_MODULE"
+        elseif n.kind=="bram" then
+          if n.portMode=="writeAndReturnOriginal" then
+            addInput("writeAddr")
+            addInput("valid")
+            addInput("writeExpr")
+            getInputs()
+
+            table.insert(resDeclarations,"assign "..n.inst.name.."_addr = "..inputs.writeAddr[1]..";\n")
+            table.insert(resDeclarations,"assign "..n.inst.name.."_WE = "..inputs.valid[1]..";\n")
+            table.insert(resDeclarations,"assign "..n.inst.name.."_DI = "..inputs.writeExpr[1]..";\n")
+           res = n.inst.name.."_DO"
+          else
+            assert(false)
+          end
         else
           print(n.kind)
           assert(false)
@@ -838,7 +859,9 @@ function systolicInstanceFunctions:lower()
           cnt = cnt+1
         elseif assn.dst.kind=="reg" then
         elseif assn.dst.kind=="ram128" then
+        elseif assn.dst.kind=="bram" then
         else
+          print(assn.dst.kind)
           assert(false)
         end
 
@@ -926,6 +949,15 @@ function systolicInstanceFunctions:lower()
             if regFound==false then
               print("Error, ",assn.dst.kind, assn.dst.name,"function",fn.name,"is never read from. bug?")
             end
+          elseif assn.dst.kind=="bram" then
+            mod = mod:S("bram"):process(
+              function(n)
+                if n.inst == assn.dst and n.valid==nil then
+                  local nn = n:shallowcopy()
+                  nn.valid = fn.valid
+                  return systolicAST.new(nn):copyMetadataFrom(n)
+                end
+              end)
           else
             assert(false)
           end
@@ -994,6 +1026,29 @@ RAM128X1D ]]..self.name..[[  (
   .A(]]..self.name..[[_writeAddr),
   .DPRA(]]..self.name..[[_readAddr));
 ]]
+  elseif self.kind=="bram" then
+    local conf={name=self.name}
+    conf.A={chunk=self.typeA:sizeof(),
+           DI = self.name.."_DI",
+           DO = self.name.."_DO",
+           ADDR = self.name.."_addr",
+           CLK = "CLK",
+           WE = self.name.."_WE"}
+    conf.B={chunk=self.typeA:sizeof(),
+           DI = self.name.."_DI_B",
+           DO = self.name.."_DO_B",
+           ADDR = self.name.."_addr_B",
+           CLK = "CLK",
+           WE = "1'd0"}
+    local addrbits = 10 - math.log(self.typeA:sizeof())/math.log(2)
+    return [[wire ]]..self.name..[[_WE;
+wire []]..(self.typeA:sizeof()*8-1)..":0]"..self.name..[[_DI;
+wire []]..(self.typeA:sizeof()*8-1)..":0]"..self.name..[[_DI_B;
+wire []]..(self.typeA:sizeof()*8-1)..":0]"..self.name..[[_DO;
+wire []]..(self.typeA:sizeof()*8-1)..":0]"..self.name..[[_DO_B;
+wire []]..addrbits..[[:0] ]]..self.name..[[_addr;
+wire []]..addrbits..[[:0] ]]..self.name..[[_addr_B;
+]]..table.concat(fixedBram(conf))
   elseif self.kind=="module" then
     local wires = {}
     local arglist = {}

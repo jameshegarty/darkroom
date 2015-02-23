@@ -494,7 +494,7 @@ function modules.linebuffer( maxDelayX, maxDelayY, datatype, stripWidth )
       lb:add(OR[y][x])
     end
     if y>-maxDelayY then
-      BRAM[y] = systolic.bram( "line"..y )
+      BRAM[y] = systolic.bram( "line"..numToVarname(y) )
       lb:add(BRAM[y])
     end
   end
@@ -650,7 +650,7 @@ function modules.xygen(W,H)
 end
 modules.xygen = memoize(modules.xygen)
 
-local function fixedBram(conf)
+function fixedBram(conf)
   local A = "A"
   local B = "B"
   if conf.A.chunk>conf.B.chunk then A,B=B,A end
