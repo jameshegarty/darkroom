@@ -564,7 +564,7 @@ function darkroom.typedAST.typecheckAST( origast, inputs, newNodeFn )
   elseif ast.kind=="index" then
     local expr = inputs["expr"]
     
-    if expr.type:isArray()==false then
+    if expr.type:isArray()==false and expr.type:isUint()==false and expr.type:isInt()==false then
       darkroom.error("Error, you can only index into an array type! Type is "..tostring(expr.type),origast:linenumber(),origast:offset(), origast:filename())
       os.exit()
     end
@@ -578,15 +578,27 @@ function darkroom.typedAST.typecheckAST( origast, inputs, newNodeFn )
       if ast["index"..i].constLow==nil then
         darkroom.error( "index "..i.." must be a constant expression", origast:linenumber(), origast:offset(), origast:filename() )
       end
-      
-      if ast["index"..i].constLow<0 or ast["index"..i].constHigh >= expr.type:channels() then
-        darkroom.error( "index "..i.." value out of range. It is ["..ast["index"..i].constLow..","..ast["index"..i].constHigh.."] but should be within [0,"..(expr.type:arrayLength()[i]-1).."]", origast:linenumber(), origast:offset(), origast:filename() )
+
+      local lowValue = 0
+      local highValue 
+      if expr.type:isUint() or expr.type:isInt() then 
+        highValue = expr.type.precision 
+      else
+        highValue = expr.type:arrayLength()[i]
+      end
+
+      if ast["index"..i].constLow < lowValue or ast["index"..i].constHigh >= highValue then
+        darkroom.error( "index "..i.." value out of range. It is ["..ast["index"..i].constLow..","..ast["index"..i].constHigh.."] but should be within [0,"..(highValue-1).."]", origast:linenumber(), origast:offset(), origast:filename() )
       end
       
       i = i + 1
     end
     
-    ast.type = expr.type:arrayOver()
+    if expr.type:isUint() or expr.type:isInt() then
+      ast.type = darkroom.type.bool()
+    else
+      ast.type = expr.type:arrayOver()
+    end
   elseif ast.kind=="transform" then
     ast.expr = inputs["expr"]
     

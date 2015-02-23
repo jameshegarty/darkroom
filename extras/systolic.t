@@ -16,7 +16,7 @@ end
 local function typecheck(ast)
   assert(darkroom.ast.isAST(ast))
 
-  if ast.kind=="readram128" then
+  if ast.kind=="ram128" then
     local t = ast:shallowcopy()
     t.type=darkroom.type.bool()
     return systolicAST.new(t):copyMetadataFrom(ast)
@@ -277,7 +277,7 @@ function systolic.makeFunction(name, inputs, output, valid)
     valid = systolic.input("valid",darkroom.type.bool())
   end
 
-  local t = {name=name, inputs=inputs, output=output, assignments={}, ram128assignments={}, asserts={}, pure=true, usedInstanceNames = {}, instanceMap = {}, valid=valid:read()}
+  local t = {name=name, inputs=inputs, output=output, assignments={}, asserts={}, pure=true, usedInstanceNames = {}, instanceMap = {}, valid=valid:read()}
 
   t.instanceMap[valid] = 1
   t.usedInstanceNames[valid.name] = 1
@@ -336,12 +336,12 @@ function systolicFunctionFunctions:addAssignBy( op, dst, expr, expr2 )
 end
 
 function systolicFunctionFunctions:writeRam128( ram128, addr, expr )
-  assert(systolicAST.isSystolicAST(ram128))
+  assert(systolicInstance.isSystolicInstance(ram128))
   assert(ram128.kind=="ram128")
-  assert(systolicAST.isSystolicAST(addr))
-  assert(systolicAST.isSystolicAST(expr))
+  addr = convert(addr)
+  expr = convert(expr)
 
-  table.insert(self.ram128assignments,{dst=ram128,expr=expr,addr=addr,retiming=retime(expr)})
+  table.insert( self.assignments, { dst=ram128, expr=expr, addr=addr } )
 end
 
 local function codegen(ast, callsiteId)
@@ -513,14 +513,24 @@ local function codegen(ast, callsiteId)
           if n.type:isArray() and n.expr.type:isArray()==false then
             expr = inputs["expr"][1] -- broadcast
             cmt = " // broadcast "..n.expr.type:str().." to "..n.type:str()
-          else
-            expr = inputs["expr"][c]
-          end
-
-          if n.type:isInt() and n.expr.type:isInt() and n.type:sizeof()>n.expr.type:sizeof() then
+          elseif n.expr.type:isArray() and n.type:isArray()==false and n.expr.type:arrayOver():isBool() and n.type:isUint() then
+            expr = "}"
+            for c=1,n.expr.type:channels() do
+              if c>1 then expr = ","..expr end
+              expr = inputs.expr[c]..expr
+            end
+            expr = "{"..expr
+          elseif n.expr.type:isUint() and n.type:isInt() and n.expr.type.precision<n.type.precision then
+            expr = inputs.expr[c]
+          elseif n.type:isInt() and n.expr.type:isInt() and n.type:sizeof()>n.expr.type:sizeof() then
             -- must sign extend
             expr = "{ {"..(8*(n.type:sizeof()-n.expr.type:sizeof())).."{"..expr.."["..(n.expr.type:sizeof()*8-1).."]}},"..expr.."["..(n.expr.type:sizeof()*8-1)..":0]}"
+          else
+            --expr = inputs["expr"][c]
+            print("FAIL TO CAST",n.expr.type,"to",n.type)
+            assert(false)
           end
+
           
           table.insert(resDeclarations, declareWire( n.type:baseType(), callsite..n:cname(c), "",cmt))
           table.insert(resDeclarations, "assign "..callsite..n:cname(c).." = "..expr..";"..cmt.."\n")
@@ -542,18 +552,27 @@ local function codegen(ast, callsiteId)
           addInput("expr")
           getInputs()
 
-          local flatIdx = 0
-
-          local dim = 1
-          local scalefactor = 1
-          while n["index"..dim] do
-            assert(n["index"..dim].constLow == n["index"..dim].constHigh)
-            flatIdx = flatIdx + (n["index"..dim].constLow)*scalefactor
-            dim = dim + 1
+          if n.expr.type:isArray() then
+            local flatIdx = 0
+            
+            local dim = 1
+            local scalefactor = 1
+            while n["index"..dim] do
+              assert(n["index"..dim].constLow == n["index"..dim].constHigh)
+              flatIdx = flatIdx + (n["index"..dim].constLow)*scalefactor
+              dim = dim + 1
+            end
+            
+            res = inputs["expr"][flatIdx+1]
+          elseif n.expr.type:isUint() or n.expr.type:isInt() then
+            table.insert( resDeclarations, declareWire( n.type:baseType(), n:cname(c), "", " // index result" ))
+            table.insert( resDeclarations, "assign "..n:cname(c).." = "..inputs["expr"][c].."["..n.index1.constLow.."]; // index\n")
+            res = n:cname(c)
+          else
+            print(n.expr.type)
+            assert(false)
           end
-
-          res = inputs["expr"][flatIdx+1]
-
+          
 --[=[          else
             for k,v in pairs(n) do print(k,v) end
             local range = n.index:eval(1,kernel)
@@ -603,8 +622,17 @@ local function codegen(ast, callsiteId)
           else
             res = n.inst.name
           end
-        elseif n.kind=="readram128" then
-          table.insert(resDeclarations,"assign "..n.inst.name.."_readAddr = "..inputs.addr[1]..";\n")
+        elseif n.kind=="ram128" then
+          addInput("readAddr")
+          addInput("writeAddr")
+          addInput("valid")
+          addInput("writeExpr")
+          getInputs()
+
+          table.insert(resDeclarations,"assign "..n.inst.name.."_readAddr = "..inputs.readAddr[1]..";\n")
+          table.insert(resDeclarations,"assign "..n.inst.name.."_writeAddr = "..inputs.writeAddr[1]..";\n")
+          table.insert(resDeclarations,"assign "..n.inst.name.."_WE = "..inputs.valid[1]..";\n")
+          table.insert(resDeclarations,"assign "..n.inst.name.."_D = "..inputs.writeExpr[1]..";\n")
           res = n.inst.name.."_readOut"
         elseif n.kind=="call" then
 
@@ -793,7 +821,7 @@ function systolicInstanceFunctions:lower()
 
           cnt = cnt+1
         elseif assn.dst.kind=="reg" then
-          
+        elseif assn.dst.kind=="ram128" then
         else
           assert(false)
         end
@@ -830,28 +858,28 @@ function systolicInstanceFunctions:lower()
       if type(self.callsites[fn.name])=="table" then -- only codegen stuff we actually used
         for _,assn in pairs( fn.assignments ) do
           if fn.output~=nil and assn.dst==fn.output then 
-          elseif assn.dst.kind=="reg" then
+          elseif assn.dst.kind=="reg" or assn.dst.kind=="ram128" then
             
-            assn.expr:S("reg"):process(
+            assn.expr:S(assn.dst.kind):process(
               function(n)
                 if n.inst==assn.dst then
-                  print("Error, registers can't be assigned to themselves. Use increment")
-                  print("module",self.module.name,"function",fn.name,"register",assn.dst.name)
+                  print("Error, "..assn.dst.kind.." can't be assigned to themselves. Use increment")
+                  print("module",self.module.name,"function",fn.name,assn.dst.kind,assn.dst.name)
                   assert(false)
                 end
               end)
             
-            fn.valid:S("reg"):process(
+            fn.valid:S(assn.dst.kind):process(
               function(n)
                 if n.inst==assn.dst then
-                  print("Error, registers can't be their own valid bit")
-                  print("module",self.module.name,"function",fn.name,"register",assn.dst.name)
+                  print("Error, "..assn.dst.kind.." can't be their own valid bit")
+                  print("module",self.module.name,"function",fn.name,assn.dst.kind,assn.dst.name)
                   assert(false)
                 end
               end)
             
             local regFound = false
-            mod = mod:S("reg"):process(
+            mod = mod:S(assn.dst.kind):process(
               function(n)
                 if n.inst==assn.dst then
                   regFound = true
@@ -861,8 +889,17 @@ function systolicInstanceFunctions:lower()
                   local r = n:shallowcopy()
                   assert(r.expr==nil)
                   assert(systolicAST.isSystolicAST(assn.expr))
-                  r.expr1 = assn.expr
-                  r.expr2 = assn.expr2
+
+                  if assn.dst.kind=="ram128" then
+                    r.writeExpr = assn.expr
+                    r.writeAddr = assn.addr
+                  elseif assn.dst.kind=="reg" then
+                    r.expr1 = assn.expr
+                    r.expr2 = assn.expr2
+                  else
+                    assert(false)
+                  end
+
                   r.valid = fn.valid
                   r.assn = assn
                   r.by = assn.by or "always"
@@ -871,8 +908,7 @@ function systolicInstanceFunctions:lower()
               end)
             
             if regFound==false then
-              print("Error, register ",assn.dst.name,"function",fn.name,"is never read from. bug?")
---              assert(false)
+              print("Error, ",assn.dst.kind, assn.dst.name,"function",fn.name,"is never read from. bug?")
             end
           else
             assert(false)
@@ -887,6 +923,14 @@ function systolicInstanceFunctions:lower()
     function(n)
       if systolicAST.isSystolicAST(n.expr1)==false then
         print("ERR, reg", n.inst.name, "module", self.module.name, "is not assigned to?")
+        assert(false)
+      end
+    end)
+
+  mod:S("ram128"):process(
+    function(n)
+      if systolicAST.isSystolicAST(n.writeExpr)==false then
+        print("ERR, ram128", n.inst.name, "module", self.module.name, "is not assigned to?")
         assert(false)
       end
     end)
@@ -1040,7 +1084,7 @@ function systolicInstanceFunctions:read(addr)
     return typecheck(darkroom.ast.new({kind="readinput",inst=self}):setLinenumber(0):setOffset(0):setFilename(""))
   elseif self.kind=="ram128" then
     addr = convert(addr)
-    return typecheck(darkroom.ast.new({kind="readram128",addr=addr,inst=self}):setLinenumber(0):setOffset(0):setFilename(""))
+    return typecheck(darkroom.ast.new({kind="ram128",readAddr=addr,inst=self}):setLinenumber(0):setOffset(0):setFilename(""))
   else
     assert(false)
   end
@@ -1158,7 +1202,7 @@ function systolicASTFunctions:checkVariables(scopes)
   assert(type(scopes)=="table")
 
   local function astcheck(n)
-    if n.kind=="readinput" or n.kind=="readreg" or n.kind=="readram128" or (n.kind=="call" and n.pure~=true) then
+    if n.kind=="readinput" or n.kind=="reg" or n.kind=="ram128" or (n.kind=="call" and n.pure~=true) then
       checkForInst(n.inst, scopes)
     end
 

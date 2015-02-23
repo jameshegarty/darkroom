@@ -548,11 +548,11 @@ modules.linebuffer = memoize( modules.linebuffer )
 function modules.fifo(ty)
   assert(darkroom.type.isType(ty))
 
-  local fifo = systolic.module("fifo")
+  local fifo = systolic.module("fifo_"..sanitize(tostring(ty)) )
   local writeAddr = fifo:add(systolic.reg("writeAddr", uint16, 0))
   local readAddr = fifo:add(systolic.reg("readAddr", uint16, 0))
   local bits = ty:baseType():sizeof()*8
-  local rams = map( range( ty:channels()*bits ), function(v) local r = systolic.ram128("fifo"..v); return fifo:add(r) end )
+  local rams = map( range( ty:channels()*bits ), function(v) return fifo:add(systolic.ram128("fifo"..v)) end )
 
   -- pushBack
   local input = systolic.input("indata", ty)
@@ -560,16 +560,18 @@ function modules.fifo(ty)
   local pushBack = fifo:addFunction("pushBack",{input},nil)
   pushBack:addAssert( systolic.lt(writeAddr:read() - readAddr:read(), 128), "attempting to push to a full fifo" )
   pushBack:addAssignBy( "sum", writeAddr, systolic.cast(1, uint16) )
-  for c=1,ty:channels()-1 do
+  for c=1,ty:channels() do
     for b=1,bits do
-      pushBack:writeRam128( rams[(c-1)*bits+(b-1)+1], writeAddr, systolic.index(systolic.index(input,{c-1}),{b-1}) )
+      local elem = input:read()
+      if ty:isArray() then elem = systolic.index(input:read(),{c-1}) end
+      pushBack:writeRam128( rams[(c-1)*bits+(b-1)+1], writeAddr:read(), systolic.index(elem,{b-1}) )
     end
   end
 
   -- popFront
   local out = systolic.output("outdata", ty)
   local popFront = fifo:addFunction("popFront",{},out)
-  popFront:addAssert( writeAddr ~= readAddr, "attempting to pop from an empty fifo" )
+  popFront:addAssert( systolic.gt(writeAddr:read(), readAddr:read()), "attempting to pop from an empty fifo" )
   popFront:addAssignBy( "sum", readAddr, systolic.cast(1,uint16) )
   popFront:addAssign( out, systolic.array( map( range(ty:channels()), function(c)
     return systolic.cast(systolic.array(map( range(bits), 
@@ -579,7 +581,7 @@ function modules.fifo(ty)
 
   -- ready
   local readyres = systolic.output("isReady", darkroom.type.bool() )
-  local ready = fifo:addFunction("ready",{},readyres)
+  local ready = fifo:addFunction("ready",{},readyres, {pipeline=false})
   ready:addAssign(readyres, systolic.gt(writeAddr:read()-readAddr:read(),0) )
 
   return fifo
@@ -616,7 +618,7 @@ function modules.fifonoop(ty)
 
   return fifo
 end
-modules.fifo = memoize(modules.fifonoop)
+--modules.fifo = memoize(modules.fifonoop)
 
 function modules.xygen(W,H)
   assert(type(W)=="number")
