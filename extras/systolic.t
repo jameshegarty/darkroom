@@ -157,7 +157,7 @@ end
 
 function systolicModuleFunctions:add(inst)
   assert(systolicInstance.isSystolicInstance(inst))
-  assert( (inst.kind=="instance" and inst.pure==nil) or inst.kind=="reg" or inst.kind=="ram128")
+  assert( (inst.kind=="instance" and inst.pure==nil) or inst.kind=="reg" or inst.kind=="ram128" or inst.kind=="bram")
 
   checkReserved(inst.name)
   if self.usedInstanceNames[inst.name]~=nil then
@@ -344,6 +344,18 @@ function systolicFunctionFunctions:writeRam128( ram128, addr, expr )
   table.insert( self.assignments, { dst=ram128, expr=expr, addr=addr } )
 end
 
+function systolicFunctionFunctions:bramWriteAndReturnOriginal( bram, addr, expr, ty )
+  assert(systolicInstance.isSystolicInstance(bram))
+  assert( darkroom.type.isType(ty) )
+  assert(bram.kind=="bram")
+  addr = convert(addr)
+  expr = convert(expr)
+
+  table.insert( self.assignments, { dst=bram, expr=expr, addr=addr, op="writeAndReturnOriginal" } )
+
+  return systolicAST.new({kind="bram", writeAddr = addr, writeExpr = expr, portMode="writeAndReturnOriginal", type = ty}):copyMetadataFrom(expr)
+end
+
 local function codegen(ast, callsiteId)
   assert(systolicAST.isSystolicAST(ast))
   assert(type(callsiteId)=="number" or callsiteId==nil)
@@ -525,6 +537,10 @@ local function codegen(ast, callsiteId)
           elseif n.type:isInt() and n.expr.type:isInt() and n.type:sizeof()>n.expr.type:sizeof() then
             -- must sign extend
             expr = "{ {"..(8*(n.type:sizeof()-n.expr.type:sizeof())).."{"..expr.."["..(n.expr.type:sizeof()*8-1).."]}},"..expr.."["..(n.expr.type:sizeof()*8-1)..":0]}"
+          elseif n.type:isArray() and n.expr.type:isArray() and n.type:baseType()==n.expr.type:baseType() then
+            assert(n.type:channels() == n.expr.type:channels())
+            expr = inputs.expr[c]
+            cmt = " // cast, array size change from "..tostring(n.expr.type).." to "..tostring(n.type)
           else
             --expr = inputs["expr"][c]
             print("FAIL TO CAST",n.expr.type,"to",n.type)
@@ -1142,6 +1158,17 @@ function systolic.index( expr, idx )
   return typecheck(darkroom.ast.new(t):copyMetadataFrom(expr))
 end
 
+-- This is a macro!
+-- first, flattens a n-d array into a 1 d array w/ same elements,
+-- then indexes into it.
+function systolic.flatindex( expr, idx )
+  assert(systolicAST.isSystolicAST(expr))
+  assert(type(idx)=="number")
+  assert( expr.type:isArray() )
+  local ty = darkroom.type.array( expr.type:baseType(), expr.type:channels() )
+  return systolic.index( systolic.cast( expr, ty ), {idx} )
+end
+
 function systolic.cast( expr, ty )
   expr = convert(expr)
   ty = darkroom.type.fromTerraType(ty,0,0,"")
@@ -1305,6 +1332,12 @@ function systolic.ram128( name )
   assert(type(name)=="string")
   checkReserved(name)
   return systolicInstance.new({kind="ram128",name=name,type=darkroom.type.null()})
+end
+
+function systolic.bram( name )
+  assert(type(name)=="string")
+  checkReserved(name)
+  return systolicInstance.new({kind="bram",name=name,type=darkroom.type.null()})
 end
 
 function systolic.output(name, ty)

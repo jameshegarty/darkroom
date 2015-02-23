@@ -493,8 +493,8 @@ function modules.linebuffer( maxDelayX, maxDelayY, datatype, stripWidth )
       OR[y][x] = systolic.reg("lb_x"..numToVarname(x).."_y"..numToVarname(y), datatype)
       lb:add(OR[y][x])
     end
-    if y<-maxDelayY then
-      BRAM[y] = systolic.bram(datatype)
+    if y>-maxDelayY then
+      BRAM[y] = systolic.bram( "line"..y )
       lb:add(BRAM[y])
     end
   end
@@ -504,17 +504,23 @@ function modules.linebuffer( maxDelayX, maxDelayY, datatype, stripWidth )
     local storeFn = lb:addFunction("store",{I},nil)
     storeFn:addAssignBy( "sum", writeAddr, systolic.cast(1,uint16) )
 
-    for y=-maxDelayY,0 do
+    local evicted
+    local y = 0
+    while y>=-maxDelayY do
       for x=-maxDelayX,0 do
         if x==0 and y==0 then
           storeFn:addAssign(OR[y][x],I:read())
+          if maxDelayY>0 then evicted = storeFn:bramWriteAndReturnOriginal( BRAM[y], writeAddr:read(), I:read(), datatype) end
+        elseif x==0 and y>-maxDelayY then
+          evicted = storeFn:bramWriteAndReturnOriginal( BRAM[y], writeAddr:read(), evicted, datatype)
+          storeFn:addAssign(OR[y][x],evicted)
         elseif x==0 then
-          local evicted = storeFn:bramWriteAndReturnOriginal(BRAM[y+1])
           storeFn:addAssign(OR[y][x],evicted)
         else
           storeFn:addAssign(OR[y][x],OR[y][x+1]:read())
         end
       end
+      y = y - 1
     end
   end
 
@@ -563,7 +569,7 @@ function modules.fifo(ty)
   for c=1,ty:channels() do
     for b=1,bits do
       local elem = input:read()
-      if ty:isArray() then elem = systolic.index(input:read(),{c-1}) end
+      if ty:isArray() then elem = systolic.flatindex( input:read(),c-1) end
       pushBack:writeRam128( rams[(c-1)*bits+(b-1)+1], writeAddr:read(), systolic.index(elem,{b-1}) )
     end
   end

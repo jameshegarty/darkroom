@@ -570,6 +570,10 @@ function darkroom.typedAST.typecheckAST( origast, inputs, newNodeFn )
     end
     
     ast.expr = expr
+    
+    if (expr.type:isUint()==false and expr.type:isInt()==false) and origast:arraySize("index")~= #expr.type:arrayLength() then
+      darkroom.error("Error, indexing into array with the wrong number of dimensions. Type "..tostring(expr.type),origast:linenumber(),origast:offset(), origast:filename())
+    end
 
     local i = 1
     while inputs["index"..i] do
