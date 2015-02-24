@@ -563,8 +563,8 @@ local function codegen(ast, callsiteId)
               expr = inputs.expr[c]..expr
             end
             expr = "{"..expr
-          elseif n.expr.type:isUint() and n.type:isInt() and n.expr.type.precision<n.type.precision then
-            -- casting smaller uint to larger int. Don't need to sign extend
+          elseif n.expr.type:isUint() and (n.type:isInt() or n.type:isUint()) and n.expr.type.precision<n.type.precision then
+            -- casting smaller uint to larger int or uint. Don't need to sign extend
             expr = inputs.expr[c]
           elseif n.type:isInt() and n.expr.type:isInt() and n.type:sizeof()>n.expr.type:sizeof() then
             -- casting smaller int to larger int. must sign extend
@@ -607,12 +607,13 @@ local function codegen(ast, callsiteId)
 
           if n.expr.type:isArray() then
             local flatIdx = 0
-            
+
             local dim = 1
             local scalefactor = 1
             while n["index"..dim] do
               assert(n["index"..dim].constLow == n["index"..dim].constHigh)
               flatIdx = flatIdx + (n["index"..dim].constLow)*scalefactor
+              scalefactor = scalefactor*(n.expr.type:arrayLength())[dim]
               dim = dim + 1
             end
             
