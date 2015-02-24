@@ -384,7 +384,6 @@ local function codegen(ast, callsiteId)
       local inputResDeclarations = {}
       local inputResClockedLogic = {}
       local thisDelay = 0
-      delay[n] = 0
 
       map( args, function(v,k) inputResDeclarations[k]=v[2]; inputResClockedLogic[k]=v[3]; end)
 
@@ -417,6 +416,8 @@ local function codegen(ast, callsiteId)
 
       local function getInputs()
         local maxd = foldl( math.max, 0, stripkeys(map( usedInputs, function(v,k) return delay[n[k]] end )) )
+        
+        if delay[n]~=nil and maxd~=delay[n] then print("delay shouldn't change if we call getInputs multiple times! declare _all_ your inputs upfront before calling this"); assert(false) end
         delay[n] = maxd
 
         for k,_ in pairs(usedInputs) do
@@ -582,6 +583,7 @@ local function codegen(ast, callsiteId)
           table.insert(resDeclarations, "assign "..callsite..n:cname(c).." = "..expr..";"..cmt.."\n")
           res = callsite..n:cname(c)
         elseif n.kind=="value" then
+          getInputs()
           local v
           if type(n.value)=="table" then 
             v = valueToVerilog(n.value[c], n.type:baseType()) 
@@ -592,7 +594,7 @@ local function codegen(ast, callsiteId)
 --          res = callsite..n:cname(c)
           res = "("..v..")"
         elseif n.kind=="array" then
-          addInput("expr"..c)
+          map( range(n.type:channels()), function(c) addInput("expr"..c) end )
           getInputs()
           res = inputs["expr"..c][1]
         elseif n.kind=="index" then
@@ -637,6 +639,7 @@ local function codegen(ast, callsiteId)
             res = n:cname(c)
           end]=]
         elseif n.kind=="readinput" then
+          getInputs()
           if n.type:channels()==1 then
             res = callsite..n.inst.name
           else
@@ -764,7 +767,8 @@ local function codegen(ast, callsiteId)
 
           local asst = 1
           while n["assert"..asst] do
-            local asstStr = "always @ (posedge CLK) begin if ("..n.fn.name.."_valid && "..inputs["assert"..asst][1]..[[==1'd0) begin $display("ASSERT FAILED, function ]]..n.fn.name..[[, module ]]..n.fn.module.name..[[,]]..n["assertError"..asst]..[[ inst %s",]]
+            assert(n.fn:isPure()==false)
+            local asstStr = "always @ (posedge CLK) begin if ("..inputs.valid[1].." && "..inputs["assert"..asst][1]..[[==1'd0) begin $display("ASSERT FAILED, function ]]..n.fn.name..[[, module ]]..n.fn.module.name..[[,]]..n["assertError"..asst]..[[ inst %s",]]
             n:map( "assert"..asst.."_expr", function(_,k) asstStr = asstStr..inputs["assert"..asst.."_expr"..k][1].."," end)
             asstStr = asstStr..[[INSTANCE_NAME); $stop(); end end]].."\n"
 
@@ -1083,13 +1087,15 @@ RAM128X1D ]]..self.name..[[  (
            DO = self.name.."_DO",
            ADDR = self.name.."_addr",
            CLK = "CLK",
-           WE = self.name.."_WE"}
+           WE = self.name.."_WE",
+           readFirst = true}
     conf.B={chunk=self.typeA:sizeof(),
            DI = self.name.."_DI_B",
            DO = self.name.."_DO_B",
            ADDR = self.name.."_addr_B",
            CLK = "CLK",
-           WE = "1'd0"}
+           WE = "1'd0",
+           readFirst = true}
     local addrbits = 10 - math.log(self.typeA:sizeof())/math.log(2)
     return [[wire ]]..self.name..[[_WE;
 wire []]..(self.typeA:sizeof()*8-1)..":0]"..self.name..[[_DI;

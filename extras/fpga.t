@@ -64,13 +64,15 @@ function fpga.codegenKernel( kernel, inputLinebufferFifos, imageWidth, imageHeig
   return kernelModule
 end
 
-function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffectiveCycles, imageWidth, imageHeight, imageMinX, imageMaxX )
+function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffectiveCycles, imageWidth, imageHeight, imageMinX, imageMaxX, imageMinY, imageMaxY )
   assert(darkroom.kernelGraph.isKernelGraph(kernelGraph))
   assert(type(largestEffectiveCycles)=="number")
   assert(type(imageWidth)=="number")
   assert(type(imageHeight)=="number")
   assert(type(imageMinX)=="number")
   assert(type(imageMaxX)=="number")
+  assert(type(imageMinY)=="number")
+  assert(type(imageMaxY)=="number")
 
   local definitions = {}
 
@@ -105,7 +107,7 @@ function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffe
         local kernelModule = fpga.codegenKernel( node, inputs, imageWidth, imageHeight )
         local kernelModuleInst = kernelModule:instantiate(node:name())
         pipeline:add( kernelModuleInst )
-        local xygen = fpga.modules.xygen( imageMinX, imageMaxX, imageHeight ):instantiate("xygen_"..node:name())
+        local xygen = fpga.modules.xygen( imageMinX, imageMaxX, imageMinY, imageMaxY ):instantiate("xygen_"..node:name())
         pipeline:add(xygen)
         local kernelArgs = {x=xygen:x(), y=xygen:y()}
         map( inputs, function(v,k) kernelArgs[k:name()] = v[node]:popFront() end )
@@ -241,7 +243,7 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, options)
   local result = {}
   table.insert(result, "`timescale 1ns / 10 ps\n")
 
-  local pipeline = fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffectiveCycles, imageWidth, imageHeight, padMinX, padMaxX+imageWidth )
+  local pipeline = fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffectiveCycles, imageWidth, imageHeight, padMinX, padMaxX+imageWidth, padMinY, padMaxY+imageHeight )
   result = concat(result, pipeline:toVerilog())
 
   local harness, metadata = fpga.codegenHarness( inputs, outputs, kernelGraph, shifts, options, largestEffectiveCycles, padMinX, padMinY, padMaxX, padMaxY, imageWidth, imageHeight )

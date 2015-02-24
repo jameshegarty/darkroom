@@ -628,14 +628,15 @@ function modules.fifonoop(ty)
 end
 --modules.fifo = memoize(modules.fifonoop)
 
-function modules.xygen( minX, maxX, H )
+function modules.xygen( minX, maxX, minY, maxY )
   assert(type(minX)=="number")
   assert(type(maxX)=="number")
-  assert(type(H)=="number")
+  assert(type(minY)=="number")
+  assert(type(maxY)=="number")
 
   local xygen = systolic.module("xygen")
   local xreg = xygen:add(systolic.reg("xreg", int16, minX))
-  local yreg = xygen:add(systolic.reg("yreg", int16, 0))
+  local yreg = xygen:add(systolic.reg("yreg", int16, minY))
 
   -- x fn
   local xout = systolic.output("xout", int16 )
@@ -658,7 +659,12 @@ function fixedBram(conf)
   local B = "B"
   if conf.A.chunk>conf.B.chunk then A,B=B,A end
   local res = {}
-  table.insert(res,"RAMB16_S"..(conf[A].chunk*9).."_S"..(conf[B].chunk*9).." "..conf.name.."(\n")
+
+  local configParams = {}
+  if conf[A].readFirst then table.insert(configParams, [[.WRITE_MODE_A("READ_FIRST")]]) end
+  if conf[B].readFirst then table.insert(configParams, [[.WRITE_MODE_B("READ_FIRST")]]) end
+
+  table.insert(res,"RAMB16_S"..(conf[A].chunk*9).."_S"..(conf[B].chunk*9).." #("..table.concat(configParams,",")..") "..conf.name.." (\n")
     table.insert(res,".DIPA(1'b0),\n")
     table.insert(res,".DIPB(1'b0),\n")
     if conf[A].DI~=nil then table.insert(res,".DIA("..conf[A].DI.."),\n") end
