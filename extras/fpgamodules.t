@@ -513,11 +513,11 @@ function modules.linebuffer( maxDelayX, maxDelayY, datatype, stripWidth )
           if maxDelayY>0 then evicted = storeFn:bramWriteAndReturnOriginal( BRAM[y], writeAddr:read(), I:read(), datatype) end
         elseif x==0 and y>-maxDelayY then
           evicted = storeFn:bramWriteAndReturnOriginal( BRAM[y], writeAddr:read(), evicted, datatype)
-          storeFn:addAssign(OR[y][x],evicted)
+          storeFn:addAssign( OR[y][x], evicted )
         elseif x==0 then
-          storeFn:addAssign(OR[y][x],evicted)
+          storeFn:addAssign( OR[y][x], evicted )
         else
-          storeFn:addAssign(OR[y][x],OR[y][x+1]:read())
+          storeFn:addAssign( OR[y][x], OR[y][x+1]:read() )
         end
       end
       y = y - 1
@@ -531,7 +531,7 @@ function modules.linebuffer( maxDelayX, maxDelayY, datatype, stripWidth )
     local Output = systolic.output("out", darkroom.type.array(datatype,{maxDelayX+1,maxDelayY+1}))
     local loadFn = lb:addFunction("load",{},Output)
     loadFn:addAssignBy( "sumwrap", readAddr, systolic.cast(1,uint16), systolic.cast( stripWidth-1, uint16 ) )
-    loadFn:addAssert( hasData, "read from linebuffer when it doesnt have data")
+    loadFn:addAssert( hasData, "read from linebuffer when it doesnt have data WA %d RA %d ", writeAddr:read(), readAddr:read() )
     --loadFn:addAssert(systolic.eq(writeAddr:read(),readAddr:read()+systolic.cast(1,uint16)), "read from linebuffer too late!")
 
     local Oflat = {}
@@ -629,7 +629,6 @@ end
 --modules.fifo = memoize(modules.fifonoop)
 
 function modules.xygen( minX, maxX, H )
-print("XYGEN",minX,maxX)
   assert(type(minX)=="number")
   assert(type(maxX)=="number")
   assert(type(H)=="number")

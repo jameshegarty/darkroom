@@ -423,6 +423,12 @@ local function codegen(ast, callsiteId)
           inputs[k]=args[k][1]
           local input = n[k]
           local delayby = maxd-delay[input]
+
+          if type(n[k].constLow)=="number" and n[k].constLow==n[k].constHigh then
+            -- this is something with a constant value, so we don't need to retime it
+            delayby = 0
+          end
+
           for d=1,delayby do
             for c=1,input.type:channels() do
               -- type is determined by producer, b/c consumer op can change type
@@ -582,8 +588,9 @@ local function codegen(ast, callsiteId)
           else
             v = valueToVerilog(n.value, n.type:baseType())
           end
-          table.insert(resDeclarations,declareWire( n.type:baseType(), callsite..n:cname(c), v, " //value" ))
-          res = callsite..n:cname(c)
+--          table.insert(resDeclarations,declareWire( n.type:baseType(), callsite..n:cname(c), v, " //value" ))
+--          res = callsite..n:cname(c)
+          res = "("..v..")"
         elseif n.kind=="array" then
           addInput("expr"..c)
           getInputs()
@@ -719,7 +726,11 @@ local function codegen(ast, callsiteId)
 
         elseif n.kind=="fndefn" then
           n:map( "dst", function(n,k) addInput("expr"..k) end)
-          n:map( "assert", function(n,k) addInput("assert"..k) end)
+          n:map( "assert", 
+                 function(_,k) 
+                   addInput("assert"..k) 
+                   n:map( "assert"..k.."_expr", function(nn,kk) addInput("assert"..k.."_expr"..kk) end)
+                 end)
           if n.fn:isPure()==false then addInput("valid") end
           getInputs()
 
@@ -753,7 +764,11 @@ local function codegen(ast, callsiteId)
 
           local asst = 1
           while n["assert"..asst] do
-            table.insert(resDeclarations,"always @ (posedge CLK) begin if ("..n.fn.name.."_valid && "..inputs["assert"..asst][1]..[[==1'd0) begin $display("ASSERT FAILED, function ]]..n.fn.name..[[, module ]]..n.fn.module.name..[[,]]..n["assertError"..asst]..[[ inst %s",INSTANCE_NAME); $stop(); end end]].."\n")
+            local asstStr = "always @ (posedge CLK) begin if ("..n.fn.name.."_valid && "..inputs["assert"..asst][1]..[[==1'd0) begin $display("ASSERT FAILED, function ]]..n.fn.name..[[, module ]]..n.fn.module.name..[[,]]..n["assertError"..asst]..[[ inst %s",]]
+            n:map( "assert"..asst.."_expr", function(_,k) asstStr = asstStr..inputs["assert"..asst.."_expr"..k][1].."," end)
+            asstStr = asstStr..[[INSTANCE_NAME); $stop(); end end]].."\n"
+
+            table.insert(resDeclarations, asstStr)
             asst = asst + 1
           end
 
@@ -831,10 +846,17 @@ function systolicFunctionFunctions:isAccessor()
   return #self.inputs==0
 end
 
-function systolicFunctionFunctions:addAssert(expr, s)
-  assert(systolicAST.isSystolicAST(expr))
+function systolicFunctionFunctions:addAssert( cond,  s, ...)
+  assert(systolicAST.isSystolicAST(cond))
   assert(type(s)=="string")
-  table.insert(self.asserts,{expr=expr,error=s})
+
+  local asst = {cond=cond,error=s,expr={}}
+
+  for k,v in ipairs({...}) do
+    table.insert(asst.expr, v)
+  end
+
+  table.insert(self.asserts, asst )
 end
 
 
@@ -892,8 +914,13 @@ function systolicInstanceFunctions:lower()
       
       local acnt = 1
       for _,asst in pairs( fn.asserts ) do
-        node["assert"..acnt] = asst.expr:disablePipelining()
+        node["assert"..acnt] = asst.cond:disablePipelining()
         node["assertError"..acnt] = asst.error
+
+        for k,v in ipairs(asst.expr) do
+          node["assert"..acnt.."_expr"..k] = v
+        end
+
         acnt = acnt + 1
       end
 
