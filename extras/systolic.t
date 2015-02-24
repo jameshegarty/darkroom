@@ -566,6 +566,9 @@ local function codegen(ast, callsiteId)
             elseif (fromType:isUint() or fromType:isInt()) and (toType:isInt() or toType:isUint()) and fromType.precision>toType.precision then
               -- truncation. I don't know how this works
               return expr
+            elseif fromType:isInt() and toType:isUint() and fromType.precision == toType.precision then
+              -- int to uint with same precision. I don't know how this works
+              return expr
             else
               print("FAIL TO CAST",fromType,"to",toType)
               assert(false)
