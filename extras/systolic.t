@@ -32,7 +32,12 @@ end
 local function convert(ast)
   if getmetatable(ast)==systolicASTMT then
     return ast
-  elseif type(ast)=="number" or type(ast)=="boolean" then
+  elseif type(ast)=="boolean" then
+    -- we might want to do this, but if we accidentally
+    -- use a binary op (==) or w/e on a systolic table,
+    -- we will get a bool, but this is definitely not what we want
+    assert(false)
+  elseif type(ast)=="number" then
     local t = darkroom.ast.new({kind="value", value=ast}):setLinenumber(0):setOffset(0):setFilename("")
     return typecheck(t)
   else
@@ -327,12 +332,13 @@ function systolicFunctionFunctions:addAssign( dst, expr )
   table.insert(self.assignments,{dst=dst,expr=expr})
 end
 
-function systolicFunctionFunctions:addAssignBy( op, dst, expr, expr2 )
+function systolicFunctionFunctions:addAssignBy( op, dst, expr, expr2, expr3 )
   assert(type(op)=="string")
   assert(dst.kind=="reg")
   expr = convert(expr)
   if expr2~=nil then expr2=convert(expr2) end
-  table.insert(self.assignments,{dst=dst,expr=expr, expr2=expr2, by=op})
+  if expr3~=nil then expr3=convert(expr3) end
+  table.insert(self.assignments,{dst=dst,expr=expr, expr2=expr2, expr3=expr3, by=op})
 end
 
 function systolicFunctionFunctions:writeRam128( ram128, addr, expr )
@@ -516,13 +522,20 @@ local function codegen(ast, callsiteId)
         elseif n.kind=="select" or n.kind=="vectorSelect" then
           addInput("cond"); addInput("a"); addInput("b");
           getInputs()
-          thisDelay = 1
 
-          table.insert(resDeclarations,declareReg( n.type:baseType(), callsite..n:cname(c), "", " // "..n.kind.." result" ))
+          if n.pipeline then
+            thisDelay = 1
+            table.insert( resDeclarations, declareReg( n.type:baseType(), callsite..n:cname(c), "", " // "..n.kind.." result" ))
+          else
+            thisDelay = 0
+            table.insert( resDeclarations, declareWire( n.type:baseType(), callsite..n:cname(c), "", " // "..n.kind.." result" ))
+          end
+
           local condC = 1
           if n.kind=="vectorSelect" then condC=c end
 
-          table.insert(resClockedLogic, callsite..n:cname(c).." <= ("..inputs.cond[condC]..")?("..inputs.a[c].."):("..inputs.b[c].."); // "..n.kind.."\n")
+          --table.insert(resClockedLogic, callsite..n:cname(c).." <= ("..inputs.cond[condC]..")?("..inputs.a[c].."):("..inputs.b[c].."); // "..n.kind.."\n")
+          addstat( n.pipeline, callsite..n:cname(c), "("..inputs.cond[condC]..")?("..inputs.a[c].."):("..inputs.b[c].."); // "..n.kind.."\n") 
           res = callsite..n:cname(c)
         elseif n.kind=="cast" then
           addInput("expr")
@@ -540,10 +553,14 @@ local function codegen(ast, callsiteId)
             end
             expr = "{"..expr
           elseif n.expr.type:isUint() and n.type:isInt() and n.expr.type.precision<n.type.precision then
+            -- casting smaller uint to larger int. Don't need to sign extend
             expr = inputs.expr[c]
           elseif n.type:isInt() and n.expr.type:isInt() and n.type:sizeof()>n.expr.type:sizeof() then
-            -- must sign extend
+            -- casting smaller int to larger int. must sign extend
             expr = "{ {"..(8*(n.type:sizeof()-n.expr.type:sizeof())).."{"..expr.."["..(n.expr.type:sizeof()*8-1).."]}},"..expr.."["..(n.expr.type:sizeof()*8-1)..":0]}"
+          elseif (n.expr.type:isUint() or n.expr.type:isInt()) and (n.type:isInt() or n.type:isUint()) and n.expr.type.precision>n.type.precision then
+            -- truncation. I don't know how this works
+            expr = inputs.expr[c]
           elseif n.type:isArray() and n.expr.type:isArray() and n.type:baseType()==n.expr.type:baseType() then
             assert(n.type:channels() == n.expr.type:channels())
             expr = inputs.expr[c]
@@ -623,6 +640,7 @@ local function codegen(ast, callsiteId)
         elseif n.kind=="reg" then
           addInput("expr1")
           if n.expr2~=nil then addInput("expr2") end
+          if n.expr3~=nil then addInput("expr3") end
           addInput("valid")
           getInputs()
 
@@ -632,7 +650,10 @@ local function codegen(ast, callsiteId)
           elseif n.by=="sum" then
             table.insert(resClockedLogic, "if ("..inputs.valid[1]..") begin "..n.inst.name..channelIndex( n.inst.type, c).." <= "..n.inst.name.."+"..inputs["expr1"][c].."; end  // function register assignment by sum\n")
           elseif n.by=="sumwrap" then
-            table.insert(resClockedLogic, "if ("..inputs.valid[1]..") begin "..n.inst.name.." <= ("..n.inst.name.."=="..inputs.expr2[1]..")?("..n.inst.name.."+"..inputs["expr1"][1].."):("..valueToVerilog(0,n.type).."); end  // function register assignment by sumwrap\n")
+            local wrapto = valueToVerilog(0,n.type)
+            if n.expr3~=nil then wrapto = inputs.expr3[1] end
+
+            table.insert(resClockedLogic, "if ("..inputs.valid[1]..") begin "..n.inst.name.." <= ("..n.inst.name.."=="..inputs.expr2[1]..")?("..wrapto.."):("..n.inst.name.."+"..inputs["expr1"][1].."); end  // function register assignment by sumwrap\n")
           else
             print("BY",n.by)
             assert(false)
@@ -752,6 +773,7 @@ local function codegen(ast, callsiteId)
             addInput("writeExpr")
             getInputs()
 
+            thisDelay = 1
             table.insert(resDeclarations,"assign "..n.inst.name.."_addr = "..inputs.writeAddr[1]..";\n")
             table.insert(resDeclarations,"assign "..n.inst.name.."_WE = "..inputs.valid[1]..";\n")
             table.insert(resDeclarations,"assign "..n.inst.name.."_DI = "..inputs.writeExpr[1]..";\n")
@@ -935,6 +957,7 @@ function systolicInstanceFunctions:lower()
                   elseif assn.dst.kind=="reg" then
                     r.expr1 = assn.expr
                     r.expr2 = assn.expr2
+                    r.expr3 = assn.expr3
                   else
                     assert(false)
                   end
@@ -1233,6 +1256,12 @@ function systolic.cast( expr, ty )
   return typecheck(darkroom.ast.new({kind="cast",expr=expr,type=ty}):copyMetadataFrom(expr))
 end
 
+function systolic.value(v)
+  assert(type(v)=="number" or type(v)=="boolean")
+  local t = darkroom.ast.new({kind="value", value=v}):setLinenumber(0):setOffset(0):setFilename("")
+  return typecheck(t)
+end
+
 function systolic.array( expr )
   assert(type(expr)=="table")
   assert(#expr>0)
@@ -1244,7 +1273,7 @@ function systolic.array( expr )
   return typecheck(darkroom.ast.new(t):copyMetadataFrom(expr[1]))
 end
 
-function systolic.select(cond,a,b)
+function systolic.select( cond, a, b )
   cond, a, b = convert(cond), convert(a), convert(b)
   return typecheck(darkroom.ast.new({kind="select",cond=cond,a=a,b=b}):copyMetadataFrom(cond))
 end
@@ -1317,7 +1346,9 @@ function systolicASTFunctions:toVerilog( options, scopes )
   assert(type(scopes)=="table" or scopes==nil)
 
   local function addValidBit(ast,valid)
-    valid = convert(valid)
+    assert(systolicAST.isSystolicAST(ast))
+    assert(systolicAST.isSystolicAST(valid))
+
     return ast:S("call"):process(
       function(n)
         if n.pure~=true and systolicAST.isSystolicAST(n.valid)==false then
@@ -1331,8 +1362,10 @@ function systolicASTFunctions:toVerilog( options, scopes )
 
   local ast = self
   if options.valid~=nil then
+    local optv = options.valid
+    if type(optv)=="boolean" then optv=systolic.value(optv) end
     -- obviously, if there are any function calls in the condition, we want them to always run
-    local valid = addValidBit(convert(options.valid),true)
+    local valid = addValidBit(optv, systolic.value(true) )
     valid = valid:disablePipelining()
     ast = addValidBit(ast,valid)
   end

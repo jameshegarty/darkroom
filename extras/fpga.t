@@ -24,20 +24,36 @@ function fpga.codegenKernel( kernel, inputLinebufferFifos, imageWidth, imageHeig
 
   local systolicFn = kernel.kernel:visitEach(
     function( node, inputs)
+      local res
+
       if node.kind=="load" then
-        return systolic.index( datasourceToInput[node.from], {systolic.neg(inputs.relX), systolic.neg(inputs.relY)})
+        res = systolic.index( datasourceToInput[node.from], {systolic.neg(inputs.relX), systolic.neg(inputs.relY)})
+      elseif node.kind=="position" then
+        if node.coord=="x" then
+          res = x:read()
+        elseif node.coord=="y" then
+          res = y:read()
+        else
+          assert(false)
+        end
       elseif node.kind=="crop" then
         local cond = systolic.__or(systolic.ge(x:read()-systolic.cast(node.shiftX,int16),systolic.cast(imageWidth,int16)),systolic.ge(y:read()-systolic.cast(node.shiftY,int16),systolic.cast(imageHeight,int16)))
         assert(systolicAST.isSystolicAST(cond))
         assert(systolicAST.isSystolicAST(inputs.expr))
-        return systolic.select(cond , systolic.cast(0,inputs.expr.type), inputs.expr )
+        res = systolic.select(cond , systolic.cast(0,inputs.expr.type), inputs.expr )
       else
+        -- fallthrough: this is a valid darkroom typedAST,
+        -- which we assume we can trivially convert to systolicAST
         local n = node:shallowcopy()
         for k,v in node:inputs() do
           n[k] = inputs[k]
         end
         return systolicAST.new(n):copyMetadataFrom(node)
       end
+
+      -- you had better return a valid, typechecked systolicAST!
+      assert(systolicAST.isSystolicAST(res))
+      return res
     end)
 
   local out = systolic.output( "out", kernel.kernel.type )
@@ -48,11 +64,13 @@ function fpga.codegenKernel( kernel, inputLinebufferFifos, imageWidth, imageHeig
   return kernelModule
 end
 
-function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffectiveCycles, imageWidth, imageHeight )
+function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffectiveCycles, imageWidth, imageHeight, imageMinX, imageMaxX )
   assert(darkroom.kernelGraph.isKernelGraph(kernelGraph))
   assert(type(largestEffectiveCycles)=="number")
   assert(type(imageWidth)=="number")
   assert(type(imageHeight)=="number")
+  assert(type(imageMinX)=="number")
+  assert(type(imageMaxX)=="number")
 
   local definitions = {}
 
@@ -65,7 +83,6 @@ function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffe
   local moduleOutputs  = {validOut,finalOut}
   local pipelineMain = statemachine.block( "main", validIn:read() )
   local pipeline = statemachine.module("Pipeline", moduleInputs, moduleOutputs, pipelineMain)
---  local inputLinebufferFifos, gatherInputLinebuffers, outputLinebuffers = fpga.allocateLinebuffers( kernelGraph, options, pipeline, pipelineMain, inputIdsToSystolic, validIn )
 
   kernelGraph:visitEach(
     function(node, inputArgs)
@@ -88,13 +105,13 @@ function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffe
         local kernelModule = fpga.codegenKernel( node, inputs, imageWidth, imageHeight )
         local kernelModuleInst = kernelModule:instantiate(node:name())
         pipeline:add( kernelModuleInst )
-        local xygen = fpga.modules.xygen(imageWidth, imageHeight ):instantiate("xygen_"..node:name())
+        local xygen = fpga.modules.xygen( imageMinX, imageMaxX, imageHeight ):instantiate("xygen_"..node:name())
         pipeline:add(xygen)
         local kernelArgs = {x=xygen:x(), y=xygen:y()}
         map( inputs, function(v,k) kernelArgs[k:name()] = v[node]:popFront() end )
         local kernelCall = kernelModuleInst:process( kernelArgs )
         local fifoReady = mapToArray(map( inputs, function(n) return n[node]:ready() end))
-        local allFifosReady = foldt( fifoReady, function(a,b) if b==nil then return a else return systolic.__and(a,b) end end)
+        local allFifosReady = foldt( fifoReady, function(a,b) if b==nil then return a else return systolic.__and(a,b) end end, validIn:read())
         assert(systolicAST.isSystolicAST(allFifosReady))
 
 --        if options.debugImages~=nil then map( inputs, function(v,k) pipelineMain:addIfFwrite(options.debugImages..node:name().."_input_"..k:name()..".raw", allFifosReady, systolic.index(v[node]:popFront(),{0,0})) end) end
@@ -114,7 +131,7 @@ function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffe
           local bx, by = node:bufferSize2d( kernelGraph )
           local lb = fpga.modules.linebuffer( bx, by, node.kernel.type, options.stripWidth ):instantiate("linebuffer_"..node:name())
           pipeline:add(lb)
-          if options.debugImages~=nil then pipelineMain:addIfFwrite(options.debugImages..node:name()..".raw", lb:ready(), systolic.index(lb:load(),{0,0})) end
+--          if options.debugImages~=nil then pipelineMain:addIfFwrite(options.debugImages..node:name()..".raw", lb:ready(), systolic.index(lb:load(),{0,0})) end
 
           -- add a fifo for each consumer
           local outputList = {}
@@ -224,7 +241,7 @@ function fpga.compile(inputs, outputs, imageWidth, imageHeight, options)
   local result = {}
   table.insert(result, "`timescale 1ns / 10 ps\n")
 
-  local pipeline = fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffectiveCycles, imageWidth, imageHeight )
+  local pipeline = fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffectiveCycles, imageWidth, imageHeight, padMinX, padMaxX+imageWidth )
   result = concat(result, pipeline:toVerilog())
 
   local harness, metadata = fpga.codegenHarness( inputs, outputs, kernelGraph, shifts, options, largestEffectiveCycles, padMinX, padMinY, padMaxX, padMaxY, imageWidth, imageHeight )

@@ -381,8 +381,8 @@ function filter(t,f)
   return r
 end
 
-function foldt(t,f)
-  assert(#t>0)
+function foldt(t, f, base)
+  if #t==0 then return base end
   if #t==1 then return f(t[1]) end
   if #t==2 then return f(t[1],t[2]) end
 

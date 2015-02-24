@@ -502,7 +502,7 @@ function modules.linebuffer( maxDelayX, maxDelayY, datatype, stripWidth )
   do -- store
     local I = systolic.input( "indata", datatype )
     local storeFn = lb:addFunction("store",{I},nil)
-    storeFn:addAssignBy( "sum", writeAddr, systolic.cast(1,uint16) )
+    storeFn:addAssignBy( "sumwrap", writeAddr, systolic.cast(1,uint16), systolic.cast( stripWidth-1, uint16 ) )
 
     local evicted
     local y = 0
@@ -524,13 +524,15 @@ function modules.linebuffer( maxDelayX, maxDelayY, datatype, stripWidth )
     end
   end
 
+  local hasData = systolic.eq( writeAddr:read(), systolic.select( systolic.eq(readAddr:read(),systolic.cast(stripWidth-1, uint16)), systolic.cast(0,uint16), readAddr:read()+systolic.cast(1,uint16) ) )
+
   do -- load
     local strideX = systolic.input("strideX",uint8)
     local Output = systolic.output("out", darkroom.type.array(datatype,{maxDelayX+1,maxDelayY+1}))
     local loadFn = lb:addFunction("load",{},Output)
-    loadFn:addAssignBy( "sum", readAddr, systolic.cast(1,uint16) )
-    loadFn:addAssert(systolic.gt(writeAddr:read(),readAddr:read()), "read from linebuffer when it doesnt have data")
-    loadFn:addAssert(systolic.eq(writeAddr:read(),readAddr:read()+systolic.cast(1,uint16)), "read from linebuffer too late!")
+    loadFn:addAssignBy( "sumwrap", readAddr, systolic.cast(1,uint16), systolic.cast( stripWidth-1, uint16 ) )
+    loadFn:addAssert( hasData, "read from linebuffer when it doesnt have data")
+    --loadFn:addAssert(systolic.eq(writeAddr:read(),readAddr:read()+systolic.cast(1,uint16)), "read from linebuffer too late!")
 
     local Oflat = {}
     for y=0,maxDelayY do
@@ -545,7 +547,7 @@ function modules.linebuffer( maxDelayX, maxDelayY, datatype, stripWidth )
   -- ready
   local readyres = systolic.output("isReady", darkroom.type.bool() )
   local readyFn = lb:addFunction("ready",{},readyres,{pipeline=false})
-  readyFn:addAssign( readyres, systolic.gt(writeAddr:read(),readAddr:read()) )
+  readyFn:addAssign( readyres, hasData )
 
   return lb
 end
@@ -626,20 +628,22 @@ function modules.fifonoop(ty)
 end
 --modules.fifo = memoize(modules.fifonoop)
 
-function modules.xygen(W,H)
-  assert(type(W)=="number")
+function modules.xygen( minX, maxX, H )
+print("XYGEN",minX,maxX)
+  assert(type(minX)=="number")
+  assert(type(maxX)=="number")
   assert(type(H)=="number")
 
   local xygen = systolic.module("xygen")
-  local xreg = xygen:add(systolic.reg("xreg", int16, 0))
+  local xreg = xygen:add(systolic.reg("xreg", int16, minX))
   local yreg = xygen:add(systolic.reg("yreg", int16, 0))
 
   -- x fn
   local xout = systolic.output("xout", int16 )
   local x = xygen:addFunction("x",{},xout)
   x:addAssign(xout, xreg:read())
-  x:addAssignBy( "sumwrap", xreg, systolic.cast(1,int16), systolic.cast(W,int16) )
-  x:addAssignBy( "sum", yreg, systolic.select(systolic.eq(xreg:read(),systolic.cast(W,int16)), systolic.cast(1,int16), systolic.cast(0,int16)) )
+  x:addAssignBy( "sumwrap", xreg, systolic.cast(1,int16), systolic.cast( maxX-1 ,int16), systolic.cast( minX, int16) )
+  x:addAssignBy( "sum", yreg, systolic.select(systolic.eq( xreg:read(), systolic.cast( maxX-1, int16 ) ), systolic.cast(1,int16), systolic.cast(0,int16)) )
 
   -- y fn
   local yout = systolic.output("yout", int16 )
