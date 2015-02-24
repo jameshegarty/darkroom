@@ -553,9 +553,28 @@ local function codegen(ast, callsiteId)
           getInputs()
           local expr
           local cmt = " // cast "..tostring(n.expr.type).." to "..tostring(n.type)
+
+          local function dobasecast( expr, fromType, toType )
+            assert(type(expr)=="string")
+
+            if fromType:isUint() and (toType:isInt() or toType:isUint()) and fromType.precision < toType.precision then
+              -- casting smaller uint to larger int or uint. Don't need to sign extend
+              return expr
+            elseif toType:isInt() and fromType:isInt() and toType.precision > fromType.precision then
+              -- casting smaller int to larger int. must sign extend
+              return "{ {"..(8*(toType:sizeof() - fromType:sizeof())).."{"..expr.."["..(fromType:sizeof()*8-1).."]}},"..expr.."["..(toType:sizeof()*8-1)..":0]}"
+            elseif (fromType:isUint() or fromType:isInt()) and (toType:isInt() or toType:isUint()) and fromType.precision>toType.precision then
+              -- truncation. I don't know how this works
+              return expr
+            else
+              print("FAIL TO CAST",fromType,"to",toType)
+              assert(false)
+            end
+          end
+
           if n.type:isArray() and n.expr.type:isArray()==false then
             expr = inputs["expr"][1] -- broadcast
-            cmt = " // broadcast "..n.expr.type:str().." to "..n.type:str()
+            cmt = " // broadcast "..tostring(n.expr.type).." to "..tostring(n.type)
           elseif n.expr.type:isArray() and n.type:isArray()==false and n.expr.type:arrayOver():isBool() and n.type:isUint() then
             expr = "}"
             for c=1,n.expr.type:channels() do
@@ -563,23 +582,16 @@ local function codegen(ast, callsiteId)
               expr = inputs.expr[c]..expr
             end
             expr = "{"..expr
-          elseif n.expr.type:isUint() and (n.type:isInt() or n.type:isUint()) and n.expr.type.precision<n.type.precision then
-            -- casting smaller uint to larger int or uint. Don't need to sign extend
-            expr = inputs.expr[c]
-          elseif n.type:isInt() and n.expr.type:isInt() and n.type:sizeof()>n.expr.type:sizeof() then
-            -- casting smaller int to larger int. must sign extend
-            expr = "{ {"..(8*(n.type:sizeof()-n.expr.type:sizeof())).."{"..inputs.expr[c].."["..(n.expr.type:sizeof()*8-1).."]}},"..inputs.expr[c].."["..(n.expr.type:sizeof()*8-1)..":0]}"
-          elseif (n.expr.type:isUint() or n.expr.type:isInt()) and (n.type:isInt() or n.type:isUint()) and n.expr.type.precision>n.type.precision then
-            -- truncation. I don't know how this works
-            expr = inputs.expr[c]
           elseif n.type:isArray() and n.expr.type:isArray() and n.type:baseType()==n.expr.type:baseType() then
             assert(n.type:channels() == n.expr.type:channels())
             expr = inputs.expr[c]
             cmt = " // cast, array size change from "..tostring(n.expr.type).." to "..tostring(n.type)
+          elseif n.type:isArray() and n.expr.type:isArray()  then
+            assert(n.type:arrayLength() == n.expr.type:arrayLength())
+            -- same shape arrays, different base types
+            expr = dobasecast( inputs.expr[c], n.expr.type:baseType(), n.type:baseType() )
           else
-            --expr = inputs["expr"][c]
-            print("FAIL TO CAST",n.expr.type,"to",n.type)
-            assert(false)
+            expr = dobasecast( inputs.expr[c], n.expr.type, n.type )
           end
 
           

@@ -1,6 +1,5 @@
 (terralib.loadfile("test.t"))()
 import "darkroom"
-terralib.require("darkroomDebug")
 
 windowRadius = 2
 

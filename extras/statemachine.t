@@ -80,12 +80,17 @@ function stateMachineModuleFunctions:toVerilog()
       end
 
       t = concat(t,exprstat)
-      
-      if v.dst.kind=="output" then
-        table.insert( t, "assign "..v.dst.name.." = "..exprvar[1]..";\n" )
-      else
-        assert(false)
-        table.insert( t, v.dst.name.." <= "..exprvar[1]..";\n" )
+
+      for c=1,v.dst.type:channels() do
+        if v.dst.kind=="output" then
+          if v.dst.type:channels()>1 then
+            table.insert( t, "assign "..v.dst.name.."["..(v.dst.type:baseType():sizeof()*8*(c)-1)..":"..(v.dst.type:baseType():sizeof()*8*(c-1)).."] = "..exprvar[c]..";\n" )
+          else
+            table.insert( t, "assign "..v.dst.name.." = "..exprvar[1]..";\n" )
+          end
+        else
+          assert(false)
+        end
       end
     elseif v.kind=="fwrite" then
       local varname = "fileout_"..sanitize(v.filename)
