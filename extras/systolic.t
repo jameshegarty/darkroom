@@ -564,7 +564,7 @@ local function codegen(ast, callsiteId)
             expr = inputs.expr[c]
           elseif n.type:isInt() and n.expr.type:isInt() and n.type:sizeof()>n.expr.type:sizeof() then
             -- casting smaller int to larger int. must sign extend
-            expr = "{ {"..(8*(n.type:sizeof()-n.expr.type:sizeof())).."{"..expr.."["..(n.expr.type:sizeof()*8-1).."]}},"..expr.."["..(n.expr.type:sizeof()*8-1)..":0]}"
+            expr = "{ {"..(8*(n.type:sizeof()-n.expr.type:sizeof())).."{"..inputs.expr[c].."["..(n.expr.type:sizeof()*8-1).."]}},"..inputs.expr[c].."["..(n.expr.type:sizeof()*8-1)..":0]}"
           elseif (n.expr.type:isUint() or n.expr.type:isInt()) and (n.type:isInt() or n.type:isUint()) and n.expr.type.precision>n.type.precision then
             -- truncation. I don't know how this works
             expr = inputs.expr[c]
