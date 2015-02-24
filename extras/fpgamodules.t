@@ -512,8 +512,8 @@ function modules.linebuffer( maxDelayX, maxDelayY, datatype, stripWidth )
           storeFn:addAssign(OR[y][x],I:read())
           if maxDelayY>0 then evicted = storeFn:bramWriteAndReturnOriginal( BRAM[y], writeAddr:read(), I:read(), datatype) end
         elseif x==0 and y>-maxDelayY then
-          evicted = storeFn:bramWriteAndReturnOriginal( BRAM[y], writeAddr:read(), evicted, datatype)
           storeFn:addAssign( OR[y][x], evicted )
+          evicted = storeFn:bramWriteAndReturnOriginal( BRAM[y], writeAddr:read(), evicted, datatype)
         elseif x==0 then
           storeFn:addAssign( OR[y][x], evicted )
         else

@@ -421,7 +421,12 @@ local function codegen(ast, callsiteId)
         delay[n] = maxd
 
         for k,_ in pairs(usedInputs) do
-          inputs[k]=args[k][1]
+          -- need to do a deep copy of the table of outputs (b/c this is shared between nodes)
+          for c,v in ipairs(args[k][1]) do 
+            if c==1 then inputs[k]={} end
+            inputs[k][c]=v 
+          end
+
           local input = n[k]
           local delayby = maxd-delay[input]
 
@@ -434,7 +439,6 @@ local function codegen(ast, callsiteId)
             for c=1,input.type:channels() do
               -- type is determined by producer, b/c consumer op can change type
               if input.type~=darkroom.type.null() then
---                local decl = declareReg( input.type:baseType(), inputs[k][c].."_retime"..d, "", " // retiming "..delay[input].." to "..maxd)
                 local decl = declareReg( input.type:baseType(), inputs[k][c].."_retime"..d, "")
                 local cl = inputs[k][c].."_retime"..d.." <= "..sel(d>1,inputs[k][c].."_retime"..(d-1),inputs[k][c]).."; // retiming\n"
                 table.insert(usedResDeclarations, decl)
@@ -823,12 +827,6 @@ local function codegen(ast, callsiteId)
   local resDeclarations = finalOut[2]
   local resClockedLogic = finalOut[3]
   finalOut = finalOut[1]
-
---  if ast.type:isArray()==false then
---    finalOut = "{"..table.concat(finalOut,",").."}"
---  else
---    finalOut = finalOut[1]
---  end
 
   return resDeclarations, resClockedLogic, finalOut, delay
 end
