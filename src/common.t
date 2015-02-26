@@ -432,11 +432,11 @@ function sel(cond,a,b)
 end
 
 -- unlike lua's in place sort, this returns the sorted table
-function sort(a)
+function sort( a, f )
   assert(type(a)=="table")
   local t = {}
   for k,v in pairs(a) do t[k] = v end
-  table.sort(t)
+  table.sort( t, f )
   return t
 end
 

@@ -1,6 +1,6 @@
 import "darkroom"
-fpga = terralib.require("fpga")
-terralib.require("image")
+fpga = require("fpga")
+require("image")
 cstdlib = terralib.includec("stdlib.h")
 cstdio = terralib.includec("stdio.h")
 

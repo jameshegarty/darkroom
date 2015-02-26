@@ -152,8 +152,12 @@ module stage
    reg       pipelineStarted = 1'b0;
    wire      pipelineValidOut;
  
-  PipelineInterface pipelineInterface(.CLK(FCLK0),.validIn(pipelineStarted),.pipelineInput(PipelineInput),.pipelineOutput(PipelineOutput),.validOut(pipelineValidOut));
-            
+  //PipelineInterface pipelineInterface(.CLK(FCLK0),.validIn(pipelineStarted),.pipelineInput(PipelineInput),.pipelineOutput(PipelineOutput),.validOut(pipelineValidOut));
+   wire      startNextCycle;
+   assign startNextCycle =  BYTES_FREE_READ < 13'd3072 && (!pipelineStarted);
+   
+  Pipeline pipeline(.CLK(FCLK0),.validIn(pipelineStarted),.input1(PipelineInput),.out(PipelineOutput),.validOut(pipelineValidOut),.reset(startNextCycle));
+   
   wire [63:0] DO;
   wire [63:0] DI;
   wire [8:0] RDADDR;
@@ -207,7 +211,7 @@ module stage
      end else if (pipelineStarted && processedPixels == lengthInput) begin // processedPixels counts the number of clocks
         // we're done
         pipelineStarted <= 1'b0;
-     end else if (BYTES_FREE_READ < 13'd3072 && (!pipelineStarted)) begin
+     end else if (startNextCycle) begin
         // wait until there is 1k of slack in the buffer, then start processing
         pipelineStarted <= 1'b1;
         processedPixels <= 0;

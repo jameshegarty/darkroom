@@ -92,6 +92,7 @@ function declareReg(ty, name, initial, comment)
 end
 
 function declareWire(ty, name, str, comment)
+  assert(darkroom.type.isType(ty))
   assert(type(str)=="string" or str==nil)
 
   if comment==nil then comment="" end
@@ -148,15 +149,18 @@ function pointerToVarname(x)
 end
 
 local __usedModuleNames = {}
-function systolic.module(name)
+function systolic.module( name, options )
   assert(type(name)=="string")
+  if options==nil then options={} end
+  assert(type(options)=="table")
+
   if __usedModuleNames[name]~=nil then
     print("Module name ",name, "already used")
     assert(false)
   end
 
   __usedModuleNames[name]=1
-  local t = {name=name,instances={},functions={}, instanceMap={}, usedInstanceNames = {}}
+  local t = {name=name,instances={},functions={}, instanceMap={}, usedInstanceNames = {}, options=options}
   return setmetatable(t,systolicModuleMT)
 end
 
@@ -668,45 +672,59 @@ local function codegen(ast, callsiteId)
             res = n:cname(c)
           end
         elseif n.kind=="reg" then
-          addInput("expr1")
-          if n.expr2~=nil then addInput("expr2") end
-          if n.expr3~=nil then addInput("expr3") end
-          addInput("valid")
+          for i=1,n.writeCount do
+            addInput("expr1_"..i)
+            if n["expr2_"..i]~=nil then addInput("expr2_"..i) end
+            if n["expr3_"..i]~=nil then addInput("expr3_"..i) end
+            addInput("valid"..i)
+          end
           getInputs()
 
 
-          if n.by=="always" then
-            table.insert(resClockedLogic, "if ("..inputs.valid[1]..") begin "..n.inst.name..channelIndex( n.inst.type, c).." <= "..inputs["expr1"][c].."; end  // function register assignment\n")
-          elseif n.by=="sum" then
-            table.insert(resClockedLogic, "if ("..inputs.valid[1]..") begin "..n.inst.name..channelIndex( n.inst.type, c).." <= "..n.inst.name.."+"..inputs["expr1"][c].."; end  // function register assignment by sum\n")
-          elseif n.by=="sumwrap" then
-            local wrapto = valueToVerilog(0,n.type)
-            if n.expr3~=nil then wrapto = inputs.expr3[1] end
+          local dbg=true
 
-            table.insert(resClockedLogic, "if ("..inputs.valid[1]..") begin "..n.inst.name.." <= ("..n.inst.name.."=="..inputs.expr2[1]..")?("..wrapto.."):("..n.inst.name.."+"..inputs["expr1"][1].."); end  // function register assignment by sumwrap\n")
-          else
-            print("BY",n.by)
-            assert(false)
-          end
+          for i=1,n.writeCount do
+            if dbg and n.writeCount>1 then
+              table.insert(resDeclarations, declareWire( darkroom.type.uint(16), n:cname(c).."_validCheck"..i,""," // valid arbitration"))
+              if i==1 then table.insert( resDeclarations, "assign "..n:cname(c).."_validCheck"..i.." = "..inputs["valid"..i][1]..";\n") end
+              if i>1 then table.insert( resDeclarations, "assign "..n:cname(c).."_validCheck"..i.." = "..n:cname(c).."_validCheck"..(i-1).." + "..inputs["valid"..i][1].."; // valid arbitration\n") end
+              if i==n.writeCount then table.insert( resDeclarations, "always @ (posedge CLK) begin if ("..n:cname(c)..[[_validCheck]]..i..[[>1) begin $display("Multiple write to same signal ]]..n.inst.name..[["); $stop(); end end]].."\n") end
+            end
 
-          if n.type:channels()>1 then
-            table.insert(resDeclarations, declareWire(n.type:baseType(), n:cname(c),"", "// register output channelselect"))
-            table.insert(resDeclarations, "assign "..n:cname(c).." = "..n.inst.name..channelIndex( n.inst.type, c).."; // register output channelselect\n")
-            res = n:cname(c)
-          else
-            res = n.inst.name
+            if n["by"..i]=="always" then
+              table.insert(resClockedLogic, "if ("..inputs["valid"..i][1]..") begin "..n.inst.name..channelIndex( n.inst.type, c).." <= "..inputs["expr1_"..i][c].."; end  // function register assignment\n")
+            elseif n["by"..i]=="sum" then
+              table.insert(resClockedLogic, "if ("..inputs["valid"..i][1]..") begin "..n.inst.name..channelIndex( n.inst.type, c).." <= "..n.inst.name.."+"..inputs["expr1_"..i][c].."; end  // function register assignment by sum\n")
+            elseif n["by"..i]=="sumwrap" then
+              local wrapto = valueToVerilog(0,n.type)
+              if n["expr3_"..i]~=nil then wrapto = inputs["expr3_"..i][1] end
+              
+              table.insert(resClockedLogic, "if ("..inputs["valid"..i][1]..") begin "..n.inst.name.." <= ("..n.inst.name.."=="..inputs["expr2_"..i][1]..")?("..wrapto.."):("..n.inst.name.."+"..inputs["expr1_"..i][1].."); end  // function register assignment by sumwrap\n")
+            else
+              print("BY",n["by"..i])
+              assert(false)
+            end
+            
+            if n.type:channels()>1 then
+              table.insert(resDeclarations, declareWire(n.type:baseType(), n:cname(c),"", "// register output channelselect"))
+              table.insert(resDeclarations, "assign "..n:cname(c).." = "..n.inst.name..channelIndex( n.inst.type, c).."; // register output channelselect\n")
+              res = n:cname(c)
+            else
+              res = n.inst.name
+            end
           end
         elseif n.kind=="ram128" then
+          assert(n.writeCount==1)
           addInput("readAddr")
-          addInput("writeAddr")
-          addInput("valid")
-          addInput("writeExpr")
+          addInput("writeAddr1")
+          addInput("valid1")
+          addInput("writeExpr1")
           getInputs()
 
           table.insert(resDeclarations,"assign "..n.inst.name.."_readAddr = "..inputs.readAddr[1]..";\n")
-          table.insert(resDeclarations,"assign "..n.inst.name.."_writeAddr = "..inputs.writeAddr[1]..";\n")
-          table.insert(resDeclarations,"assign "..n.inst.name.."_WE = "..inputs.valid[1]..";\n")
-          table.insert(resDeclarations,"assign "..n.inst.name.."_D = "..inputs.writeExpr[1]..";\n")
+          table.insert(resDeclarations,"assign "..n.inst.name.."_writeAddr = "..inputs.writeAddr1[1]..";\n")
+          table.insert(resDeclarations,"assign "..n.inst.name.."_WE = "..inputs.valid1[1]..";\n")
+          table.insert(resDeclarations,"assign "..n.inst.name.."_D = "..inputs.writeExpr1[1]..";\n")
           res = n.inst.name.."_readOut"
         elseif n.kind=="call" then
 
@@ -959,6 +977,12 @@ function systolicInstanceFunctions:lower()
   -- drive the inputs to the registers, rams, etc
   -- we have to do two passes here b/c in the first part we drop in expressions that may include
   -- register reads, which we also need to tie to the correct input.
+
+  -- stupid: if we have multiple drivers, we may visit the assigns in differnt orders.
+  -- we need to choose a canonical order
+  local writeCount = {} -- inst -> number
+  local order = {} -- inst -> assn -> number
+
   for i=1,2 do
     for _,fn in pairs(self.module.functions) do
       if type(self.callsites[fn.name])=="table" then -- only codegen stuff we actually used
@@ -991,25 +1015,45 @@ function systolicInstanceFunctions:lower()
                   regFound = true
                 end
 
-                if n.inst==assn.dst and (n.assn~=assn or n.assn==nil) then
+                local alreadyAssigned = false
+
+                n:map("assn", function(a) alreadyAssigned = (alreadyAssigned or a==assn) end )
+
+                if n.inst==assn.dst and alreadyAssigned==false then
                   local r = n:shallowcopy()
-                  assert(r.expr==nil)
+
+                  writeCount[n.inst] = writeCount[n.inst] or 0
+                  order[n.inst] = order[n.inst] or {}
+
+                  if order[n.inst][assn]==nil then
+                    writeCount[n.inst] = writeCount[n.inst] + 1
+                    order[n.inst][assn] = writeCount[n.inst]
+                  end
+
+                  r.writeCount = writeCount[n.inst]
+                  local i = order[n.inst][assn]
                   assert(systolicAST.isSystolicAST(assn.expr))
 
                   if assn.dst.kind=="ram128" then
-                    r.writeExpr = assn.expr
-                    r.writeAddr = assn.addr
+                    r["writeExpr"..i] = assn.expr
+                    r["writeAddr"..i] = assn.addr
                   elseif assn.dst.kind=="reg" then
-                    r.expr1 = assn.expr
-                    r.expr2 = assn.expr2
-                    r.expr3 = assn.expr3
+                    r["expr1_"..i] = assn.expr
+                    r["expr2_"..i] = assn.expr2
+                    r["expr3_"..i] = assn.expr3
                   else
                     assert(false)
                   end
 
-                  r.valid = fn.valid
-                  r.assn = assn
-                  r.by = assn.by or "always"
+                  r["valid"..i] = fn.valid
+                  r["assn"..i] = assn
+                  r["by"..i] = assn.by or "always"
+
+                  if r.writeCount>1 and self.module.options.assignArbitrate==false then
+                    print("Double Write to ",assn.dst.kind,n.inst.name)
+                    assert(false)
+                  end
+
                   return systolicAST.new(r):copyMetadataFrom(n)
                 end
               end)
@@ -1035,9 +1079,13 @@ function systolicInstanceFunctions:lower()
     end
   end
 
+--  local alreadySeen = {}
   mod:S("reg"):process(
     function(n)
-      if systolicAST.isSystolicAST(n.expr1)==false then
+--if alreadySeen[n.inst]~=nil then print("ALREADYAS",n.inst.name) end
+--      assert(alreadySeen[n.inst]==nil)
+--      alreadySeen[n.inst] = 1
+      if systolicAST.isSystolicAST(n.expr1_1)==false then
         print("ERR, reg", n.inst.name, "module", self.module.name, "is not assigned to?")
         assert(false)
       end
@@ -1045,7 +1093,7 @@ function systolicInstanceFunctions:lower()
 
   mod:S("ram128"):process(
     function(n)
-      if systolicAST.isSystolicAST(n.writeExpr)==false then
+      if systolicAST.isSystolicAST(n.writeExpr1)==false then
         print("ERR, ram128", n.inst.name, "module", self.module.name, "is not assigned to?")
         assert(false)
       end

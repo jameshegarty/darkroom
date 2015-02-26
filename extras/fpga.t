@@ -76,9 +76,10 @@ function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffe
 
   local definitions = {}
 
+  local reset = systolic.input("reset",darkroom.type.bool())
   local validIn = systolic.input("validIn",darkroom.type.bool())
   local validOut = systolic.output("validOut",darkroom.type.bool())
-  local moduleInputs = {validIn}
+  local moduleInputs = {reset,validIn}
   local inputIdsToSystolic = {}
   for k,v in pairs(inputs) do inputIdsToSystolic[k-1]=systolic.input("input"..k, darkroom.type.array(v[1].expr.type,{1,1})); table.insert(moduleInputs,inputIdsToSystolic[k-1]) end
   local finalOut = systolic.output("out", kernelGraph.child1.kernel.type )
@@ -109,6 +110,7 @@ function fpga.codegenPipeline( inputs, kernelGraph, shifts, options, largestEffe
         pipeline:add( kernelModuleInst )
         local xygen = fpga.modules.xygen( imageMinX, imageMaxX, imageMinY, imageMaxY ):instantiate("xygen_"..node:name())
         pipeline:add(xygen)
+        pipelineMain:addIfLaunch( reset:read(), xygen:reset() )
         local kernelArgs = {x=xygen:x(), y=xygen:y()}
         map( inputs, function(v,k) kernelArgs[k:name()] = v[node]:popFront() end )
         local kernelCall = kernelModuleInst:process( kernelArgs )
@@ -199,10 +201,11 @@ function fpga.codegenHarness( inputs, outputs, kernelGraph, shifts, options, lar
     return fpga.modules.sim(totalInputBytes, outputBytes, imageWidth, imageHeight, shifts[kernelGraph.child1], metadata), metadata
   elseif outputs[1][2]=="axi" then
     -- sim framework assumes this is the case
-    print(imageWidth,imageHeight,options.stripWidth, options.stripHeight)
+    --print(imageWidth,imageHeight,options.stripWidth, options.stripHeight)
     assert(imageWidth+metadata.padMaxX-metadata.padMinX==options.stripWidth)
     assert(imageHeight+metadata.padMaxY-metadata.padMinY==options.stripHeight)
-    return fpga.modules.axi(totalInputBytes, outputBytes, imageWidth, shifts[kernelGraph.child1], metadata), metadata
+    --return fpga.modules.axi(totalInputBytes, outputBytes, imageWidth, shifts[kernelGraph.child1], metadata), metadata
+    return {}, metadata
   else
     print("unknown data source "..outputs[1][2])
     assert(false)

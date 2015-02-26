@@ -634,9 +634,14 @@ function modules.xygen( minX, maxX, minY, maxY )
   assert(type(minY)=="number")
   assert(type(maxY)=="number")
 
-  local xygen = systolic.module("xygen")
+  local xygen = systolic.module( "xygen", {assignArbitrate=true} )
   local xreg = xygen:add(systolic.reg("xreg", int16, minX))
   local yreg = xygen:add(systolic.reg("yreg", int16, minY))
+
+  -- reset
+  local reset = xygen:addFunction( "reset", {}, nil )
+  reset:addAssign( xreg, systolic.cast( minX, int16) )
+  reset:addAssign( yreg, systolic.cast( minY, int16) )
 
   -- x fn
   local xout = systolic.output("xout", int16 )
@@ -792,6 +797,7 @@ module sim;
   reg [12:0] posY = 0;
   reg [7:0] cycle = 0;
   reg validIn = 0;
+  reg RST = 0;
   wire validOut;
   integer realX = ]=]..(stripWidth+metadata.padMaxX-1)..[=[;
   integer realY = ]=]..(metadata.padMinY-1)..[=[;
@@ -809,7 +815,7 @@ module sim;
   table.insert( res, [=[  reg [10000:0] outputFilename; 
   reg [7:0] i = 0;
 
-  Pipeline pipeline(.CLK(CLK),.input1(pipelineInput),.out(pipelineOutput),.validIn(validIn),.validOut(validOut));
+  Pipeline pipeline(.CLK(CLK),.input1(pipelineInput),.out(pipelineOutput),.validIn(validIn),.validOut(validOut),.reset(RST));
 
   initial begin
    $display("HELLO");]=])
@@ -835,6 +841,7 @@ module sim;
      posY = realY;
      cycle = ]=]..(metadata.cycles-1)..[=[;
      validIn = 0;
+     RST = 1;
      CLK = 0;
      #10
      CLK = 1;
@@ -869,6 +876,7 @@ table.insert( res, [=[       end else begin
        posX = realX;
        posY = realY;
        validIn = 1;
+       RST=0;
        CLK = 0;
        #10
        CLK = 1;
@@ -1783,7 +1791,7 @@ function modules.axi(inputBytes, outputBytes, stripWidth, outputShift, metadata)
   totalData = totalDataDown * (metadata.downsampleX*metadata.downsampleY)
   assert(totalData % (8*16) == 0)
 
-  return [=[module PipelineInterface(input CLK,input validIn, output validOut, input []=]..(inputBytes*8-1)..[=[:0] pipelineInput, output []=]..(outputBytes*8-1)..[=[:0] pipelineOutput);
+  return {[=[module PipelineInterface(input CLK,input validIn, output validOut, input []=]..(inputBytes*8-1)..[=[:0] pipelineInput, output []=]..(outputBytes*8-1)..[=[:0] pipelineOutput);
 reg [12:0] posX = ]=]..valueToVerilogLL(metadata.padMinX,true,13)..[=[;
 reg [12:0] posY = ]=]..valueToVerilogLL(metadata.padMinY,true,13)..[=[;
 
@@ -1828,7 +1836,8 @@ always @ (posedge CLK) begin
   validInD <= validIn;
   pipelineInputD <= pipelineInput;
 end
-endmodule]=]
+endmodule]=]}
+
 end
 
 return modules
