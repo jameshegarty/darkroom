@@ -275,7 +275,7 @@ function darkroom.IR.buildAffected(root,list)
 end
 
 -- query string to bool
--- if query has multiple items, the queries are ANDed together
+-- if query has multiple items, the queries are ORed together
 function IRFunctions:matches(query)
   if query==nil then return false end
 
@@ -299,15 +299,15 @@ function IRFunctions:matches(query)
     local exploded = explode("=",v)
 
     if self.kind==v then
-
+      return true
     elseif #exploded==2 then
-      if self[exploded[1]]~=exploded[2] then return false end      
+      if self[exploded[1]]==exploded[2] then return true end      
     else
-      return false      
+
     end
   end
 
-  return true
+  return false
 end
 
 

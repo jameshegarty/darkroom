@@ -380,7 +380,6 @@ local function codegen(ast, callsiteId)
   local callsite = ""
   if type(callsiteId)=="number" then callsite = "C"..callsiteId.."_" end
 
-
   local delay = {}
   local finalOut = ast:visitEach(
     function(n, args)
@@ -566,7 +565,7 @@ local function codegen(ast, callsiteId)
               return expr
             elseif toType:isInt() and fromType:isInt() and toType.precision > fromType.precision then
               -- casting smaller int to larger int. must sign extend
-              return "{ {"..(8*(toType:sizeof() - fromType:sizeof())).."{"..expr.."["..(fromType:sizeof()*8-1).."]}},"..expr.."["..(toType:sizeof()*8-1)..":0]}"
+              return "{ {"..(8*(toType:sizeof() - fromType:sizeof())).."{"..expr.."["..(fromType:sizeof()*8-1).."]}},"..expr.."["..(fromType:sizeof()*8-1)..":0]}"
             elseif (fromType:isUint() or fromType:isInt()) and (toType:isInt() or toType:isUint()) and fromType.precision>toType.precision then
               -- truncation. I don't know how this works
               return expr
@@ -679,7 +678,6 @@ local function codegen(ast, callsiteId)
             addInput("valid"..i)
           end
           getInputs()
-
 
           local dbg=true
 
@@ -978,126 +976,124 @@ function systolicInstanceFunctions:lower()
   -- we have to do two passes here b/c in the first part we drop in expressions that may include
   -- register reads, which we also need to tie to the correct input.
 
-  -- stupid: if we have multiple drivers, we may visit the assigns in differnt orders.
-  -- we need to choose a canonical order
-  local writeCount = {} -- inst -> number
-  local order = {} -- inst -> assn -> number
+  local rwnodes = {} -- inst -> ast node
 
-  for i=1,2 do
-    for _,fn in pairs(self.module.functions) do
-      if type(self.callsites[fn.name])=="table" then -- only codegen stuff we actually used
-        for _,assn in pairs( fn.assignments ) do
-          if fn.output~=nil and assn.dst==fn.output then 
-          elseif assn.dst.kind=="reg" or assn.dst.kind=="ram128" then
+  for _,fn in pairs(self.module.functions) do
+    if type(self.callsites[fn.name])=="table" then -- only codegen stuff we actually used
+      for _,assn in pairs( fn.assignments ) do
+        if fn.output~=nil and assn.dst==fn.output then 
+        elseif assn.dst.kind=="reg" or assn.dst.kind=="ram128" then
+          assn.expr:S(assn.dst.kind):process(
+            function(n)
+              if n.inst==assn.dst then
+                print("Error, "..assn.dst.kind.." can't be assigned to themselves. Use increment")
+                print("module",self.module.name,"function",fn.name,assn.dst.kind,assn.dst.name)
+                assert(false)
+              end
+            end)
             
-            assn.expr:S(assn.dst.kind):process(
-              function(n)
-                if n.inst==assn.dst then
-                  print("Error, "..assn.dst.kind.." can't be assigned to themselves. Use increment")
-                  print("module",self.module.name,"function",fn.name,assn.dst.kind,assn.dst.name)
-                  assert(false)
-                end
-              end)
-            
-            fn.valid:S(assn.dst.kind):process(
-              function(n)
-                if n.inst==assn.dst then
-                  print("Error, "..assn.dst.kind.." can't be their own valid bit")
-                  print("module",self.module.name,"function",fn.name,assn.dst.kind,assn.dst.name)
-                  assert(false)
-                end
-              end)
-            
-            local regFound = false
-            mod = mod:S(assn.dst.kind):process(
-              function(n)
-                if n.inst==assn.dst then
-                  regFound = true
-                end
+          fn.valid:S(assn.dst.kind):process(
+            function(n)
+              if n.inst==assn.dst then
+                print("Error, "..assn.dst.kind.." can't be their own valid bit")
+                print("module",self.module.name,"function",fn.name,assn.dst.kind,assn.dst.name)
+                assert(false)
+              end
+            end)
 
-                local alreadyAssigned = false
+          local n = rwnodes[assn.dst] or {kind=assn.dst.kind, inst=assn.dst, writeCount = 0}
+          local alreadyAssigned = false
 
-                n:map("assn", function(a) alreadyAssigned = (alreadyAssigned or a==assn) end )
+          local i = 1
+          while n["assn"..i] do
+            alreadyAssigned = (alreadyAssigned or n["assn"..i]==assn)
+            i=i+1
+          end
 
-                if n.inst==assn.dst and alreadyAssigned==false then
-                  local r = n:shallowcopy()
+          n.writeCount = n.writeCount + 1
+          local i = n.writeCount
+          assert(systolicAST.isSystolicAST(assn.expr))
 
-                  writeCount[n.inst] = writeCount[n.inst] or 0
-                  order[n.inst] = order[n.inst] or {}
-
-                  if order[n.inst][assn]==nil then
-                    writeCount[n.inst] = writeCount[n.inst] + 1
-                    order[n.inst][assn] = writeCount[n.inst]
-                  end
-
-                  r.writeCount = writeCount[n.inst]
-                  local i = order[n.inst][assn]
-                  assert(systolicAST.isSystolicAST(assn.expr))
-
-                  if assn.dst.kind=="ram128" then
-                    r["writeExpr"..i] = assn.expr
-                    r["writeAddr"..i] = assn.addr
-                  elseif assn.dst.kind=="reg" then
-                    r["expr1_"..i] = assn.expr
-                    r["expr2_"..i] = assn.expr2
-                    r["expr3_"..i] = assn.expr3
-                  else
-                    assert(false)
-                  end
-
-                  r["valid"..i] = fn.valid
-                  r["assn"..i] = assn
-                  r["by"..i] = assn.by or "always"
-
-                  if r.writeCount>1 and self.module.options.assignArbitrate==false then
-                    print("Double Write to ",assn.dst.kind,n.inst.name)
-                    assert(false)
-                  end
-
-                  return systolicAST.new(r):copyMetadataFrom(n)
-                end
-              end)
-            
-            if regFound==false then
-              print("Error, ",assn.dst.kind, assn.dst.name,"function",fn.name,"is never read from. bug?")
-            end
-          elseif assn.dst.kind=="bram" then
-            mod = mod:S("bram"):process(
-              function(n)
-                if n.inst == assn.dst and n.valid==nil then
-                  local nn = n:shallowcopy()
-                  nn.valid = fn.valid
-                  return systolicAST.new(nn):copyMetadataFrom(n)
-                end
-              end)
+          if assn.dst.kind=="ram128" then
+            n["writeExpr"..i] = assn.expr
+            n["writeAddr"..i] = assn.addr
+          elseif assn.dst.kind=="reg" then
+            n["expr1_"..i] = assn.expr
+            n["expr2_"..i] = assn.expr2
+            n["expr3_"..i] = assn.expr3
           else
             assert(false)
           end
-          
+
+          n["valid"..i] = fn.valid
+          n["assn"..i] = assn
+          n["by"..i] = assn.by or "always"
+
+          if n.writeCount>1 and self.module.options.assignArbitrate==false then
+            print("Double Write to ",assn.dst.kind,n.inst.name)
+            assert(false)
+          end
+ assert(type(n.writeCount)=="number")
+          rwnodes[n.inst] = n
+        elseif assn.dst.kind=="bram" then
+          assert( rwnodes[assn.dst] == nil )
+          local n = {kind="bram"}
+          n.valid = fn.valid
+          n.inst = assn.dst
+
+          rwnodes[n.inst] = n
+        else
+          assert(false)
         end
+          
       end
     end
   end
 
---  local alreadySeen = {}
-  mod:S("reg"):process(
-    function(n)
---if alreadySeen[n.inst]~=nil then print("ALREADYAS",n.inst.name) end
---      assert(alreadySeen[n.inst]==nil)
---      alreadySeen[n.inst] = 1
-      if systolicAST.isSystolicAST(n.expr1_1)==false then
-        print("ERR, reg", n.inst.name, "module", self.module.name, "is not assigned to?")
-        assert(false)
-      end
-    end)
+  local found = {} -- inst -> 1
 
-  mod:S("ram128"):process(
-    function(n)
-      if systolicAST.isSystolicAST(n.writeExpr1)==false then
-        print("ERR, ram128", n.inst.name, "module", self.module.name, "is not assigned to?")
-        assert(false)
-      end
-    end)
+  local function replaceRams(m)
+    return m:S("reg ram128 bram"):process(
+      function(n)
+        found[n.inst] = 1
+        local nn = rwnodes[n.inst]
+
+        if nn==nil then
+         print("ERR, ", n.kind, n.inst.name, "module", self.module.name, "is not assigned to?")
+         assert(false)       
+        end
+
+        local r = n:shallowcopy()
+        for k,v in pairs(nn) do
+          -- just clobber any existing data. whatev
+          r[k] = v
+        end
+
+        r.done = true
+        return systolicAST.new(r):copyMetadataFrom(n)
+     end)
+  end
+
+  -- iterate until convergence
+  local done = false
+  while done==false do
+    done = true
+    rwnodes =  map( rwnodes, function(v) return map( v, function(n) if systolicAST.isSystolicAST(n) then return replaceRams(n) else return n end end) end)
+
+     map( rwnodes, function(v) map( v, function(n) if systolicAST.isSystolicAST(n) then 
+n:S("reg ram128 bram"):process(function(nn) 
+if nn.done==nil then done=false end
+ end)
+ end end) end)
+  end
+
+  mod = replaceRams(mod)
+
+  for inst,v in pairs(rwnodes) do
+    if found[inst]==nil then
+      print("Error, ",inst.kind, inst.assn1.dst.name,"function",fn.name,"is never read from. bug?")
+    end
+  end
 
   return mod
 end
@@ -1431,9 +1427,13 @@ end
 function systolicASTFunctions:disablePipelining()
   return self:S("*"):process(
     function(n)
-      local nn = n:shallowcopy()
-      nn.pipeline=false
-      return systolicAST.new(nn):copyMetadataFrom(n)
+      if n.kind=="reg" then
+        -- these things we can't disable pipelining on
+      else
+        local nn = n:shallowcopy()
+        nn.pipeline=false
+        return systolicAST.new(nn):copyMetadataFrom(n)
+      end
     end)
 end
 
