@@ -101,6 +101,9 @@ function scaledDelta( v, upsampleStride, downsampleStride, readerPos)
   assert(type(upsampleStride)=="number");
   if upsampleStride==1 and downsampleStride==1 then
     return v
+--  elseif downsampleStride==1 and (upsampleStride==2 or upsampleStride==4) and type(v)=="number" then
+    -- special case for performance
+--    return math.floor(v/upsampleStride)
   elseif downsampleStride==1 then
     return `floorDivide(readerPos+v, upsampleStride)-floorDivide(readerPos, upsampleStride)
   elseif upsampleStride==1 then
@@ -504,8 +507,20 @@ function ScaleLineBufferWrapperFunctions:allocateSize() return self.lb:allocateS
 
 function ScaleLineBufferWrapperFunctions:set( loopid, value, V ) return self.lb:set( loopid, value, V ) end
 
-function ScaleLineBufferWrapperFunctions:get(loopid, gather, relX, relY, V, validLeft, validRight)
-  return self.lb:get( loopid, gather, relX, relY, V, function(i) return `[self.readerPosX[loopid]]+i >= validLeft and [self.readerPosX[loopid]]+i < validRight end )
+function ScaleLineBufferWrapperFunctions:get(loopid, gather, relX, relY, V, validLeft, validRight )
+  local downsampleStride = self.downsampleStrideX[loopid]
+  local upsampleStride = self.upsampleStrideX[loopid]
+
+  local valid = function(i) return `[self.readerPosX[loopid]]+i >= validLeft and [self.readerPosX[loopid]]+i < validRight end
+
+  if downsampleStride==1 and upsampleStride==1 then
+    return self.lb:get( loopid, gather, relX, relY, V, valid )
+  else
+    assert(gather==false)
+    local xoff = map( range(V), function(i) return `[scaledDelta(i-1, upsampleStride, downsampleStride, self.readerPosX[loopid])]-(i-1) end)
+    local yoff = map( range(V), function(i) return 0 end )
+    return self.lb:get( loopid, true, `vectorof(int, xoff)+relX, `vectorof(int,yoff)+relY, V, valid )
+  end
 end
 
 function ScaleLineBufferWrapperFunctions:next( loopid, vorig )
@@ -1152,43 +1167,26 @@ function darkroom.terracompiler.codegen(
         if node.kind=="load" then
           assert(darkroom.kernelGraph.isKernelGraph(node.from) or type(node.from)=="number")
 
-          local downsampleStride, upsampleStride
-          if type(node.from)=="number" then downsampleStride, upsampleStride = calculateStride(1,1, node.scaleN1, node.scaleD1)
-            else downsampleStride, upsampleStride = calculateStride(node.from.kernel.scaleN1, node.from.kernel.scaleD1, node.scaleN1, node.scaleD1) end
-
           local isGather = type(node.relX.constLow)~="number" or type(node.relX.constHigh)~="number"
 
-          if downsampleStride==1 and upsampleStride==1 then
-            local x,y = `[inputs.relX[1]][0], `[inputs.relY[1]][0]
-            if isGather then x,y = inputs.relX[1], inputs.relY[1] end
-            out = inputImages[kernelNode][node.from][c]:get(loopid, isGather, x,y,  V, validLeft, validRight);
-            
-            if isGather and debug then
-              out = quote
-                for i = 0,V do
-                  if x[i] > [inputs.maxX[1]][0] or x[i] < [inputs.minX[1]][0] then
-                    cstdio.printf("error, gathered outside of stencil X %d (min %d max %d)\n", x[i], [inputs.minX[1]][0], [inputs.maxX[1]][0])
-                    orionAssert(false,"gathered outside of stencil")
-                  end
-                  
-                  if y[i] > [inputs.maxY[1]][0] or y[i] < [inputs.minY[1]][0] then
-                    cstdio.printf("error, gathered outside of stencil Y %d (min %d max %d)\n", y[i], [inputs.minY[1]][0], [inputs.maxY[1]][0])
-                    orionAssert(false,"gathered outside of stencil")
-                  end
+          local x,y = `[inputs.relX[1]][0], `[inputs.relY[1]][0]
+          if isGather then x,y = inputs.relX[1], inputs.relY[1] end
+          out = inputImages[kernelNode][node.from][c]:get( loopid, isGather, x, y,  V, validLeft, validRight );
+          
+          if isGather and debug then
+            out = quote
+              for i = 0,V do
+                if x[i] > [inputs.maxX[1]][0] or x[i] < [inputs.minX[1]][0] then
+                  cstdio.printf("error, gathered outside of stencil X %d (min %d max %d)\n", x[i], [inputs.minX[1]][0], [inputs.maxX[1]][0])
+                  orionAssert(false,"gathered outside of stencil")
                 end
-                in out end
-            end
-          else
-            assert(isGather==false)
-
-            local vres = {}
-            local yres = {}
-
-            if downsampleStride==1 and (upsampleStride==2 or upsampleStride==4) then for i = 0,V-1 do table.insert(vres,math.floor(i/upsampleStride)-i); table.insert(yres,0) end
-            elseif downsampleStride==1 and upsampleStride~=1 then for i = 0,V-1 do table.insert(vres,`floorDivide(xsymb+i,upsampleStride)-floorDivide(xsymb,upsampleStride)-i); table.insert(yres,0) end 
-            elseif upsampleStride==1 and downsampleStride~=1 then for i = 0,V-1 do table.insert(vres,i*(downsampleStride-1)); table.insert(yres,0) end
-            else assert(false) end
-            out = inputImages[kernelNode][node.from][c]:get(loopid, true,  `vectorof(int,vres)+[inputs.relX[1]][0], `vectorof(int,yres)+[inputs.relY[1]][0],  V, validLeft, validRight);
+                
+                if y[i] > [inputs.maxY[1]][0] or y[i] < [inputs.minY[1]][0] then
+                  cstdio.printf("error, gathered outside of stencil Y %d (min %d max %d)\n", y[i], [inputs.minY[1]][0], [inputs.maxY[1]][0])
+                  orionAssert(false,"gathered outside of stencil")
+                end
+              end
+            in out end
           end
         elseif node.kind=="binop" then
           local lhs = inputs["lhs"][c]
