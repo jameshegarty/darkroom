@@ -172,17 +172,12 @@ LineBufferWrapperMT={__index=LineBufferWrapperFunctions}
 linebufferCount = 7 -- just start with a random id to make the debug checks more effective
 function isLineBufferWrapper(b) return getmetatable(b)==LineBufferWrapperMT end
 
-function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightStencil, debug, scaleN1, scaleD1, scaleN2, scaleD2, largestScaleY, V, debugImagePath, debugBounds )
+function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightStencil, debug, V, debugImagePath, debugBounds )
   assert(type(lines)=="number")
   assert(type(leftStencil)=="number")
   assert(type(stripWidth)=="number")
   assert(type(rightStencil)=="number")
   assert(type(debug)=="boolean")
-  assert(type(scaleN1)=="number")
-  assert(type(scaleD1)=="number")
-  assert(type(scaleN2)=="number")
-  assert(type(scaleD2)=="number")
-  assert(type(largestScaleY)=="number")
   assert(darkroom.type.isType(orionType))
   assert(type(V)=="number")
 
@@ -200,17 +195,6 @@ function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightS
                rightStencil=rightStencil,
                linebufferPosition = 0,
                debug=debug or debugImagePath~=nil,
-               scaleN1=scaleN1,
-               scaleD1=scaleD1,
-               scaleN2=scaleN2,
-               scaleD2=scaleD2,
-               largestScaleY=largestScaleY,
-               downsampleStrideX={},
-               upsampleStrideX={},
-               downsampleStrideY={},
-               upsampleStrideY={},
-               readerPosX={}, -- the x,y of the kernel that's reading this image. Not necessarily the same as posX,posY with up/downsample!
-               readerPosY={},
                iv={}, 
                ivDebugX = {}, 
                ivDebugY={}, 
@@ -228,35 +212,17 @@ function LineBufferWrapperFunctions:declareMainThread()
   return quote end
 end
 
-function LineBufferWrapperFunctions:declare( loopid, xStripRelative, y, clock, core, stripId, options, scaleN1, scaleD1, scaleN2, scaleD2,linebufferBase )
+function LineBufferWrapperFunctions:declare( loopid, x, y, clock, core, stripId, options, linebufferBase )
   assert(type(loopid)=="number")
-  assert(terralib.isquote(xStripRelative) or terralib.issymbol(xStripRelative))
+  assert(terralib.isquote(x) or terralib.issymbol(x))
   assert(terralib.isquote(y) or terralib.issymbol(y)) -- we don't actually use this - we don't care what the actual coord is
   assert(terralib.isquote(clock) or terralib.issymbol(clock))
   assert(terralib.isquote(core) or terralib.issymbol(core))
   assert(terralib.issymbol(stripId))
   assert(terralib.issymbol(linebufferBase))
   assert(type(options)=="table")
-  assert(type(scaleD2)=="number")
-
-  local readerX = `[stripLeft( stripId, options, scaleN1, scaleD1)]+xStripRelative
-
---  clock = `floorDivide(clock,scaleD2)
-
 
   local res = {}
-
-  self.downsampleStrideX[loopid], self.upsampleStrideX[loopid] = calculateStride(self.scaleN1, self.scaleD1, scaleN1, scaleD1)
-  self.downsampleStrideY[loopid], self.upsampleStrideY[loopid] = calculateStride(self.scaleN2, self.scaleD2, scaleN2, scaleD2)
-
-  clock = `floorDivide(clock,[looprate(self.scaleN2,self.scaleD2,self.largestScaleY)])
-
-  if self.upsampleStrideX[loopid]>1 or self.debug then self.readerPosX[loopid] = symbol(int,"readerPosX"); table.insert(res, quote var [self.readerPosX[loopid]] = readerX; end) end
-  if self.upsampleStrideY[loopid]>1 or self.debug then self.readerPosY[loopid] = symbol(int,"readerPosY"); table.insert(res, quote var [self.readerPosY[loopid]] = y; end) end
-
-  local x = `[stripLeft( stripId, options, self.scaleN1, self.scaleD1)]+[scaledAbsolute(xStripRelative, self.upsampleStrideX[loopid], self.downsampleStrideX[loopid])]
-
---  local clock = scaledAbsolute(readerClock, self.upsampleStrideY[loopid], self.downsampleStrideY[loopid])
 
   if self.iv[loopid]==nil then self.iv[loopid] = symbol(&self.orionType:toTerraType(),"iv") end
     
@@ -325,7 +291,7 @@ function LineBufferWrapperFunctions:allocateSize()
 end
 
 function LineBufferWrapperFunctions:set( loopid, value, V )
-  assert(terralib.isquote(value))
+  assert( terralib.isquote( value ) or terralib.issymbol( value ) )
   assert(type(loopid)=="number")
   assert(type(V)=="number")
 
@@ -376,7 +342,7 @@ end
 
 -- relX and relY should be integer constants relative to
 -- the current location
-function LineBufferWrapperFunctions:get(loopid, gather, relX,relY, V, validLeft, validRight)
+function LineBufferWrapperFunctions:get(loopid, gather, relX, relY, V, valid)
   assert(type(loopid)=="number")
   assert(type(gather)=="boolean")
   assert(type(relX)=="number" or terralib.isquote(relX))
@@ -392,6 +358,7 @@ function LineBufferWrapperFunctions:get(loopid, gather, relX,relY, V, validLeft,
   else
     res = `terralib.attrload([&vector(self.orionType:toTerraType(),V)]([self.iv[loopid]] + relY*[self:lineWidth()]+ relX),{align=[self.orionType:sizeof()]})
   end
+
 
   if self.debug then
     local i = symbol(int,"lbGetDebugI")
@@ -409,7 +376,7 @@ function LineBufferWrapperFunctions:get(loopid, gather, relX,relY, V, validLeft,
                      -- because we expand out the valid region to the largest vector size (to save having to codegen the non-vectorized dangling region), 
                      -- some of the area we compute is garbage, and thus
                      -- will read invalid values (but we will overwrite it later so its ok). Bypass the debug checks on those regions.
-                     if [self.readerPosX[loopid]]+i >= validLeft and [self.readerPosX[loopid]]+i < validRight then
+        if [valid(i)] then
                        orionAssert(@([self.ivDebugId[loopid]]+lrelY*[self:lineWidth()]+i+lrelX) == [self.id], "incorrect LB Id")
                        orionAssert(@([self.ivDebugY[loopid]]+lrelY*[self:lineWidth()]+i+lrelX) == [self.posY[loopid]]+lrelY, "incorrect LB Y") 
                        orionAssert(@([self.ivDebugX[loopid]]+lrelY*[self:lineWidth()]+i+lrelX) == [self.posX[loopid]]+i+lrelX, "incorrect LB X")
@@ -422,11 +389,10 @@ function LineBufferWrapperFunctions:get(loopid, gather, relX,relY, V, validLeft,
   return res
 end
 
-function LineBufferWrapperFunctions:next(loopid,vorig)
+function LineBufferWrapperFunctions:next( loopid, v )
   assert(type(loopid)=="number")
-  assert(type(vorig)=="number" or terralib.isquote(vorig))
+  assert(type(v)=="number" or terralib.isquote(v))
 
-  local v = scaledDelta(vorig, self.upsampleStrideX[loopid], self.downsampleStrideX[loopid], self.readerPosX[loopid])
   local res = {}
 
   table.insert(res, quote [self.iv[loopid]] = [self.iv[loopid]] + v end)
@@ -438,26 +404,20 @@ function LineBufferWrapperFunctions:next(loopid,vorig)
     table.insert(res, quote [self.posX[loopid]] = [self.posX[loopid]] + v end)
   end
 
-  if self.debug or self.upsampleStrideX[loopid]>1 then table.insert(res, quote [self.readerPosX[loopid]] = [self.readerPosX[loopid]] + vorig end) end
-
   return quote res end
 end
 
 -- sub: this is the number of pixels we looped over since last calling nextline
 -- basically: the number of times we called nextVector this row * the vector width
-function LineBufferWrapperFunctions:nextLine(loopid,  sub)
-  assert(terralib.isquote(sub))
+function LineBufferWrapperFunctions:nextLine( loopid,  subX, strideY )
+  assert( terralib.isquote( subX ) or terralib.issymbol( subX ) )
+  assert( terralib.isquote( strideY ) or terralib.issymbol( strideY ) )
 
   local res = {}
 
   local buf = {self.iv[loopid]}
   local base = {self.base}
   local bufType = {self.orionType:toTerraType()}
-
-  local subX = symbol(int,"subX")
-  table.insert(res, quote var [subX] = [scaledDelta(`-sub, self.upsampleStrideX[loopid], self.downsampleStrideX[loopid], self.readerPosX[loopid])] end)
-  local strideY = symbol(int,"strideY")
-  table.insert(res, quote var [strideY] = [scaledDelta(1, self.upsampleStrideY[loopid], self.downsampleStrideY[loopid], self.readerPosY[loopid])] end)
 
   if self.debug then
     buf = {self.iv[loopid], self.ivDebugX[loopid], self.ivDebugY[loopid], self.ivDebugId[loopid]}
@@ -468,9 +428,6 @@ function LineBufferWrapperFunctions:nextLine(loopid,  sub)
     table.insert(res, quote [self.posX[loopid]] = [self.posX[loopid]] + subX end)
   end
 
-  if self.debug or self.upsampleStrideY[loopid]>1 then table.insert(res, quote [self.readerPosY[loopid]] = [self.readerPosY[loopid]] + 1 end) end
-  if self.debug or self.upsampleStrideX[loopid]>1 then table.insert(res, quote [self.readerPosX[loopid]] = [self.readerPosX[loopid]] - sub end) end
-
   for k,v in pairs(buf) do
     table.insert(res, 
       quote 
@@ -479,6 +436,97 @@ function LineBufferWrapperFunctions:nextLine(loopid,  sub)
       end)
   end
 
+
+  return quote res end
+end
+
+ScaleLineBufferWrapperFunctions = {}
+ScaleLineBufferWrapperMT={__index=ScaleLineBufferWrapperFunctions}
+
+function newScaleLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightStencil, debug, scaleN1, scaleD1, scaleN2, scaleD2, largestScaleY, V, debugImagePath, debugBounds )
+  assert(type(lines)=="number")
+  assert(type(leftStencil)=="number")
+  assert(type(stripWidth)=="number")
+  assert(type(rightStencil)=="number")
+  assert(type(debug)=="boolean")
+  assert(type(scaleN1)=="number")
+  assert(type(scaleD1)=="number")
+  assert(type(scaleN2)=="number")
+  assert(type(scaleD2)=="number")
+  assert(type(largestScaleY)=="number")
+  assert(darkroom.type.isType(orionType))
+  assert(type(V)=="number")
+
+  assert( stripWidth % V == 0 ) -- this had better be the case, or sets will fail
+
+  assert(lines > 0) -- a line buffer had better contain lines
+  assert(stripWidth > 0)
+  assert(stripWidth - leftStencil + rightStencil > 0)
+
+
+  local tab = {lb = newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightStencil, debug, V, debugImagePath, debugBounds ),
+               debug = debug,
+               scaleN1=scaleN1,
+               scaleD1=scaleD1,
+               scaleN2=scaleN2,
+               scaleD2=scaleD2,
+               readerPosX={}, -- the x,y of the kernel that's reading this image. Not necessarily the same as posX,posY with up/downsample!
+               readerPosY={},
+               largestScaleY=largestScaleY,
+               downsampleStrideX={},
+               upsampleStrideX={},
+               downsampleStrideY={},
+               upsampleStrideY={}}
+
+  return setmetatable(tab,ScaleLineBufferWrapperMT)
+end
+
+function ScaleLineBufferWrapperFunctions:declare( loopid, xStripRelative, y, clock, core, stripId, options, scaleN1, scaleD1, scaleN2, scaleD2,linebufferBase )
+  self.downsampleStrideX[loopid], self.upsampleStrideX[loopid] = calculateStride(self.scaleN1, self.scaleD1, scaleN1, scaleD1)
+  self.downsampleStrideY[loopid], self.upsampleStrideY[loopid] = calculateStride(self.scaleN2, self.scaleD2, scaleN2, scaleD2)
+
+  clock = `floorDivide(clock,[looprate(self.scaleN2,self.scaleD2,self.largestScaleY)])
+
+  local res = {}
+  local x = `[stripLeft( stripId, options, self.scaleN1, self.scaleD1)]+[scaledAbsolute(xStripRelative, self.upsampleStrideX[loopid], self.downsampleStrideX[loopid])]
+
+  local readerX = `[stripLeft( stripId, options, scaleN1, scaleD1)]+xStripRelative
+
+  if self.upsampleStrideX[loopid]>1 or self.debug then self.readerPosX[loopid] = symbol(int,"readerPosX"); table.insert(res, quote var [self.readerPosX[loopid]] = readerX; end) end
+  if self.upsampleStrideY[loopid]>1 or self.debug then self.readerPosY[loopid] = symbol(int,"readerPosY"); table.insert(res, quote var [self.readerPosY[loopid]] = y; end) end
+
+  table.insert(res, self.lb:declare( loopid, x, y, clock, core, stripId, options, linebufferBase ) )
+
+  return quote res end
+end
+function ScaleLineBufferWrapperFunctions:declareMainThread() return self.lb:declareMainThread() end
+function ScaleLineBufferWrapperFunctions:allocateSize() return self.lb:allocateSize() end
+
+function ScaleLineBufferWrapperFunctions:set( loopid, value, V ) return self.lb:set( loopid, value, V ) end
+
+function ScaleLineBufferWrapperFunctions:get(loopid, gather, relX, relY, V, validLeft, validRight)
+  return self.lb:get( loopid, gather, relX, relY, V, function(i) return `[self.readerPosX[loopid]]+i >= validLeft and [self.readerPosX[loopid]]+i < validRight end )
+end
+
+function ScaleLineBufferWrapperFunctions:next( loopid, vorig )
+  local v = scaledDelta(vorig, self.upsampleStrideX[loopid], self.downsampleStrideX[loopid], self.readerPosX[loopid])
+
+  local res = { self.lb:next( loopid, v ) }
+  if self.debug or self.upsampleStrideX[loopid]>1 then table.insert(res, quote [self.readerPosX[loopid]] = [self.readerPosX[loopid]] + vorig end) end
+  return quote res end
+end
+
+function ScaleLineBufferWrapperFunctions:nextLine( loopid,  sub )
+  local res = {}
+  local subX = symbol(int,"subX")
+  table.insert(res, quote var [subX] = [scaledDelta(`-sub, self.upsampleStrideX[loopid], self.downsampleStrideX[loopid], self.readerPosX[loopid])] end)
+  local strideY = symbol(int,"strideY")
+  table.insert(res, quote var [strideY] = [scaledDelta(1, self.upsampleStrideY[loopid], self.downsampleStrideY[loopid], self.readerPosY[loopid])] end)
+
+  table.insert( res, self.lb:nextLine( loopid, subX, strideY ) )
+
+  if self.debug or self.upsampleStrideY[loopid]>1 then table.insert(res, quote [self.readerPosY[loopid]] = [self.readerPosY[loopid]] + 1 end) end
+  if self.debug or self.upsampleStrideX[loopid]>1 then table.insert(res, quote [self.readerPosX[loopid]] = [self.readerPosX[loopid]] - sub end) end
 
   return quote res end
 end
@@ -1815,7 +1863,7 @@ function darkroom.terracompiler.allocateImageWrappers(
               debugImagesStr = options.debugImages..n:name().."_"..c 
             end
 
-            outputs[n][c] = newLineBufferWrapper(
+            outputs[n][c] = newScaleLineBufferWrapper(
               n:bufferSize(kernelGraph), 
               n.kernel.type:baseType(),
               downToNearest(options.V, neededStencil( true, kernelGraph, n, largestScaleY, shifts):min(1)), -- use the more conservative stencil
