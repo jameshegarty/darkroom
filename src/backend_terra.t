@@ -442,7 +442,9 @@ function LineBufferWrapperFunctions:nextLine( loopid,  subX, strideY )
     table.insert(res, 
       quote 
         [buf[k]] = [buf[k]] + subX + [self:lineWidth()]*[strideY]
-        if [buf[k]] >= [base[k]]+[self:modularSize(bufType[k])*2] then [buf[k]] = [buf[k]] - [self:modularSize(bufType[k])] end
+        -- the reason this needs to be a while loop is that we may request to strideY many more lines than the size of this buffer.
+        -- Ex: downsampling this by 7x with no stencil. Then, lines is 1 (no stencil). But strideY will be 7. Will need to loop 7 times.
+        while [buf[k]] >= [base[k]]+[self:modularSize(bufType[k])*2] do [buf[k]] = [buf[k]] - [self:modularSize(bufType[k])] end
       end)
   end
 
@@ -1597,8 +1599,8 @@ return
           neededStat; neededImageSpaceStat; validStat; validVectorizedStat;
           -- we use image space needed region here b/c These are the actual pixel coords we will write to
           -- since all image accesses use relative coordinates, This doesn't cause problems
-          [inputs[n]:declare( n:name(), loopid, neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, options, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, linebufferBase ) ];
-          [outputs[n]:declare( n:name(), loopid,neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, options, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, linebufferBase ) ];
+          [inputs[n]:declare( n.kernel:name(), loopid, neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, options, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, linebufferBase ) ];
+          [outputs[n]:declare( n.kernel:name(), loopid,neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, options, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, linebufferBase ) ];
           
           if options.verbose then
             cstdio.printf("--- %s V %d cores %d core %d shift %d\n",[n.kernel:name()],options.V, options.cores, strip, [shifts[n]])

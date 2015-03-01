@@ -15,10 +15,4 @@ frame1 = im(x,y) frame1Original(x*2,y*2)[0] end
     end 
   end
 
---  local Ainv = invert2x2(A)
-
-  local im det(x,y) 1/A(x,y) end
- im Ainv(x,y) det*A end
-
---Ainv:save("out/lucaskanade.bmp", {cores=1})
-test(Ainv)
+test(A)
