@@ -93,6 +93,8 @@ function scaledAbsolute(v,upsampleStride, downsampleStride)
     return `floorDivide(v,upsampleStride)
   elseif upsampleStride==1 then
     return `v*downsampleStride
+  else
+    assert(false)
   end
 end
 
@@ -484,21 +486,20 @@ function newScaleLineBufferWrapper( lines, orionType, leftStencil, stripWidth, r
   return setmetatable(tab,ScaleLineBufferWrapperMT)
 end
 
-function ScaleLineBufferWrapperFunctions:declare( loopid, xStripRelative, y, clock, core, stripId, options, scaleN1, scaleD1, scaleN2, scaleD2,linebufferBase )
+function ScaleLineBufferWrapperFunctions:declare( loopid, x, y, clock, core, stripId, options, scaleN1, scaleD1, scaleN2, scaleD2,linebufferBase )
   self.downsampleStrideX[loopid], self.upsampleStrideX[loopid] = calculateStride(self.scaleN1, self.scaleD1, scaleN1, scaleD1)
   self.downsampleStrideY[loopid], self.upsampleStrideY[loopid] = calculateStride(self.scaleN2, self.scaleD2, scaleN2, scaleD2)
 
   clock = `floorDivide(clock,[looprate(self.scaleN2,self.scaleD2,self.largestScaleY)])
 
   local res = {}
-  local x = `[stripLeft( stripId, options, self.scaleN1, self.scaleD1)]+[scaledAbsolute(xStripRelative, self.upsampleStrideX[loopid], self.downsampleStrideX[loopid])]
 
-  local readerX = `[stripLeft( stripId, options, scaleN1, scaleD1)]+xStripRelative
+  local scaledX = `[scaledAbsolute( x, self.upsampleStrideX[loopid], self.downsampleStrideX[loopid] )]
 
-  if self.upsampleStrideX[loopid]>1 or self.debug then self.readerPosX[loopid] = symbol(int,"readerPosX"); table.insert(res, quote var [self.readerPosX[loopid]] = readerX; end) end
+  if self.upsampleStrideX[loopid]>1 or self.debug then self.readerPosX[loopid] = symbol(int,"readerPosX"); table.insert(res, quote var [self.readerPosX[loopid]] = x; end) end
   if self.upsampleStrideY[loopid]>1 or self.debug then self.readerPosY[loopid] = symbol(int,"readerPosY"); table.insert(res, quote var [self.readerPosY[loopid]] = y; end) end
 
-  table.insert(res, self.lb:declare( loopid, x, y, clock, core, stripId, options, linebufferBase ) )
+  table.insert(res, self.lb:declare( loopid, scaledX, y, clock, core, stripId, options, linebufferBase ) )
 
   return quote res end
 end
@@ -568,9 +569,9 @@ function newImageWrapper( basePtr, orionType, stride, debug, scaleN1, scaleD1, s
   return setmetatable(tab,ImageWrapperMT)
 end
 
-function ImageWrapperFunctions:declare( loopid, xStripRelative, y, clock, core, stripId, options, scaleN1, scaleD1, scaleN2, scaleD2 )
+function ImageWrapperFunctions:declare( loopid, x, y, clock, core, stripId, options, scaleN1, scaleD1, scaleN2, scaleD2 )
   assert(type(loopid)=="number")
-  assert(terralib.isquote(xStripRelative) or terralib.issymbol(xStripRelative))
+  assert(terralib.isquote(x) or terralib.issymbol(x))
   assert(terralib.isquote(y) or terralib.issymbol(y))
   assert(terralib.isquote(clock) or terralib.issymbol(clock)) -- not used
   assert(terralib.isquote(core) or terralib.issymbol(core))
@@ -578,10 +579,10 @@ function ImageWrapperFunctions:declare( loopid, xStripRelative, y, clock, core, 
   assert(type(options)=="table")
   assert(type(scaleD2)=="number")
 
-  self.downsampleStrideX[loopid], self.upsampleStrideX[loopid] = calculateStride(self.scaleN1, self.scaleD1, scaleN1, scaleD1)
-  self.downsampleStrideY[loopid], self.upsampleStrideY[loopid] = calculateStride(self.scaleN2, self.scaleD2, scaleN2, scaleD2)
+  -- we never access inputs or outputs at anything other than their native scale
+  assert( ratioToScale(self.scaleN1, self.scaleD1) == ratioToScale(scaleN1, scaleD1) )
+  assert( ratioToScale(self.scaleN2, self.scaleD2) == ratioToScale(scaleN2, scaleD2) )
 
-  local x = `[stripLeft( stripId, options, self.scaleN1, self.scaleD1)]+[scaledAbsolute(xStripRelative, self.upsampleStrideX[loopid], self.downsampleStrideX[loopid])]
   y = `floorDivide(y,[looprate(self.scaleN2,self.scaleD2,self.largestScaleY)])
 
   if self.data[loopid]==nil then self.data[loopid] = symbol(&(self.orionType:toTerraType()),"data") end
@@ -710,16 +711,16 @@ function ImageWrapperFunctions:next( loopid, v )
   assert(type(loopid)=="number")
   assert(type(v)=="number" or terralib.isquote(v))
   local res = {}
-  if self.sparse then return quote [self.posX[loopid]] = [self.posX[loopid]]+v*[self.downsampleStrideX[loopid]] end
-  else return quote [self.data[loopid]] = [self.data[loopid]] + v*[self.downsampleStrideX[loopid]] end end
+  if self.sparse then return quote [self.posX[loopid]] = [self.posX[loopid]]+v end
+  else return quote [self.data[loopid]] = [self.data[loopid]] + v end end
 end
 
 -- sub: this is the number of pixels we looped over since last calling nextline
 -- basically: the number of times we called nextVector this row * the vector width
 function ImageWrapperFunctions:nextLine( loopid, sub )
   assert(terralib.isquote(sub))
-  if self.sparse then return quote [self.posX[loopid]] = [self.posX[loopid]] - (sub*[self.downsampleStrideX[loopid]]); [self.posY[loopid]] = [self.posY[loopid]] + [self.downsampleStrideY[loopid]]; end
-  else return quote [self.data[loopid]] = [self.data[loopid]] + [self.stride]*[self.downsampleStrideY[loopid]] - (sub*[self.downsampleStrideX[loopid]]) end end
+  if self.sparse then return quote [self.posX[loopid]] = [self.posX[loopid]] - sub; [self.posY[loopid]] = [self.posY[loopid]] + 1; end
+  else return quote [self.data[loopid]] = [self.data[loopid]] + [self.stride] - sub end end
 end
 
 
@@ -1485,24 +1486,13 @@ terra interiorSelectRight(strip : int, stripcount : int, interiorValue : int, ex
   return interiorValue
 end
 
-function neededStripRelative(kernelGraph, kernelNode, strip, shifts, largestScaleY, options)
-  assert(type(kernelGraph)=="table");assert(type(kernelNode)=="table");assert(type(shifts)=="table");assert(type(largestScaleY)=="number");assert(type(options)=="table");
-
-  return {left = `interiorSelectLeft(strip,[neededStencil( true, kernelGraph, kernelNode, largestScaleY, shifts):min(1)], [neededStencil( false, kernelGraph, kernelNode, largestScaleY, shifts):min(1)]),
-          right = `interiorSelectRight(strip,[options.stripcount],[neededStencil( true, kernelGraph, kernelNode, largestScaleY, shifts):max(1)],[neededStencil( false, kernelGraph, kernelNode, largestScaleY, shifts):max(1)]),
-          top = `[neededStencil( false, kernelGraph, kernelNode, largestScaleY, shifts):max(2)],
-          bottom = `[neededStencil( false, kernelGraph, kernelNode, largestScaleY, shifts):min(2)]}
-end
-
 function needed(kernelGraph, kernelNode, strip, shifts, largestScaleY, options)
   assert(type(kernelGraph)=="table");assert(type(kernelNode)=="table");assert(type(shifts)=="table");assert(type(largestScaleY)=="number");assert(type(options)=="table");
-  local nsr = neededStripRelative(kernelGraph, kernelNode, strip, shifts, largestScaleY, options)
 
-  local scale = looprate(kernelNode.kernel.scaleN2,kernelNode.kernel.scaleD2,largestScaleY)
-
-  return {left = `[stripLeft(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+[nsr.left],
-          right = `[stripRight(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+[nsr.right],
-          top = `[nsr.top]+[options.height*largestScaleY], bottom = `[nsr.bottom]}
+  return {left = `[stripLeft(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+interiorSelectLeft(strip,[neededStencil( true, kernelGraph, kernelNode, largestScaleY, shifts):min(1)], [neededStencil( false, kernelGraph, kernelNode, largestScaleY, shifts):min(1)]),
+          right = `[stripRight(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+interiorSelectRight(strip,[options.stripcount],[neededStencil( true, kernelGraph, kernelNode, largestScaleY, shifts):max(1)],[neededStencil( false, kernelGraph, kernelNode, largestScaleY, shifts):max(1)]),
+          top = `[neededStencil( false, kernelGraph, kernelNode, largestScaleY, shifts):max(2)]+[options.height*largestScaleY], 
+          bottom = `[neededStencil( false, kernelGraph, kernelNode, largestScaleY, shifts):min(2)]}
 end
 
 function valid(kernelGraph, kernelNode, strip, shifts, largestScaleY, options)
@@ -1589,20 +1579,18 @@ return
       -- requested y=[0,n] of a function shifted by s, then neededY=[s,n+s]. As a result, this implementation
       -- closely resembles hardware that produces 1 line per clock. 
 
-      local neededStripRelative, neededStripRelativeStat = memo("neededStripRelative",neededStripRelative( kernelGraph, n, strip, shifts, largestScaleY, options )) -- clock space
       local needed, neededStat = memo("needed",needed( kernelGraph, n, strip, shifts, largestScaleY, options )) -- clock space
-      local neededImageSpace, neededImageSpaceStat = memo("neededImageSpace",shiftRegion( neededStripRelative, -shifts[n] ))
---      local neededImageSpace, neededImageSpaceStat = memo("neededImageSpace",shiftRegion( needed, -shifts[n] ))
+      local neededImageSpace, neededImageSpaceStat = memo("neededImageSpace",shiftRegion( needed, -shifts[n] ))
       local valid, validStat = memo("valid",valid( kernelGraph, n, strip, shifts, largestScaleY, options ))
       local validVectorized, validVectorizedStat = memo("validVectorized",vectorizeRegion(valid, options.V)) -- always >= valid to the nearest vector width
 
       table.insert(loopStartCode,
         quote
-          neededStripRelativeStat; neededStat; neededImageSpaceStat; validStat; validVectorizedStat;
+          neededStat; neededImageSpaceStat; validStat; validVectorizedStat;
           -- we use image space needed region here b/c These are the actual pixel coords we will write to
           -- since all image accesses use relative coordinates, This doesn't cause problems
-          [inputs[n]:declare( loopid, neededImageSpace.left, neededImageSpace.bottom, neededStripRelative.bottom, core, strip, options, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, linebufferBase ) ];
-          [outputs[n]:declare( loopid, neededImageSpace.left, neededImageSpace.bottom, neededStripRelative.bottom, core, strip, options, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, linebufferBase ) ];
+          [inputs[n]:declare( loopid, neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, options, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, linebufferBase ) ];
+          [outputs[n]:declare( loopid,neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, options, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, linebufferBase ) ];
           
           if options.verbose then
             cstdio.printf("--- %s V %d cores %d core %d shift %d\n",[n.kernel:name()],options.V, options.cores, strip, [shifts[n]])
@@ -1610,8 +1598,7 @@ return
             cstdio.printf("valid l %d r %d t %d b %d\n",[valid.left],[valid.right],[valid.top],[valid.bottom])
             cstdio.printf("validVectorized l %d r %d t %d b %d\n",[validVectorized.left],[validVectorized.right],[validVectorized.top],[validVectorized.bottom])
             cstdio.printf("needed l %d r %d t %d b %d\n",[needed.left],[needed.right],[needed.top],[needed.bottom])
-            cstdio.printf("needed strip relative l %d r %d t %d b %d\n",[neededStripRelative.left],[neededStripRelative.right],[neededStripRelative.top],[neededStripRelative.bottom])
-            cstdio.printf("needed image space strip relative l %d r %d t %d b %d\n",[neededImageSpace.left],[neededImageSpace.right],[neededImageSpace.top],[neededImageSpace.bottom])
+            cstdio.printf("needed image space l %d r %d t %d b %d\n",[neededImageSpace.left],[neededImageSpace.right],[neededImageSpace.top],[neededImageSpace.bottom])
           end
         end)
 
@@ -1619,7 +1606,7 @@ return
 
       table.insert(loopCode,
         quote
-          if clock >= [needed.bottom] and clock < [needed.top] and (fixedModulus(clock-neededStripRelative.bottom,[looprate(n.kernel.scaleN2,n.kernel.scaleD2,largestScaleY)]) == 0 or [n.kernel.scaleD2]==0) then
+          if clock >= [needed.bottom] and clock < [needed.top] and (fixedModulus(clock-needed.bottom,[looprate(n.kernel.scaleN2,n.kernel.scaleD2,largestScaleY)]) == 0 or [n.kernel.scaleD2]==0) then
             if clock < [valid.bottom] or clock >= [valid.top]  then
 
               -- top/bottom row(s) (all boundary)
