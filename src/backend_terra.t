@@ -177,7 +177,8 @@ LineBufferWrapperMT={__index=LineBufferWrapperFunctions}
 linebufferCount = 7 -- just start with a random id to make the debug checks more effective
 function isLineBufferWrapper(b) return getmetatable(b)==LineBufferWrapperMT end
 
-function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightStencil, debug, V, debugImagePath, debugBounds )
+function newLineBufferWrapper( name, lines, orionType, leftStencil, stripWidth, rightStencil, debug, V, debugImagePath, debugBounds )
+  assert(type(name)=="string")
   assert(type(lines)=="number")
   assert(type(leftStencil)=="number")
   assert(type(stripWidth)=="number")
@@ -192,7 +193,8 @@ function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightS
   assert(stripWidth > 0)
   assert(stripWidth - leftStencil + rightStencil > 0)
 
-  local tab = {lines=lines, 
+  local tab = {name = name,
+               lines=lines, 
                id = linebufferCount, -- for debugging
                orionType=orionType, 
                leftStencil = leftStencil, 
@@ -205,6 +207,7 @@ function newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightS
                ivDebugY={}, 
                ivDebugId = {}, 
                posX={}, posY={},
+               readerName = {},
                debugImagePath = debugImagePath,
                debugBounds = debugBounds}
 
@@ -217,7 +220,8 @@ function LineBufferWrapperFunctions:declareMainThread()
   return quote end
 end
 
-function LineBufferWrapperFunctions:declare( loopid, x, y, clock, core, stripId, options, linebufferBase )
+function LineBufferWrapperFunctions:declare( name, loopid, x, y, clock, core, stripId, options, linebufferBase )
+  assert(type(name)=="string")
   assert(type(loopid)=="number")
   assert(terralib.isquote(x) or terralib.issymbol(x))
   assert(terralib.isquote(y) or terralib.issymbol(y)) -- we don't actually use this - we don't care what the actual coord is
@@ -229,6 +233,7 @@ function LineBufferWrapperFunctions:declare( loopid, x, y, clock, core, stripId,
 
   local res = {}
 
+  self.readerName[loopid] = name
   if self.iv[loopid]==nil then self.iv[loopid] = symbol(&self.orionType:toTerraType(),"iv") end
     
   if self.debug then
@@ -382,7 +387,7 @@ function LineBufferWrapperFunctions:get(loopid, gather, relX, relY, V, valid)
                      -- some of the area we compute is garbage, and thus
                      -- will read invalid values (but we will overwrite it later so its ok). Bypass the debug checks on those regions.
         if [valid(i)] then
-                       orionAssert(@([self.ivDebugId[loopid]]+lrelY*[self:lineWidth()]+i+lrelX) == [self.id], "incorrect LB Id")
+                       orionAssert(@([self.ivDebugId[loopid]]+lrelY*[self:lineWidth()]+i+lrelX) == [self.id], ["incorrect LB Id. "..self.readerName[loopid].." accessing "..self.name])
                        orionAssert(@([self.ivDebugY[loopid]]+lrelY*[self:lineWidth()]+i+lrelX) == [self.posY[loopid]]+lrelY, "incorrect LB Y") 
                        orionAssert(@([self.ivDebugX[loopid]]+lrelY*[self:lineWidth()]+i+lrelX) == [self.posX[loopid]]+i+lrelX, "incorrect LB X")
                      end
@@ -448,7 +453,8 @@ end
 ScaleLineBufferWrapperFunctions = {}
 ScaleLineBufferWrapperMT={__index=ScaleLineBufferWrapperFunctions}
 
-function newScaleLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightStencil, debug, scaleN1, scaleD1, scaleN2, scaleD2, largestScaleY, V, debugImagePath, debugBounds )
+function newScaleLineBufferWrapper( name, lines, orionType, leftStencil, stripWidth, rightStencil, debug, scaleN1, scaleD1, scaleN2, scaleD2, largestScaleY, V, debugImagePath, debugBounds )
+  assert(type(name)=="string")
   assert(type(lines)=="number")
   assert(type(leftStencil)=="number")
   assert(type(stripWidth)=="number")
@@ -469,7 +475,7 @@ function newScaleLineBufferWrapper( lines, orionType, leftStencil, stripWidth, r
   assert(stripWidth - leftStencil + rightStencil > 0)
 
 
-  local tab = {lb = newLineBufferWrapper( lines, orionType, leftStencil, stripWidth, rightStencil, debug, V, debugImagePath, debugBounds ),
+  local tab = {lb = newLineBufferWrapper( name, lines, orionType, leftStencil, stripWidth, rightStencil, debug, V, debugImagePath, debugBounds ),
                debug = debug,
                scaleN1=scaleN1,
                scaleD1=scaleD1,
@@ -486,7 +492,7 @@ function newScaleLineBufferWrapper( lines, orionType, leftStencil, stripWidth, r
   return setmetatable(tab,ScaleLineBufferWrapperMT)
 end
 
-function ScaleLineBufferWrapperFunctions:declare( loopid, x, y, clock, core, stripId, options, scaleN1, scaleD1, scaleN2, scaleD2,linebufferBase )
+function ScaleLineBufferWrapperFunctions:declare( name, loopid, x, y, clock, core, stripId, options, scaleN1, scaleD1, scaleN2, scaleD2,linebufferBase )
   self.downsampleStrideX[loopid], self.upsampleStrideX[loopid] = calculateStride(self.scaleN1, self.scaleD1, scaleN1, scaleD1)
   self.downsampleStrideY[loopid], self.upsampleStrideY[loopid] = calculateStride(self.scaleN2, self.scaleD2, scaleN2, scaleD2)
 
@@ -499,7 +505,7 @@ function ScaleLineBufferWrapperFunctions:declare( loopid, x, y, clock, core, str
   if self.upsampleStrideX[loopid]>1 or self.debug then self.readerPosX[loopid] = symbol(int,"readerPosX"); table.insert(res, quote var [self.readerPosX[loopid]] = x; end) end
   if self.upsampleStrideY[loopid]>1 or self.debug then self.readerPosY[loopid] = symbol(int,"readerPosY"); table.insert(res, quote var [self.readerPosY[loopid]] = y; end) end
 
-  table.insert(res, self.lb:declare( loopid, scaledX, y, clock, core, stripId, options, linebufferBase ) )
+  table.insert(res, self.lb:declare( name, loopid, scaledX, y, clock, core, stripId, options, linebufferBase ) )
 
   return quote res end
 end
@@ -553,7 +559,8 @@ function isImageWrapper(b) return getmetatable(b)==ImageWrapperMT end
 
 -- tab.terraType should be the base type of the data stored in this image
 -- ie, if it's a floating point image, tab.terraType should be float
-function newImageWrapper( basePtr, orionType, stride, debug, scaleN1, scaleD1, scaleN2, scaleD2, largestScaleY, sparse, mainThreadBasePtr )
+function newImageWrapper( name, basePtr, orionType, stride, debug, scaleN1, scaleD1, scaleN2, scaleD2, largestScaleY, sparse, mainThreadBasePtr )
+  assert(type(name)=="string")
   assert(darkroom.type.isType(orionType))
   assert(type(stride)=="number")
   assert(type(debug) == "boolean")
@@ -564,12 +571,13 @@ function newImageWrapper( basePtr, orionType, stride, debug, scaleN1, scaleD1, s
   assert(type(largestScaleY)=="number")
   assert(type(sparse)=="boolean")
 
-  local tab = {data={},basePtr=basePtr,orionType=orionType, stride=stride, debug=debug, scaleN1=scaleN1, scaleD1=scaleD1, scaleN2=scaleN2, scaleD2=scaleD2, largestScaleY=largestScaleY, downsampleStrideX={}, downsampleStrideY={}, upsampleStrideX={}, upsampleStrideY={}, readerPosX={}, readerPosY={}, sparse=sparse, posX={}, posY={}, mainThreadBasePtr = mainThreadBasePtr}
+  local tab = { name=name, data={},basePtr=basePtr,orionType=orionType, stride=stride, debug=debug, scaleN1=scaleN1, scaleD1=scaleD1, scaleN2=scaleN2, scaleD2=scaleD2, largestScaleY=largestScaleY, downsampleStrideX={}, downsampleStrideY={}, upsampleStrideX={}, upsampleStrideY={}, readerPosX={}, readerPosY={}, sparse=sparse, posX={}, posY={}, mainThreadBasePtr = mainThreadBasePtr}
 
   return setmetatable(tab,ImageWrapperMT)
 end
 
-function ImageWrapperFunctions:declare( loopid, x, y, clock, core, stripId, options, scaleN1, scaleD1, scaleN2, scaleD2 )
+function ImageWrapperFunctions:declare( name, loopid, x, y, clock, core, stripId, options, scaleN1, scaleD1, scaleN2, scaleD2 )
+  assert(type(name)=="string")
   assert(type(loopid)=="number")
   assert(terralib.isquote(x) or terralib.issymbol(x))
   assert(terralib.isquote(y) or terralib.issymbol(y))
@@ -1589,8 +1597,8 @@ return
           neededStat; neededImageSpaceStat; validStat; validVectorizedStat;
           -- we use image space needed region here b/c These are the actual pixel coords we will write to
           -- since all image accesses use relative coordinates, This doesn't cause problems
-          [inputs[n]:declare( loopid, neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, options, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, linebufferBase ) ];
-          [outputs[n]:declare( loopid,neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, options, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, linebufferBase ) ];
+          [inputs[n]:declare( n:name(), loopid, neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, options, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, linebufferBase ) ];
+          [outputs[n]:declare( n:name(), loopid,neededImageSpace.left, neededImageSpace.bottom, needed.bottom, core, strip, options, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, linebufferBase ) ];
           
           if options.verbose then
             cstdio.printf("--- %s V %d cores %d core %d shift %d\n",[n.kernel:name()],options.V, options.cores, strip, [shifts[n]])
@@ -1821,7 +1829,7 @@ function darkroom.terracompiler.allocateImageWrappers(
           inputWrappers[n.isInputImage] = {}
           local type = n.kernel.type
           -- we don't actually care about the alignment of inputs b/c we do unaligned loads
-          for c = 1,type:channels() do inputWrappers[n.isInputImage][c] = newImageWrapper( channelPointer(c-1,inputImageSymbolMap[n.isInputImage], type:baseType():toTerraType(), options.width, options.height), type:baseType(), options.width, options.debug ,1,1,1,1, largestScaleY, false) end
+          for c = 1,type:channels() do inputWrappers[n.isInputImage][c] = newImageWrapper( "input"..n.isInputImage, channelPointer(c-1,inputImageSymbolMap[n.isInputImage], type:baseType():toTerraType(), options.width, options.height), type:baseType(), options.width, options.debug ,1,1,1,1, largestScaleY, false) end
           setmetatable(inputWrappers[n.isInputImage],pointwiseDispatchMT)
         end
         outputs[n] = inputWrappers[n.isInputImage]
@@ -1834,6 +1842,7 @@ function darkroom.terracompiler.allocateImageWrappers(
             local W = imageSize(options.width,n.kernel.scaleN1,n.kernel.scaleD1)
             local H = imageSize(options.height,n.kernel.scaleN2,n.kernel.scaleD2)
             outputs[n][c] = newImageWrapper( 
+              "output",
               channelPointer(c-1,outputImageSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType(),W,H), 
               n.kernel.type:baseType(), upToNearest(options.V, W), options.debug, n.kernel.scaleN1, n.kernel.scaleD1, n.kernel.scaleN2, n.kernel.scaleD2, largestScaleY, n.kernel.kind=="filter",
               channelPointer(c-1,outputImageMainThreadSymbolMap[parentIsOutput(n)], n.kernel.type:baseType():toTerraType(),W,H)) 
@@ -1849,6 +1858,7 @@ function darkroom.terracompiler.allocateImageWrappers(
             end
 
             outputs[n][c] = newScaleLineBufferWrapper(
+              n.kernel:name(),
               n:bufferSize(kernelGraph), 
               n.kernel.type:baseType(),
               downToNearest(options.V, neededStencil( true, kernelGraph, n, largestScaleY, shifts):min(1)), -- use the more conservative stencil
