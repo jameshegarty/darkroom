@@ -1416,19 +1416,6 @@ function darkroom.terracompiler.codegen(
   return res[1], stat[darkroom.typedAST._topbb], res[3]
 end
 
--- user is expected to allocate an image that is padded to the (vector size)*(stripCount)
-function stripWidth(options, scaleN1, scaleD1)
-  assert(type(scaleN1)=="number")
-  assert(type(scaleD1)=="number")
-  local res = math.floor((upToNearest(options.V*options.stripcount,options.width) / options.stripcount) * ratioToScale(scaleN1,scaleD1))
-
-  -- in the case of pyramids, the strip width for all scales must have V as a factor.
-  -- This is hard in general, b/c you might have 3 as a scale factor for ex.
-  assert(res % options.V == 0) -- strips had better have V as a factor, or sets will be unaligned
-  return res
-end
-
-
 _neededCache = {}
 _neededCache[true] = setmetatable({}, {__mode="k"})
 _neededCache[false] = setmetatable({}, {__mode="k"})
@@ -1482,8 +1469,25 @@ function validStencil(kernelGraph, kernelNode, largestScaleY, shifts)
   end
 end
 
-function stripLeft(strip, options, scaleN1, scaleD1) return `strip*[stripWidth(options, scaleN1, scaleD1)] end
-function stripRight(strip, options, scaleN1, scaleD1) return quote var w = (strip+1)*[stripWidth(options, scaleN1, scaleD1)]; var tw = [math.floor(options.width*ratioToScale(scaleN1,scaleD1))] in terralib.select(w>tw,tw,w) end end
+-- user is expected to allocate an image that is padded to the (vector size)*(stripCount)
+function stripWidth(options, scaleN1, scaleD1, smallestScaleX)
+  assert(type(scaleN1)=="number")
+  assert(type(scaleD1)=="number")
+  assert(type(smallestScaleX)=="number")
+
+  local baseUnit = (math.ceil(options.width/ (smallestScaleX * options.stripcount*options.V) )) * smallestScaleX * options.V 
+
+  local res = baseUnit  * ratioToScale( scaleN1, scaleD1 )
+
+  -- in the case of pyramids, the strip width for all scales must have V as a factor.
+  -- This is hard in general, b/c you might have 3 as a scale factor for ex.
+  assert(res % options.V == 0) -- strips had better have V as a factor, or sets will be unaligned
+  return res
+end
+
+
+function stripLeft( strip, options, scaleN1, scaleD1, smallestScaleX ) return quote var w = (strip)*[stripWidth( options, scaleN1, scaleD1, smallestScaleX )]; var tw = [math.floor(options.width*ratioToScale(scaleN1,scaleD1))] in terralib.select(w>tw,tw,w) end end
+function stripRight( strip, options, scaleN1, scaleD1, smallestScaleX ) return quote var w = (strip+1)*[stripWidth( options, scaleN1, scaleD1, smallestScaleX )]; var tw = [math.floor(options.width*ratioToScale(scaleN1,scaleD1))] in terralib.select(w>tw,tw,w) end end
 
 -- return interiorValue or exteriorValue depending if this strip's edge is on the exterior of the region we're calculating or not
 terra interiorSelectLeft(strip : int, interiorValue : int, exteriorValue : int)
@@ -1496,25 +1500,25 @@ terra interiorSelectRight(strip : int, stripcount : int, interiorValue : int, ex
   return interiorValue
 end
 
-function needed(kernelGraph, kernelNode, strip, shifts, largestScaleY, options)
+function needed(kernelGraph, kernelNode, strip, shifts, largestScaleY, smallestScaleX, options)
   assert(type(kernelGraph)=="table");assert(type(kernelNode)=="table");assert(type(shifts)=="table");assert(type(largestScaleY)=="number");assert(type(options)=="table");
 
-  return {left = `[stripLeft(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+interiorSelectLeft(strip,[neededStencil( true, kernelGraph, kernelNode, largestScaleY, shifts):min(1)], [neededStencil( false, kernelGraph, kernelNode, largestScaleY, shifts):min(1)]),
-          right = `[stripRight(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+interiorSelectRight(strip,[options.stripcount],[neededStencil( true, kernelGraph, kernelNode, largestScaleY, shifts):max(1)],[neededStencil( false, kernelGraph, kernelNode, largestScaleY, shifts):max(1)]),
+  return {left = `[stripLeft(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1, smallestScaleX )]+interiorSelectLeft(strip,[neededStencil( true, kernelGraph, kernelNode, largestScaleY, shifts):min(1)], [neededStencil( false, kernelGraph, kernelNode, largestScaleY, shifts):min(1)]),
+          right = `[stripRight(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1, smallestScaleX )]+interiorSelectRight(strip,[options.stripcount],[neededStencil( true, kernelGraph, kernelNode, largestScaleY, shifts):max(1)],[neededStencil( false, kernelGraph, kernelNode, largestScaleY, shifts):max(1)]),
           top = `[neededStencil( false, kernelGraph, kernelNode, largestScaleY, shifts):max(2)]+[options.height*largestScaleY], 
           bottom = `[neededStencil( false, kernelGraph, kernelNode, largestScaleY, shifts):min(2)]}
 end
 
-function valid(kernelGraph, kernelNode, strip, shifts, largestScaleY, options)
+function valid(kernelGraph, kernelNode, strip, shifts, largestScaleY, smallestScaleX, options)
   assert(type(kernelGraph)=="table");assert(type(kernelNode)=="table");assert(type(shifts)=="table");assert(type(largestScaleY)=="number");assert(type(options)=="table");
 
-  local v = {left = `[stripLeft(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+interiorSelectLeft(strip,[neededStencil( true, kernelGraph, kernelNode, largestScaleY, shifts):min(1)],[validStencil(kernelGraph, kernelNode, largestScaleY, shifts):min(1)]),
-          right = `[stripRight(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1)]+interiorSelectRight(strip,[options.stripcount], [neededStencil( true, kernelGraph, kernelNode, largestScaleY, shifts):max(1)], [validStencil(kernelGraph, kernelNode, largestScaleY, shifts):max(1)]),
+  local v = {left = `[stripLeft(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1, smallestScaleX )]+interiorSelectLeft(strip,[neededStencil( true, kernelGraph, kernelNode, largestScaleY, shifts):min(1)],[validStencil(kernelGraph, kernelNode, largestScaleY, shifts):min(1)]),
+          right = `[stripRight(strip,options,kernelNode.kernel.scaleN1,kernelNode.kernel.scaleD1, smallestScaleX )]+interiorSelectRight(strip,[options.stripcount], [neededStencil( true, kernelGraph, kernelNode, largestScaleY, shifts):max(1)], [validStencil(kernelGraph, kernelNode, largestScaleY, shifts):max(1)]),
           top = `[options.height*largestScaleY]+[validStencil(kernelGraph, kernelNode, largestScaleY, shifts):max(2)],
           bottom = `[validStencil(kernelGraph, kernelNode, largestScaleY, shifts):min(2)]}
 
   -- valid should never be larger than needed
-  local n = needed( kernelGraph, kernelNode, strip, shifts, largestScaleY, options )
+  local n = needed( kernelGraph, kernelNode, strip, shifts, largestScaleY, smallestScaleX, options )
 
   v.left = `terralib.select(v.left < n.left, n.left, v.left)
   v.right = `terralib.select(v.right > n.right, n.right, v.right)
@@ -1560,11 +1564,13 @@ function darkroom.terracompiler.codegenInnerLoop(
     linebufferBase,
     shifts,
     largestScaleY,
+    smallestScaleX,
     options)
 
   assert(type(shifts)=="table")
   assert(type(options)=="table")
   assert(type(largestScaleY)=="number")
+  assert(type(smallestScaleX)=="number")
 
   local x = symbol(int,"x")
 
@@ -1589,9 +1595,9 @@ return
       -- requested y=[0,n] of a function shifted by s, then neededY=[s,n+s]. As a result, this implementation
       -- closely resembles hardware that produces 1 line per clock. 
 
-      local needed, neededStat = memo("needed",needed( kernelGraph, n, strip, shifts, largestScaleY, options )) -- clock space
+      local needed, neededStat = memo("needed",needed( kernelGraph, n, strip, shifts, largestScaleY, smallestScaleX, options )) -- clock space
       local neededImageSpace, neededImageSpaceStat = memo("neededImageSpace",shiftRegion( needed, -shifts[n] ))
-      local valid, validStat = memo("valid",valid( kernelGraph, n, strip, shifts, largestScaleY, options ))
+      local valid, validStat = memo("valid",valid( kernelGraph, n, strip, shifts, largestScaleY, smallestScaleX, options ))
       local validVectorized, validVectorizedStat = memo("validVectorized",vectorizeRegion(valid, options.V)) -- always >= valid to the nearest vector width
 
       table.insert(loopStartCode,
@@ -1685,11 +1691,13 @@ function darkroom.terracompiler.codegenThread(
     TapStruct, 
     shifts, 
     largestScaleY, 
+    smallestScaleX, 
     options)
 
   assert(darkroom.kernelGraph.isKernelGraph(kernelGraph))
   assert(type(shifts)=="table")
   assert(type(largestScaleY)=="number")
+  assert(type(smallestScaleX)=="number")
   assert(type(options)=="table")
 
   local core = symbol(int, "core")
@@ -1716,6 +1724,7 @@ function darkroom.terracompiler.codegenThread(
     linebufferBase,
     shifts,
     largestScaleY,
+    smallestScaleX,
     options)
 
 
@@ -1786,11 +1795,13 @@ function darkroom.terracompiler.allocateImageWrappers(
     outputImageMainThreadSymbolMap,
     shifts,
     largestScaleY,
+    smallestScaleX,
     options)
 
   assert(darkroom.IR.isIR(kernelGraph))
   assert(type(shifts)=="table")
   assert(type(largestScaleY)=="number")
+  assert(type(smallestScaleX)=="number")
   assert(type(options)=="table")
 
   local inputs = {} -- kernelGraphNode->{input wrappers}
@@ -1864,7 +1875,7 @@ function darkroom.terracompiler.allocateImageWrappers(
               n:bufferSize(kernelGraph), 
               n.kernel.type:baseType(),
               downToNearest(options.V, neededStencil( true, kernelGraph, n, largestScaleY, shifts):min(1)), -- use the more conservative stencil
-              stripWidth(options, n.kernel.scaleN1, n.kernel.scaleD1),
+              stripWidth(options, n.kernel.scaleN1, n.kernel.scaleD1, smallestScaleX ),
               upToNearest(options.V, neededStencil(true,kernelGraph,n, largestScaleY,shifts ):max(1)),
               options.debug,
               n.kernel.scaleN1, 
@@ -1893,6 +1904,8 @@ function darkroom.terracompiler.compile(
     taps,
     shifts,
     largestScaleY,
+    smallestScaleX,
+    smallestScaleY,
     options)
 
   if darkroom.verbose then print("compile") end
@@ -1900,6 +1913,8 @@ function darkroom.terracompiler.compile(
   assert(type(inputImages)=="table")
   assert(type(taps)=="table")
   assert(type(largestScaleY)=="number")
+  assert(type(smallestScaleX)=="number")
+  assert(type(smallestScaleY)=="number")
   assert(type(options)=="table")
 
   -- make symbols for the input images
@@ -1958,7 +1973,7 @@ function darkroom.terracompiler.compile(
   end)
 
   -- add the input lists and output to the kernelGraph
-  local inputWrappers, outputWrappers, linebufferSize = darkroom.terracompiler.allocateImageWrappers(kernelGraph, inputImageSymbolMap, outputImageSymbolMap, outputImageMainThreadSymbolMap, shifts, largestScaleY,options)
+  local inputWrappers, outputWrappers, linebufferSize = darkroom.terracompiler.allocateImageWrappers( kernelGraph, inputImageSymbolMap, outputImageSymbolMap, outputImageMainThreadSymbolMap, shifts, largestScaleY, smallestScaleX, options )
 
   local mainThreadDeclarations = {}
   kernelGraph:S("*"):traverse(
@@ -1979,6 +1994,7 @@ function darkroom.terracompiler.compile(
     TapStruct, 
     shifts, 
     largestScaleY, 
+    smallestScaleX,
     options )
 
 --  threadCode:printpretty(false)

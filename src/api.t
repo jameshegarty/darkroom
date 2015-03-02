@@ -57,9 +57,11 @@ function darkroom.frontEnd(ast, options)
   return kernelGraph, largestScaleY, smallestScaleX, smallestScaleY, largestEffectiveCycles
 end
 
-function darkroom.backEnd( kernelGraph, inputImages, taps, largestScaleY, options )
+function darkroom.backEnd( kernelGraph, inputImages, taps, largestScaleY, smallestScaleX, smallestScaleY, options )
 
   assert(type(largestScaleY)=="number")
+  assert(type(smallestScaleX)=="number")
+  assert(type(smallestScaleY)=="number")
   assert(type(options)=="table")
   assert(type(inputImages)=="table")
 
@@ -76,6 +78,8 @@ function darkroom.backEnd( kernelGraph, inputImages, taps, largestScaleY, option
     taps,
     shifts,
     largestScaleY,
+    smallestScaleX,
+    smallestScaleY,
     options)
   
   if options.printstage or options.verbose then 
@@ -159,6 +163,6 @@ function darkroom.compile(inputImageFunctions, outputImageFunctions, tapInputs, 
     end
   end
 
-  local kernelGraph, largestScaleY = darkroom.frontEnd( ast, options )
-  return darkroom.backEnd( kernelGraph, inputImageFunctions, tapInputs, largestScaleY, options)
+  local kernelGraph, largestScaleY, smallestScaleX, smallestScaleY = darkroom.frontEnd( ast, options )
+  return darkroom.backEnd( kernelGraph, inputImageFunctions, tapInputs, largestScaleY, smallestScaleX, smallestScaleY, options)
 end
