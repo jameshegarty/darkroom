@@ -1469,22 +1469,43 @@ function validStencil(kernelGraph, kernelNode, largestScaleY, shifts)
   end
 end
 
+-- Choosing strip width with multiple scales is tricky. If you choose a strip size based
+-- on the output width, then intermediates may get weird strip sizes (and the strip
+-- width for the intermediates will not be the same for each strip). Ex: output/input width = 600
+-- 4 strips => 150 px/strip. But if we downsample an input by 7 in the pipeline, we get
+-- strip widths like [0/7,149/7]->[0,21], [150/7,299/7]->[21,43], etc. which are not a consistant width.
+
+-- The solution implemented here is to round the image width up to a factor of the smallest scale
+-- in the pipeline. I think this may still fail if we scale something by eg both 7 and 3!
+-- B/c I don't think there is a consistant way of doing this. unless smallestScaleX is set to 21.
+-- But if we stick to powers of 2 this should work fine.
+
+-- Other considerations: We expect outputs to be written to at vector size granularity. If not,
+-- we would have to do a non vector write, which may hurt performance. As a result,
+-- we can end up severely limiting the parallelism, b/c we're rounding to such a coarse
+-- granularity that the image width only supports one or two strips. Eg: if we scale down
+-- to one pixel, this will force us to have only 1 strip.
+
+-- The 'correct' way to do this is to calculate the needed regions recursively based on their
+-- readers, and allow non-vector aligned writes.
+
 -- user is expected to allocate an image that is padded to the (vector size)*(stripCount)
 function stripWidth(options, scaleN1, scaleD1, smallestScaleX)
   assert(type(scaleN1)=="number")
   assert(type(scaleD1)=="number")
   assert(type(smallestScaleX)=="number")
 
-  local baseUnit = (math.ceil(options.width/ (smallestScaleX * options.stripcount*options.V) )) * smallestScaleX * options.V 
+  local size = upToNearest( options.stripcount*options.V*smallestScaleX, options.width )
+  local res = (size/(options.stripcount))  * ratioToScale( scaleN1, scaleD1 )
 
-  local res = baseUnit  * ratioToScale( scaleN1, scaleD1 )
-
-  -- in the case of pyramids, the strip width for all scales must have V as a factor.
-  -- This is hard in general, b/c you might have 3 as a scale factor for ex.
   assert(res % options.V == 0) -- strips had better have V as a factor, or sets will be unaligned
   return res
 end
 
+function calcMaxStrips( options, smallestScaleX )
+  local size = upToNearest( options.V*smallestScaleX, options.width )
+  return size / (options.V*smallestScaleX)
+end
 
 function stripLeft( strip, options, scaleN1, scaleD1, smallestScaleX ) return quote var w = (strip)*[stripWidth( options, scaleN1, scaleD1, smallestScaleX )]; var tw = [math.floor(options.width*ratioToScale(scaleN1,scaleD1))] in terralib.select(w>tw,tw,w) end end
 function stripRight( strip, options, scaleN1, scaleD1, smallestScaleX ) return quote var w = (strip+1)*[stripWidth( options, scaleN1, scaleD1, smallestScaleX )]; var tw = [math.floor(options.width*ratioToScale(scaleN1,scaleD1))] in terralib.select(w>tw,tw,w) end end
@@ -1916,6 +1937,10 @@ function darkroom.terracompiler.compile(
   assert(type(smallestScaleX)=="number")
   assert(type(smallestScaleY)=="number")
   assert(type(options)=="table")
+
+  local maxStrips = calcMaxStrips( options, smallestScaleX )
+  options.cores = math.min( options.cores, maxStrips )
+  options.stripcount = math.min( options.stripcount, maxStrips )
 
   -- make symbols for the input images
   local inputImageSymbolTable = {} -- symbols in order
