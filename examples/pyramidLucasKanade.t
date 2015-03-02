@@ -104,4 +104,4 @@ end
 
 im outputResults(x,y) [uint8[3]]({([vectorField[1]](x,y)[0])*20+128, ([vectorField[1]](x,y)[1])*20+128, 0}) end
 
-outputResults:save("out/pyramidlucaskanade.bmp", {cores=1})
+outputResults:save("out/pyramidLucasKanade.bmp")
