@@ -67,4 +67,4 @@ im frame1(x,y) [float](frame1) end
 local frame2 = darkroomSimple.load("frame11.bmp")
 im frame2(x,y) [float](frame2) end
 
-makeLK( frame1, frame2 ):save("out/lucaskanade.bmp")
+makeLK( frame1, frame2 ):save("out/lucaskanade_optimized.bmp")
