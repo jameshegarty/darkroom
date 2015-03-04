@@ -434,7 +434,7 @@ local function codegen(ast, callsiteId)
           local input = n[k]
           local delayby = maxd-delay[input]
 
-          if type(n[k].constLow)=="number" and n[k].constLow==n[k].constHigh then
+          if type(n[k].constLow_1)=="number" and n[k].constLow_1==n[k].constHigh_1 then
             -- this is something with a constant value, so we don't need to retime it
             delayby = 0
           end
@@ -442,7 +442,8 @@ local function codegen(ast, callsiteId)
           for d=1,delayby do
             for c=1,input.type:channels() do
               -- type is determined by producer, b/c consumer op can change type
-              if input.type~=darkroom.type.null() then
+              local const = type(n[k].constLow_1)=="number" and n[k].constLow_1==n[k].constHigh_1
+              if input.type~=darkroom.type.null() and const==false then
                 local decl = declareReg( input.type:baseType(), inputs[k][c].."_retime"..d, "")
                 local cl = inputs[k][c].."_retime"..d.." <= "..sel(d>1,inputs[k][c].."_retime"..(d-1),inputs[k][c]).."; // retiming\n"
                 table.insert(usedResDeclarations, decl)
@@ -452,7 +453,10 @@ local function codegen(ast, callsiteId)
           end
           if delayby>0 then
             for c=1,input.type:channels() do
-              inputs[k][c] = inputs[k][c].."_retime"..delayby
+              local const = type(n[k].constLow_1)=="number" and n[k].constLow_1==n[k].constHigh_1
+              if const==false then
+                 inputs[k][c] = inputs[k][c].."_retime"..delayby
+              end
             end
           end
         end
@@ -631,8 +635,8 @@ local function codegen(ast, callsiteId)
             local dim = 1
             local scalefactor = 1
             while n["index"..dim] do
-              assert(n["index"..dim].constLow == n["index"..dim].constHigh)
-              flatIdx = flatIdx + (n["index"..dim].constLow)*scalefactor
+              assert(n["index"..dim].constLow_1 == n["index"..dim].constHigh_1)
+              flatIdx = flatIdx + (n["index"..dim].constLow_1)*scalefactor
               scalefactor = scalefactor*(n.expr.type:arrayLength())[dim]
               dim = dim + 1
             end
@@ -640,7 +644,7 @@ local function codegen(ast, callsiteId)
             res = inputs["expr"][flatIdx+1]
           elseif n.expr.type:isUint() or n.expr.type:isInt() then
             table.insert( resDeclarations, declareWire( n.type:baseType(), n:cname(c), "", " // index result" ))
-            table.insert( resDeclarations, "assign "..n:cname(c).." = "..inputs["expr"][c].."["..n.index1.constLow.."]; // index\n")
+            table.insert( resDeclarations, "assign "..n:cname(c).." = "..inputs["expr"][c].."["..n.index1.constLow_1.."]; // index\n")
             res = n:cname(c)
           else
             print(n.expr.type)

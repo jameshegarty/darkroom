@@ -67,11 +67,11 @@ function synthRel(rel,t)
   assert(rel.type:isInt() or rel.type:isUint())
   assert(t.type:isInt() or t.type:isUint())
 
-  local constLow, constHigh
-  if rel.constLow~=nil then constLow = rel.constLow+t.constLow end
-  if rel.constHigh~=nil then constHigh = rel.constHigh+t.constHigh end
+  local constLow_1, constHigh_1
+  if rel.constLow_1~=nil then constLow_1 = rel.constLow_1+t.constLow_1 end
+  if rel.constHigh_1~=nil then constHigh_1 = rel.constHigh_1+t.constHigh_1 end
 
-  return darkroom.typedAST.new({kind="binop", lhs=rel, rhs=t, op="+", type=rel.type, constLow=constLow, constHigh=constHigh}):copyMetadataFrom(rel)
+  return darkroom.typedAST.new({kind="binop", lhs=rel, rhs=t, op="+", type=rel.type, constLow_1=constLow_1, constHigh_1=constHigh_1}):copyMetadataFrom(rel)
 end
 
 function shift(graph, shifts, largestScaleY, HWWidth)
@@ -96,8 +96,8 @@ function shift(graph, shifts, largestScaleY, HWWidth)
           function(n)
             local dsStride1, usStride1 = calculateStride(n.expr.scaleN1, n.expr.scaleD1, n.scaleN1, n.scaleD1)
             local dsStride2, usStride2 = calculateStride(n.expr.scaleN2, n.expr.scaleD2, n.scaleN2, n.scaleD2)
-            if (n.translate1.constLow==n.translate1.constHigh) and (n.translate2.constLow==n.translate2.constHigh) and 
-              n.translate1.constLow==0 and n.translate2.constLow==0 
+            if (n.translate1.constLow_1==n.translate1.constHigh_1) and (n.translate2.constLow_1==n.translate2.constHigh_1) and 
+              n.translate1.constLow_1==0 and n.translate2.constLow_1==0 
               and dsStride1==1 and usStride1==1 and dsStride2==1 and usStride2==1 then
               -- noop
               -- it's actually important that we detect this case, b/c the loop invariant code motion algorithm
@@ -165,11 +165,11 @@ function shift(graph, shifts, largestScaleY, HWWidth)
 
                   sy = sy / looprate(inputKernel.kernel.scaleN2,inputKernel.kernel.scaleD2,1)
                   assert(sy==math.floor(sy)) -- only powers of 2 supported
-                  sy = darkroom.typedAST.new({kind="value",value=sy,type=r.relY.type,constLow=sy,constHigh=sy}):copyMetadataFrom(nn)
+                  sy = darkroom.typedAST.new({kind="value",value=sy,type=r.relY.type,constLow_1=sy,constHigh_1=sy}):copyMetadataFrom(nn)
 
                   sx = sx / looprate(inputKernel.kernel.scaleN1,inputKernel.kernel.scaleD1,1)
                   assert(sx==math.floor(sx)) -- only powers of 2 supported
-                  sx = darkroom.typedAST.new({kind="value",value=sx,type=r.relY.type,constLow=sx,constHigh=sx}):copyMetadataFrom(nn)
+                  sx = darkroom.typedAST.new({kind="value",value=sx,type=r.relY.type,constLow_1=sx,constHigh_1=sx}):copyMetadataFrom(nn)
 
                   r.relY = synthRel(r.relY, sy)
                   r.relX = synthRel(r.relX, sx)
@@ -183,7 +183,7 @@ function shift(graph, shifts, largestScaleY, HWWidth)
                 else
                   local inputKernel = newToOldRemap[nn.from]
                   local sy = math.floor( (shifts[inputKernel]-shifts[orig])/looprate(inputKernel.kernel.scaleN2,inputKernel.kernel.scaleD2,largestScaleY))
-                  sy = darkroom.typedAST.new({kind="value",value=sy,type=r.relY.type,constLow=sy,constHigh=sy}):copyMetadataFrom(nn)
+                  sy = darkroom.typedAST.new({kind="value",value=sy,type=r.relY.type,constLow_1=sy,constHigh_1=sy}):copyMetadataFrom(nn)
                   r.relY = synthRel(r.relY, sy)
                   if r.maxY~=nil then
                     r.maxY = synthRel(r.maxY, sy)
