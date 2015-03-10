@@ -21,6 +21,7 @@ function fpga.codegenKernel( kernel, inputLinebufferFifos, imageWidth, imageHeig
          datasourceToInput[k] = moduleInputs[#moduleInputs]:read() 
        end )
 
+  local kernelModule = systolic.module( kernel:name() )
 
   local systolicFn = kernel.kernel:visitEach(
     function( node, inputs)
@@ -36,6 +37,12 @@ function fpga.codegenKernel( kernel, inputLinebufferFifos, imageWidth, imageHeig
         else
           assert(false)
         end
+      elseif node.kind=="reduce" then
+        local rmod = fpga.modules.reduce( node.op, node:arraySize("expr"), node.type)
+        local r = kernelModule:add( rmod:instantiate( node:name() ) )
+        local inputArgs = {}
+        node:map("expr",function(_,i) inputArgs["partial_"..(i-1)] = inputs["expr"..i] end)
+        return r:reduce(inputArgs)
       elseif node.kind=="crop" then
         local cond = systolic.__or(systolic.ge(x:read()-systolic.cast(node.shiftX,int16),systolic.cast(imageWidth,int16)),systolic.ge(y:read()-systolic.cast(node.shiftY,int16),systolic.cast(imageHeight,int16)))
         assert(systolicAST.isSystolicAST(cond))
@@ -57,7 +64,6 @@ function fpga.codegenKernel( kernel, inputLinebufferFifos, imageWidth, imageHeig
     end)
 
   local out = systolic.output( "out", kernel.kernel.type )
-  local kernelModule = systolic.module( kernel:name() )
   local kernelFn = kernelModule:addFunction( "process", moduleInputs, out )
   kernelFn:addAssign( out, systolicFn )
 

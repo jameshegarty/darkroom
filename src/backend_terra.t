@@ -1110,8 +1110,8 @@ function darkroom.terracompiler.codegen(
           return {finalOut, `[packedSymbol]}
 
         elseif node.reduceop=="none" then
-          assert(node.varnode1.low.constLow==0)
-          assert(node.varnode1.high.constLow>=0)
+          assert(node.varnode1.low.constLow_1==0)
+          assert(node.varnode1.high.constLow_1>=0)
           local packedSymbol = symbol(node.type:baseType():toTerraType(false,V)[node.type:channels()],"pack")
           addstat(bb, quote 
                          var [packedSymbol]
@@ -1178,7 +1178,7 @@ function darkroom.terracompiler.codegen(
         if node.kind=="load" then
           assert(darkroom.kernelGraph.isKernelGraph(node.from) or type(node.from)=="number")
 
-          local isGather = type(node.relX.constLow)~="number" or type(node.relX.constHigh)~="number"
+          local isGather = type(node.relX.constLow_1)~="number" or type(node.relX.constHigh_1)~="number"
 
           local x,y = `[inputs.relX[1]][0], `[inputs.relY[1]][0]
           if isGather then x,y = inputs.relX[1], inputs.relY[1] end

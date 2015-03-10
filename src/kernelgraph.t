@@ -106,12 +106,12 @@ function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
   local function multipleTransforms(node) 
     local transformCount = 0
     for v,k in node:parents(typedAST) do 
-      if v.kind=="transformBaked" and k=="expr" then transformCount = transformCount+Stencil.newSquare(v.translate1.constLow, v.translate1.constHigh, v.translate2.constLow, v.translate2.constHigh):area() end
+      if v.kind=="transformBaked" and k=="expr" then transformCount = transformCount+Stencil.newSquare(v.translate1.constLow_1, v.translate1.constHigh_1, v.translate2.constLow_1, v.translate2.constHigh_1):area() end
       if v.kind=="transformBaked" and k=="expr" and v.scaleD1~=0 and node.scaleD1~=0 and v.scaleN1~=0 and node.scaleN1~=0 and v.scaleD2~=0 and node.scaleD2~=0 and v.scaleN2~=0 and node.scaleN2~=0 and ((v.scaleN1/v.scaleD1)~=(node.scaleN1/node.scaleD1) or (v.scaleN2/v.scaleD2)~=(node.scaleN2/node.scaleD2)) then return true end
       if (v.kind=="gather" or v.kind=="gatherColumn") and k=="_input" then return true end 
     end
     -- constants will almost certainly be accessed by multiple kernels, but we don't want to break them into their own kernel, that would be dumb
-    return transformCount > 1 and type(node.constLow)~="number"
+    return transformCount > 1 and type(node.constLow_1)~="number"
   end
 
   local largestEffectiveCycles = 1
@@ -159,7 +159,7 @@ function darkroom.kernelGraph.typedASTToKernelGraph(typedAST, options)
           newnode["child"..childCount] = child
           childCount = childCount+1
           
-          local zero = darkroom.typedAST.new({kind="value",type=darkroom.type.int(8),value=0,constLow=0,constHigh=0}):copyMetadataFrom(n)
+          local zero = darkroom.typedAST.new({kind="value",type=darkroom.type.int(8),value=0,constLow_1=0,constHigh_1=0}):copyMetadataFrom(n)
           local res = darkroom.typedAST.new({kind="load",from=child,type=n.type,relX=zero,relY=zero,scaleN1=child.kernel.scaleN1,scaleD1=child.kernel.scaleD1,scaleN2=child.kernel.scaleN2,scaleD2=child.kernel.scaleD2}):copyMetadataFrom(n)
           return res
         end)

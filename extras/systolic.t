@@ -164,9 +164,9 @@ function systolic.module( name, options )
   return setmetatable(t,systolicModuleMT)
 end
 
-function systolicModuleFunctions:add(inst)
+function systolicModuleFunctions:add( inst )
   assert(systolicInstance.isSystolicInstance(inst))
-  assert( (inst.kind=="instance" and inst.pure==nil) or inst.kind=="reg" or inst.kind=="ram128" or inst.kind=="bram")
+  assert( inst.kind=="module" or inst.kind=="reg" or inst.kind=="ram128" or inst.kind=="bram")
 
   checkReserved(inst.name)
   if self.usedInstanceNames[inst.name]~=nil then
@@ -262,13 +262,13 @@ local function checkArgList( fn, args, calltable )
 end
 
 systolicFunctionFunctions = {}
-systolicFunctionMT={__index=systolicFunctionFunctions, 
-                    __call = function(self,args) -- args is a table of key,value pairs for the named arguments
-                      assert(self.pure)
-                      local t = {kind="call",func=self,pure=true,type=self.outputtype,valid="placeholder"}
-                      checkArgList( self, args, t)
-                      return systolicAST.new(t):setLinenumber(0):setOffset(0):setFilename("")
-                    end
+systolicFunctionMT={__index=systolicFunctionFunctions
+--                    __call = function(self,args) -- args is a table of key,value pairs for the named arguments
+--                      assert(self.pure)
+--                      local t = {kind="call",func=self,pure=true,type=self.outputtype,valid="placeholder"}
+--                      checkArgList( self, args, t)
+--                      return systolicAST.new(t):setLinenumber(0):setOffset(0):setFilename("")
+--                    end
 }
 
 systolicFunction = {}
@@ -286,7 +286,7 @@ function systolic.makeFunction(name, inputs, output, valid)
     valid = systolic.input("valid",darkroom.type.bool())
   end
 
-  local t = {name=name, inputs=inputs, output=output, assignments={}, asserts={}, pure=true, usedInstanceNames = {}, instanceMap = {}, valid=valid:read()}
+  local t = {name=name, inputs=inputs, output=output, assignments={}, asserts={}, usedInstanceNames = {}, instanceMap = {}, valid=valid:read()}
 
   t.instanceMap[valid] = 1
   t.usedInstanceNames[valid.name] = 1
@@ -318,7 +318,6 @@ function systolicModuleFunctions:addFunction( name, inputs, output, options )
   end
 
   self.functions[fn.name]=fn
-  fn.pure = false
   fn.module = self
 
   if options~=nil and options.pipeline~=nil and options.pipeline==false then 
@@ -326,6 +325,8 @@ function systolicModuleFunctions:addFunction( name, inputs, output, options )
   else
     fn.pipeline = true
   end
+
+  if type(options)=="table" then fn.verilogDelay = options.verilogDelay end
 
   return fn
 end
@@ -433,7 +434,7 @@ local function codegen(ast, callsiteId)
           local input = n[k]
           local delayby = maxd-delay[input]
 
-          if type(n[k].constLow)=="number" and n[k].constLow==n[k].constHigh then
+          if type(n[k].constLow_1)=="number" and n[k].constLow_1==n[k].constHigh_1 then
             -- this is something with a constant value, so we don't need to retime it
             delayby = 0
           end
@@ -441,7 +442,8 @@ local function codegen(ast, callsiteId)
           for d=1,delayby do
             for c=1,input.type:channels() do
               -- type is determined by producer, b/c consumer op can change type
-              if input.type~=darkroom.type.null() then
+              local const = type(n[k].constLow_1)=="number" and n[k].constLow_1==n[k].constHigh_1
+              if input.type~=darkroom.type.null() and const==false then
                 local decl = declareReg( input.type:baseType(), inputs[k][c].."_retime"..d, "")
                 local cl = inputs[k][c].."_retime"..d.." <= "..sel(d>1,inputs[k][c].."_retime"..(d-1),inputs[k][c]).."; // retiming\n"
                 table.insert(usedResDeclarations, decl)
@@ -451,7 +453,10 @@ local function codegen(ast, callsiteId)
           end
           if delayby>0 then
             for c=1,input.type:channels() do
-              inputs[k][c] = inputs[k][c].."_retime"..delayby
+              local const = type(n[k].constLow_1)=="number" and n[k].constLow_1==n[k].constHigh_1
+              if const==false then
+                 inputs[k][c] = inputs[k][c].."_retime"..delayby
+              end
             end
           end
         end
@@ -560,8 +565,8 @@ local function codegen(ast, callsiteId)
           local function dobasecast( expr, fromType, toType )
             assert(type(expr)=="string")
 
-            if fromType:isUint() and (toType:isInt() or toType:isUint()) and fromType.precision < toType.precision then
-              -- casting smaller uint to larger int or uint. Don't need to sign extend
+            if fromType:isUint() and (toType:isInt() or toType:isUint()) and fromType.precision <= toType.precision then
+              -- casting smaller uint to larger or equal int or uint. Don't need to sign extend
               return expr
             elseif toType:isInt() and fromType:isInt() and toType.precision > fromType.precision then
               -- casting smaller int to larger int. must sign extend
@@ -581,7 +586,8 @@ local function codegen(ast, callsiteId)
           if n.type:isArray() and n.expr.type:isArray()==false then
             expr = inputs["expr"][1] -- broadcast
             cmt = " // broadcast "..tostring(n.expr.type).." to "..tostring(n.type)
-          elseif n.expr.type:isArray() and n.type:isArray()==false and n.expr.type:arrayOver():isBool() and n.type:isUint() then
+          elseif n.expr.type:isArray() and n.type:isArray()==false and n.expr.type:arrayOver():isBool() and (n.type:isUint() or n.type:isInt()) then
+            -- casting an array of bools (bitfield) to an int or uint
             expr = "}"
             for c=1,n.expr.type:channels() do
               if c>1 then expr = ","..expr end
@@ -629,8 +635,8 @@ local function codegen(ast, callsiteId)
             local dim = 1
             local scalefactor = 1
             while n["index"..dim] do
-              assert(n["index"..dim].constLow == n["index"..dim].constHigh)
-              flatIdx = flatIdx + (n["index"..dim].constLow)*scalefactor
+              assert(n["index"..dim].constLow_1 == n["index"..dim].constHigh_1)
+              flatIdx = flatIdx + (n["index"..dim].constLow_1)*scalefactor
               scalefactor = scalefactor*(n.expr.type:arrayLength())[dim]
               dim = dim + 1
             end
@@ -638,7 +644,7 @@ local function codegen(ast, callsiteId)
             res = inputs["expr"][flatIdx+1]
           elseif n.expr.type:isUint() or n.expr.type:isInt() then
             table.insert( resDeclarations, declareWire( n.type:baseType(), n:cname(c), "", " // index result" ))
-            table.insert( resDeclarations, "assign "..n:cname(c).." = "..inputs["expr"][c].."["..n.index1.constLow.."]; // index\n")
+            table.insert( resDeclarations, "assign "..n:cname(c).." = "..inputs["expr"][c].."["..n.index1.constLow_1.."]; // index\n")
             res = n:cname(c)
           else
             print(n.expr.type)
@@ -725,8 +731,12 @@ local function codegen(ast, callsiteId)
           table.insert(resDeclarations,"assign "..n.inst.name.."_D = "..inputs.writeExpr1[1]..";\n")
           res = n.inst.name.."_readOut"
         elseif n.kind=="call" then
-
-          thisDelay = n.inst:getDelay(n.func)
+          
+          if n.func.verilogDelay~=nil then
+            thisDelay = n.func.verilogDelay
+          else
+            thisDelay = n.inst:getDelay(n.func)
+          end
 
           if n.pipeline==false and thisDelay>0 then
             print("Error, calling pipelined function ",n.func.name," in a section of code w/ pipeling disabled, module",n.inst.name)
@@ -1200,6 +1210,8 @@ end
 function systolicInstanceFunctions:getDefinitionKey()
   assert(self.kind=="module")
   local key = self.module.name
+  -- for external verilog modules, there is only one verion of them
+  if self.module.options.verilog~=nil then return key end
   for k,v in pairs(sort(stripkeys(invertTable(self.module.functions)))) do
     if self.callsites[v]~=nil then
       local callsitecnt = #self.callsites[v]
@@ -1216,6 +1228,10 @@ end
 function systolicInstanceFunctions:getDefinition()
   assert(self.kind=="module")
   local t = {}
+
+  if type(self.module.options.verilog)=="table" then
+    return self.module.options.verilog
+  end
 
   table.insert(t,"module "..self:getDefinitionKey().."(input CLK")
   
@@ -1292,7 +1308,7 @@ __index = function(tab,key)
         table.insert(tab.callsites[fn.name],1)
         if valid==nil then valid="placeholder" end
 
-        local t = {kind="call",inst=self,valid=valid,func=fn,callsiteid = #tab.callsites[fn.name]}
+        local t = { kind="call", inst=self, valid=valid, func=fn, callsiteid = #tab.callsites[fn.name] }
         
         checkArgList( fn, args, t )
         
@@ -1404,7 +1420,7 @@ function systolicASTFunctions:checkVariables(scopes)
   assert(type(scopes)=="table")
 
   local function astcheck(n)
-    if n.kind=="readinput" or n.kind=="reg" or n.kind=="ram128" or (n.kind=="call" and n.pure~=true) then
+    if n.kind=="readinput" or n.kind=="reg" or n.kind=="ram128" or n.kind=="call" then
       checkForInst(n.inst, scopes)
     end
 
@@ -1416,7 +1432,7 @@ function systolicASTFunctions:checkVariables(scopes)
       end
     end
 
-    if n.kind=="call" and n.pure~=true then
+    if n.kind=="call" and n.func:isPure()==false then
       assert(systolicAST.isSystolicAST(n.valid))
     end
   end
