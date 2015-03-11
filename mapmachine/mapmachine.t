@@ -1,3 +1,4 @@
+cstring = terralib.includec("string.h")
 local ffi = require("ffi")
 
 d = {}
@@ -21,43 +22,31 @@ function isDAST(t) return getmetatable(t)==dASTMT end
 -- arrays: A[W][H]. Row major
 -- array index A[y] yields type A[W]. A[y][x] yields type A
 
-local function outermostDimension(ty)
-  assert(darkroom.type.isType(ty))
-  assert( ty:isArray() )
-  local sz = ty:arrayLength()
-  return sz[#sz]
-end
-
-local function peel( ty )
-  assert(darkroom.type.isType(ty))
-  assert( ty:isArray() )
-  if #ty:arrayLength()==1 then return ty:baseType() end
-  return darkroom.type.array( ty:baseType(), take(ty:arrayLength(), #(ty:arrayLength())-1) )
-end
-
 -- f : ( A, B, ...) -> C (darkroom function)
 -- map : ( f, A[n], B[n], ...) -> C[n]
-function d.map( f, ... )
+function d.map( name, f, ... )
+  assert( type(name)=="string" )
   assert( isDFn(f) )
   for k,v in pairs({...}) do 
     assert( isDAST(v) ); 
-    if v.type:isArray()==false or peel(v.type) ~= f.inputs[k].type then print("Error, map type mismatch, formal=",f.inputs[k].type," actual=",v.type,"argument",k); assert(false); end
+    if v.type:isArray()==false or v.type:peel() ~= f.inputs[k].type then print("Error, map type mismatch, formal=",f.inputs[k].type," actual=",v.type,"argument",k); assert(false); end
   end
-  assert( foldl( function(a,b) return sel(a==true or a==b, b, nil) end, true, map( {...}, function(n) return outermostDimension(n.type) end ) ) )
-  local ast = {kind="map", fn = f, type = darkroom.type.array( f.output.type, {outermostDimension(({...})[1].type)} ) }
+  assert( foldl( function(a,b) return sel(a==true or a==b, b, nil) end, true, map( {...}, function(n) return n.type:outermostLength() end ) ) )
+  local ast = {kind="map", fn = f, type = darkroom.type.array( f.output.type, {({...})[1].type:outermostLength()} ) }
   for k,v in pairs({...}) do ast["input"..k] = v end
-  return newDAST(ast):setEmptyMetadata()
+  return newDAST(ast):setEmptyMetadata():setName(name)
 end
 
 -- dup : ( v : A , n : number ) -> A[n]
 function d.dup( v, n )
   assert(isDAST(v))
   assert(type(n)=="number")
-  return newDAST({kind="dup", expr=v, type = darkroom.type.array(v.type,{n})}):setEmptyMetadata()
+  return newDAST({kind="dup", expr=v, n=n,type = darkroom.type.array(v.type,{n})}):setEmptyMetadata()
 end
 
 -- extractStencils : A[n] -> A[stencilWidth*stencilHeight][n]
-function d.extractStencils( inp, arrayWidth, stencilWidth, stencilHeight )
+function d.extractStencils( name, inp, arrayWidth, stencilWidth, stencilHeight )
+  assert( type(name)=="string" )
   assert( isDAST(inp) )
   assert( type(arrayWidth)=="number" )
   assert( type(stencilWidth)=="number" )
@@ -65,28 +54,31 @@ function d.extractStencils( inp, arrayWidth, stencilWidth, stencilHeight )
   assert( type(stencilHeight)=="number" )
   assert( stencilHeight<0 )
 
-  local ty = darkroom.type.array(peel(inp.type),{(-stencilHeight+1)*(-stencilWidth+1), outermostDimension(inp.type)})
-  return newDAST({kind="extractStencils", expr=inp, arrayWidth=arrayWidth, stencilWidth=stencilWidth, stencilHeight=stencilHeight, type = ty}):setEmptyMetadata()
+  local ty = darkroom.type.array(inp.type:peel(),{(-stencilHeight+1)*(-stencilWidth+1), inp.type:outermostLength()})
+  return newDAST({kind="extractStencils", expr=inp, arrayWidth=arrayWidth, stencilWidth=stencilWidth, stencilHeight=stencilHeight, type = ty}):setEmptyMetadata():setName(name)
 end
 
 -- slice : A[n] -> A[ (r-l+1) * (t-b+1) ]
 -- l,r,t,b are inclusive
 function d.slice( A, arrayWidth, l, r, t, b )
+  assert( l>=0 ); assert( r>=0 ); assert( t>=0 ); assert( b>=0 )
   assert(l<=r)
-  assert(b<=r)
-  print("SLICE",l,r,t,b)
+  assert(b<=t)
   assert( type(arrayWidth)=="number" )
-  print("SLICETYPE",A.type,peel(A.type),(r-l+1)*(t-b+1))
-  local ty = darkroom.type.array( peel(A.type), {(r-l+1)*(t-b+1)} )
-  print("STR",ty)
-  return newDAST({kind="slice", expr=A, l=l,r=r,t=t,b=b, type = ty } ):setEmptyMetadata()
+  local ty = darkroom.type.array( A.type:peel(), {(r-l+1)*(t-b+1)} )
+  return newDAST({kind="slice", expr=A, arrayWidth=arrayWidth, l=l,r=r,t=t,b=b, type = ty } ):setEmptyMetadata()
 end
 
 -- reduce : A[n] -> A
 -- this is just a special case of function application
-function d.reduce( op, A )
+function d.reduce( op, expr1, expr2 )
   assert( type(op)=="string" )
-  return newDAST({kind="reduce", op=op, expr=A, type = peel(A.type)} ):setEmptyMetadata()
+
+  local restype = expr1.type:peel()
+  if op=="argmin" then assert( expr1.type:outermostLength() == expr2.type:outermostLength() ) end
+  if op=="argmin" then restype = expr2.type:peel() end
+
+  return newDAST({kind="reduce", op=op, expr1=expr1, expr2=expr2, type = restype} ):setEmptyMetadata()
 end
 
 -- function argument
@@ -96,10 +88,11 @@ end
 
 -- function definition
 -- output, inputs
-function d.fn( output, ... )
+function d.fn( name, output, ... )
+  assert(type(name)=="string")
   assert( isDAST(output) )
   map( {...}, function(n) assert(isDAST(n)); assert(n.kind=="input") end )
-  local t = {output=output, inputs = {...} }
+  local t = {output=output, inputs = {...}, name=name }
   return setmetatable( t, dFunctionMT )
 end
 
@@ -132,80 +125,115 @@ function d.compile( fn )
       __compileCache[fn] = fn.fn
     else
       assert( isDAST(fn.output) )
-      __compileCache[fn] = fn.output:visitEach(
+
+      local stats = {}
+      local inputSymbols = map( fn.inputs, function(n) return symbol( &n.type:toTerraType() ) end )
+
+      local out = fn.output:visitEach(
         function(n, inputs)
+          local out = symbol( &n.type:toTerraType(), n:name().."_out" )
+          table.insert(stats, quote var [out] = [&n.type:toTerraType()](cstdlib.malloc(sizeof([n.type:toTerraType()]))) end)
+
           if n.kind=="map" then
             local orderedInputs = n:map( "input", function(_,i) return inputs["input"..i] end )
             local f = d.compile(n.fn)
-            local N = outermostDimension( n.type )
-            return function(...)
-              local args = {...}
-              local inpv = map( orderedInputs, function(f) return f(unpack(args)) end)
-              local out = {}
-              for i=0,N-1 do 
-                local inp = map( inpv, function(v) return v[i] end )
-                out[i] = f(unpack(inp))
+            local N = n.type:outermostLength()
+            table.insert( stats, quote
+              for i=0,N do 
+                f( &((@out)[i]), [ map( orderedInputs, function(v) return `&((@v)[i]) end )] )
               end
-              return ffi.new(n.type:toC(),out)
-                   end
+          end)
+
+            return out
           elseif n.kind=="input" then
             local inpinv = invertTable( fn.inputs )
             local i = inpinv[n]
             assert(type(i)=="number")
-            return function(...) return ({...})[i] end
+            return inputSymbols[i]
           elseif n.kind=="extractStencils" then
-            local ef = inputs.expr
-            local N = outermostDimension( n.type )
+
+            local N = n.type:outermostLength()
             local stencilW = -n.stencilWidth+1
-            return function(...)
-              local inp = ef(...)
-              local out = {}
-              for i=0,N do
-                out[i]={}
-                for y=n.stencilHeight,0 do
-                  for x=n.stencilWidth,0 do
-                    out[i][(y-n.stencilHeight)*stencilW+(x-n.stencilWidth)] = inp[i+x+y*n.arrayWidth]
+            table.insert( stats, quote
+                for i=0,N do
+                  for y=n.stencilHeight,1 do
+                    for x=n.stencilWidth,1 do
+                      (@out)[i][(y-n.stencilHeight)*stencilW+(x-n.stencilWidth)] = (@[inputs.expr])[i+x+y*n.arrayWidth]
+                    end
                   end
                 end
-                out[i] = ffi.new( peel(n.type):toC(), out[i])
-              end
-              return out
-                   end
+              end)
+
+            return out
           elseif n.kind=="range" then
-            return function(...)
-              local out = {}
-              for i=1,n.value do
-                out[i-1] = i
-              end
-              return ffi.new( n.type:toC(), out )
-                   end
+            table.insert( stats, quote
+                            for i=0,n.value do
+                              (@out)[i] = i
+                            end
+                            end )
+            return out
           elseif n.kind=="reduce" then
-            local ef = inputs.expr
 
             if n.op=="sum" then
-              return function(...)
-                local inp = ef(...)
-                local res = 0
-                for i=0,(n.expr.type:arrayLength())[1]-1 do res = res + inp[i] end
-                return ffi.new( n.type:toC(), res )
-                     end
+              table.insert(stats, quote
+                             @out = 0
+                             for i=0,[n.expr1.type:outermostLength()] do @out = @out + (@[inputs.expr1])[i] end
+                end )
+              return out
+            elseif n.op=="argmin" then
+              table.insert( stats, quote
+                              var set = false
+                              var resV : n.expr1.type:peel():toTerraType() = 0
+                              for i=0,[n.expr1.type:outermostLength()] do 
+                                if set==false or (@[inputs.expr1])[i] < resV then
+                                  resV = (@[inputs.expr1])[i]
+                                  @out = (@[inputs.expr2])[i]
+                                  set = true
+                                end
+                              end
+                              end)
+                return out
             else
               assert(false)
             end
           elseif n.kind=="apply" then
             local f = d.compile( n.fn )
             local orderedInputs = n:map( "input", function(_,i) return inputs["input"..i] end )
-            return function(...)
-              local args = {...}
-              local inpv = map( orderedInputs, function(f) return f(unpack(args)) end)
-              return f(unpack(inpv))
-                   end
+            table.insert( stats, quote f(out,[orderedInputs]) end )
+            return out
           elseif n.kind=="slice" then
+            table.insert( stats, quote
+                            var i = 0
+              for y = n.b, n.t+1 do
+                for x = n.l, n.r+1 do
+                  (@out)[i] = (@[inputs.expr])[y*n.arrayWidth+x] 
+            i = i + 1
+                end
+              end
+              end)
+
+            return out
+          elseif n.kind=="dup" then
+            table.insert( stats, quote
+                            for i=0,n.n do (@out)[i] = @[inputs.expr] end
+              end)
+            return out
           else
             print(n.kind)
             assert(false)
           end
         end)
+
+      local finout = symbol( &fn.output.type:toTerraType() )
+      local res = terra( [finout],[inputSymbols] )
+        [stats]
+        cstring.memcpy( finout, out, sizeof([fn.output.type:toTerraType()]) )
+      end
+      
+      print("Kernel", fn.name)
+      res:printpretty()
+
+      return res
     end
   end
 
@@ -214,22 +242,25 @@ end
 ------------------------
 
 -- extracts stencils of size (stencilWidth x stencilHeight) from 0 ... down to -stencilCount
-function d.extractStencilArray( A, arrayWidth, stencilWidth, stencilHeight, stencilCount)
+function d.extractStencilArray( name, A, arrayWidth, stencilWidth, stencilHeight, stencilCount)
+  assert( type(name) == "string" )
   assert(type(arrayWidth)=="number")
   assert(type(stencilWidth)=="number")
+  assert( stencilWidth < 0)
   assert(type(stencilHeight)=="number")
+  assert( stencilHeight < 0)
   assert(type(stencilCount)=="number")
   assert(stencilCount>0)
   local largeStencilWidth = stencilWidth-stencilCount+1
-  local s1 = d.extractStencils( A, arrayWidth, largeStencilWidth, stencilHeight )
+  local s1 = d.extractStencils( name.."_ext", A, arrayWidth, largeStencilWidth, stencilHeight )
   
   ------------
-  local subinput = d.input( peel(s1.type) )
-  local stencils = d.extractStencils( subinput, largeStencilWidth, stencilWidth, stencilHeight )
-  local slice = d.slice( stencils, largeStencilWidth, -stencilCount+1, 0, stencilHeight-1, stencilHeight-1)
-  local substencils = d.fn( slice, subinput )
+  local subinput = d.input( s1.type:peel() )
+  local stencils = d.extractStencils( name.."_ext2", subinput, largeStencilWidth, stencilWidth, stencilHeight )
+  local slice = d.slice( stencils, largeStencilWidth, -stencilWidth-1, -stencilWidth-1+stencilCount-1, -stencilHeight-1, -stencilHeight-1)
+  local substencils = d.fn( name.."_fn", slice, subinput )
   -----------
 
-  local fin = d.map( substencils, s1 )
+  local fin = d.map( name.."_map", substencils, s1 )
   return fin
 end
