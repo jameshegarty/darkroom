@@ -9,7 +9,7 @@ Darkroom is a language for describing image processing pipelines embedded in Ter
 Installation
 ------------
 
-First you will need to clone and build Terra using the instructions in the [Terra Readme](https://github.com/zdevito/terra). Run the REPL and make sure it installed correctly.
+First you will need Terra, you can download the binary files on https://github.com/zdevito/terra/releases (tested with release-2015-08-03) or build it. You can clone the repository and build Terra using the instructions in the [Terra Readme](https://github.com/zdevito/terra). Run the REPL and make sure it installed correctly.
 
 Add the Darkroom language definition to your lua path environment variable. Add this to .profile or .bashrc:
 
