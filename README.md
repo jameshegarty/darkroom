@@ -51,7 +51,7 @@ Hello World
 Run this tutorial by creating and running a .t terra file. Darkroom is not supported in the Terra REPL. For now, run these commands from inside the `darkroom` directory. Recall that you need to include Darkroom with 'import "darkroom"'. The darkroomSimple library provides convenience functions for loading and saving images - we will use it for now to make these examples cleaner.
 
     import "darkroom"
-    darkroomSimple = terralib.require("darkroomSimple")
+    darkroomSimple = require("darkroomSimple")
 
 Before we can perform any image processing, we need to load an input image. DarkroomSimple provides a function that will load simple image formats (bmp, ppm):
 
@@ -396,7 +396,7 @@ Where inputs, outputs, and taps are in the same order as passed to `darkroom.com
 For convenience, you can use [extras/darkroomSimple.t](#extrasdarkroomsimplet), which provides an abstraction on top of this that doesn't require loading images, or use the [extras/image.t](#extrasimaget) class:
 
     import "darkroom"
-    terralib.require("image")
+    require("image")
 
     -- define and compile the pipelne
     inp = darkroom.input( uint8[3] )
