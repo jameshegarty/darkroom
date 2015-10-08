@@ -11,11 +11,13 @@ Installation
 
 First you will need Terra, you can download the binary files on https://github.com/zdevito/terra/releases (tested with release-2015-08-03) or build it. You can clone the repository and build Terra using the instructions in the [Terra Readme](https://github.com/zdevito/terra). Run the REPL and make sure it installed correctly.
 
-Add the Darkroom language definition to your lua path environment variable. Add this to .profile or .bashrc:
+Add the Darkroom language definition to your lua path environment variable, and the Terra binary location to your PATH.
+Add this to .profile or .bashrc:
 
     export DR=[path to darkroom root]
     export TERRADIR=[path to terra root]
     export TERRA_PATH="$TERRA_PATH;./?.t;$DR/?.t;$DR/src/?.t;$DR/extras/?.t;$TERRADIR/tests/lib/?.t"
+    export PATH=${TERRADIR}/bin:${PATH}
 
 Darkroom and Terra are tested to work on Linux and Mac OS X. Other platforms are unlikely to work.
 
