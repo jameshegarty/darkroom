@@ -9,13 +9,15 @@ Darkroom is a language for describing image processing pipelines embedded in Ter
 Installation
 ------------
 
-First you will need to clone and build Terra using the instructions in the [Terra Readme](https://github.com/zdevito/terra). Run the REPL and make sure it installed correctly.
+First you will need Terra, you can download the binary files on https://github.com/zdevito/terra/releases (tested with release-2015-08-03) or build it. You can clone the repository and build Terra using the instructions in the [Terra Readme](https://github.com/zdevito/terra). Run the REPL and make sure it installed correctly.
 
-Add the Darkroom language definition to your lua path environment variable. Add this to .profile or .bashrc:
+Add the Darkroom language definition to your lua path environment variable, and the Terra binary location to your PATH.
+Add this to .profile or .bashrc:
 
     export DR=[path to darkroom root]
     export TERRADIR=[path to terra root]
     export TERRA_PATH="$TERRA_PATH;./?.t;$DR/?.t;$DR/src/?.t;$DR/extras/?.t;$TERRADIR/tests/lib/?.t"
+    export PATH=${TERRADIR}/bin:${PATH}
 
 Darkroom and Terra are tested to work on Linux and Mac OS X. Other platforms are unlikely to work.
 
@@ -51,7 +53,7 @@ Hello World
 Run this tutorial by creating and running a .t terra file. Darkroom is not supported in the Terra REPL. For now, run these commands from inside the `darkroom` directory. Recall that you need to include Darkroom with 'import "darkroom"'. The darkroomSimple library provides convenience functions for loading and saving images - we will use it for now to make these examples cleaner.
 
     import "darkroom"
-    darkroomSimple = terralib.require("darkroomSimple")
+    darkroomSimple = require("darkroomSimple")
 
 Before we can perform any image processing, we need to load an input image. DarkroomSimple provides a function that will load simple image formats (bmp, ppm):
 
@@ -396,7 +398,7 @@ Where inputs, outputs, and taps are in the same order as passed to `darkroom.com
 For convenience, you can use [extras/darkroomSimple.t](#extrasdarkroomsimplet), which provides an abstraction on top of this that doesn't require loading images, or use the [extras/image.t](#extrasimaget) class:
 
     import "darkroom"
-    terralib.require("image")
+    require("image")
 
     -- define and compile the pipelne
     inp = darkroom.input( uint8[3] )
