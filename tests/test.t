@@ -75,7 +75,7 @@ function test(inast)
   for k,v in ipairs(res) do
     print(v)
     local st = ""
-    if k>1 then st = "."..k end
+    if k>1 then st = ".output"..k end
       dosave(v,"out/"..arg[0]..st..corest..".bmp")
     end
 
