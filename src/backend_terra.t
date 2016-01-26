@@ -71,6 +71,15 @@ void * makeCircular (void* address, int bytes) {
   return address;
                                                   }
 
+void teardownCircular(void* address, int bytes){
+  int err = munmap( address, bytes );
+  assert(err==0);
+  err = munmap( address+bytes, bytes );
+  assert(err==0);
+  err = munmap( address+bytes*2, bytes );
+  assert(err==0);
+                                                }
+
 void* allocateCircular( int bytes ){
   if(bytes==0){ return 0; } // its possible we have no linebuffers
   void * address = mmap (NULL, bytes << 1, PROT_NONE,
@@ -79,6 +88,14 @@ void* allocateCircular( int bytes ){
   assert(address != MAP_FAILED);
   return address;
                                    }
+
+void deallocateCircular( void *addr, int bytes ){
+  if(bytes==0){ return; } // its possible we have no linebuffers
+  int r = munmap( addr, bytes );
+  assert(r==0);
+  return;
+                                   }
+
                                       ]]
 
 LineBufferWrapperFunctions = {}
@@ -137,7 +154,7 @@ function LineBufferWrapperFunctions:declare( loopid, x, y, clock, core, stripId,
     self.posX[loopid] = symbol(int,"posY")
     self.posY[loopid] = symbol(int,"posY")
   end
-
+ 
   if self.startClock==nil then self.startClock=symbol(int,"startClock"); table.insert(res, quote var [self.startClock] = clock end) end
 
   if self.debug then table.insert(res, quote var [self.posX[loopid]] = x; var [self.posY[loopid]] = clock; end) end
@@ -169,6 +186,28 @@ function LineBufferWrapperFunctions:declare( loopid, x, y, clock, core, stripId,
         var [buf] = [self[baseKey[k]]]+(x-leftBound)+[self:modularSize(bufType[k])]+fixedModulus((clock-[self.startClock])*[self:lineWidth()],[self:modularSize(bufType[k])])
       end)
 
+  end
+
+  return quote res end
+end
+
+function LineBufferWrapperFunctions:dealloc()
+  local cnt = 1
+  local baseKey = {"base"}
+  local bufType = {self.orionType:toTerraType()}
+  if self.debug then cnt=4 end
+  if self.debug then baseKey = {"base","baseDebugX","baseDebugY","baseDebugId"} end
+  if self.debug then bufType = {self.orionType:toTerraType(), int, int, int} end
+
+  local res = {}
+  if self.teardownDone==nil then
+    for k=1,cnt do
+      table.insert( res,
+                    quote
+                      vmIV.teardownCircular([self[baseKey[k]]], [self:modularSize(bufType[k])*terralib.sizeof(bufType[k])])
+                    end)
+    end
+    self.teardownDone=true
   end
 
   return quote res end
@@ -336,6 +375,10 @@ function ImageWrapperFunctions:declare( loopid, x, y, clock, core, stripId )
 
   if self.data[loopid]==nil then self.data[loopid] = symbol(&(self.orionType:toTerraType())) end
   return quote var [self.data[loopid]] =  [&self.orionType:toTerraType()]([self.basePtr] + y*[self.stride] + x) end
+end
+
+function ImageWrapperFunctions:dealloc()
+  return quote end
 end
 
 function ImageWrapperFunctions:set( loopid, value, V )
@@ -1118,6 +1161,7 @@ function darkroom.terracompiler.codegenInnerLoop(
 
   local loopStartCode = {}
   local loopCode = {}
+  local loopEndCode = {}
   local loopid = 0
 
   kernelGraph:S("*"):traverse(
@@ -1212,9 +1256,15 @@ return
             end
           end
       end)
+
+      table.insert(loopEndCode,
+        quote
+          [inputs[n]:dealloc() ];
+          [outputs[n]:dealloc() ];
+        end)
   end)
 
- return loopStartCode, loopCode
+ return loopStartCode, loopCode, loopEndCode
 end
 
 -- codegen all the code that runs per thread (and preamble)
@@ -1259,7 +1309,7 @@ function darkroom.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, sh
   local taps = symbol(&TapStruct,"taps")
 
   local linebufferBase = symbol(&opaque,"linebufferBase")
-  local thisLoopStartCode, thisLoopCode = darkroom.terracompiler.codegenInnerLoop(
+  local thisLoopStartCode, thisLoopCode, thisLoopEndCode = darkroom.terracompiler.codegenInnerLoop(
     core,
     strip,
     kernelGraph,
@@ -1311,8 +1361,11 @@ function darkroom.terracompiler.codegenThread(kernelGraph, inputs, TapStruct, sh
         thisLoopCode
       end
 
+      thisLoopEndCode
     end
     var endt = darkroom.currentTimeInSeconds()
+
+    vmIV.deallocateCircular(linebuffers, [linebufferSize])
   end
 
 end
