@@ -1,5 +1,4 @@
 import "darkroom"
-require("darkroomDebug")
 darkroomSimple = require("darkroomSimple")
 
 -- simple, totally fixed function camera pipeline
@@ -11,7 +10,6 @@ end
 -- input = uint8 nxm
 -- output = RGB8 nxm
 function bilinearDemosaic(in1)
-
   -- most sensors are bayer, but some of them might be offset by a pixel in x or y
   -- remember, the origin is at the bottom left, x,y increasing to the right
   local xoff = 0
@@ -98,11 +96,7 @@ function doccm(in1)
 end
 
 function tonemap(in1, gamma)
-
-  return im(x,y)
-  darkroom.pow((in1(x,y)/255),gamma)*255
-  end
-
+  return im(x,y) darkroom.pow((in1(x,y)/255),gamma)*255 end
 end
 
 

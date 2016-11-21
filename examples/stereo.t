@@ -8,23 +8,29 @@ function rectify( img, remap )
   return resampleBilinearInt( true, im(x,y) img[1] end, uint8, 8, 8, u, v )
 end
 
-function makeOF( searchRadius, windowRadius, frame1, frame2 )
+function makeOF( searchRad, windowRad, frame1, frame2 )
   frame1 = im(x,y) [int32](frame1) end
   frame2 = im(x,y) [int32](frame2) end
 
   local SAD = {}
   local offset = im(x,y)
-    map i = 20, 20+searchRadius reduce(argmin)
-      map ii=-windowRadius, windowRadius jj=-windowRadius, windowRadius reduce(sum) -- SAD
+    map i = 20, 20+searchRad reduce(argmin)
+      map ii=-windowRad, windowRad jj=-windowRad, windowRad reduce(sum) -- SAD
         darkroom.abs(frame1(x+ii,y+jj)-frame2(x+i+ii,y+jj))
       end
     end
   end
 
-  return im(x,y) [uint8]((offset[0]-20) * 255.0/(searchRadius)) end
+  return im(x,y) [uint8]((offset[0]-20) * 255.0/(searchRad)) end
 end
 
-local left = rectify(darkroomSimple.load("left0224.bmp"), darkroomSimple.load("right-remap.bmp"))
-local right = rectify(darkroomSimple.load("right0224.bmp"), darkroomSimple.load("left-remap.bmp"))
-local vectors = makeOF(60,4,right,left)
+local left = darkroomSimple.load("left0224.bmp")
+local leftOffsets = darkroomSimple.load("right-remap.bmp")
+local leftRectified = rectify(left, leftOffsets)
+
+local right = darkroomSimple.load("right0224.bmp")
+local rightOffsets = darkroomSimple.load("left-remap.bmp")
+local rightRectified = rectify(right, rightOffsets)
+
+local vectors = makeOF(60,4,rightRectified,leftRectified)
 vectors:save("out/stereo.bmp")

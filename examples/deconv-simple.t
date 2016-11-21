@@ -8,7 +8,8 @@ function tofloat(input)
 end
 
 function tobyte(input)
-  return im(x,y) darkroom.vectorSelect( input>1, [uint8[3]](255), [uint8[3]](input*255) ) end
+  return im(x,y) darkroom.vectorSelect( input>1, 
+                 [uint8[3]](255), [uint8[3]](input*255) ) end
 end
 
 function convolve( K, input )
@@ -39,6 +40,6 @@ local K = {0.33333,0,0,
            0,0,0.33333}
 
 local observed = tofloat(darkroomSimple.load("deconvolution_blurred.bmp"))
-local latent_est = im(x,y) [float[3]](0.5) end -- default value
+local latent_est = im(x,y) [float[3]](0.5) end -- initial value
 local convoutput = deconv( K, K, observed, latent_est, fusedIter )
 convoutput:save("out/deconv-simple.bmp")
