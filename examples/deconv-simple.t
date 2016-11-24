@@ -3,9 +3,7 @@ darkroomSimple = require("darkroomSimple")
 
 fusedIter = 5
 
-function tofloat(input)
-  return im(x,y) [float[3]](input(x,y)/([float](255))) end
-end
+function tofloat(input) return im(x,y) [float[3]](input(x,y)/([float](255))) end end
 
 function tobyte(input)
   return im(x,y) darkroom.vectorSelect( input>1, 
@@ -18,10 +16,9 @@ function convolve( K, input )
     local N = math.floor(N2/2)
 
     return im(x,y)
-      darkroom.crop(
-        map i=-N,N j=-N,N reduce(sum)
-          input(x+i, y+j) * K[(-j + N)*N2 + (i + N)]
-        end)
+      darkroom.crop( map i=-N,N j=-N,N reduce(sum)
+                       input(x+i, y+j) * K[(-j + N)*N2 + (i + N)]
+                     end)
     end
 end
 
