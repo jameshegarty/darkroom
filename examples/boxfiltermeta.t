@@ -4,8 +4,7 @@ darkroomSimple = require("darkroomSimple")
 a = darkroomSimple.load("frame10.bmp")
 I = im(x,y) [int32](a) end
 
-boxFilter = im(x,y) 0 end
-
+boxFilter = im(x,y) 0 end -- initial value
 for i=-5,5 do
   for j=-5,5 do
     boxFilter = im(x,y) boxFilter(x,y)+I(x+i,y+j) end
